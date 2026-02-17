@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Minimal Mind Map</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    #viewport {
+      position: fixed;
+      inset: 0;
+      overflow: hidden;
+      touch-action: none;
+      background: #fff;
+      cursor: default;
+    }
+
+    #world {
+      position: absolute;
+      left: 0;
+      top: 0;
+      transform-origin: 0 0;
+      will-change: transform;
+    }
+
+    .text-node {
+      position: absolute;
+      min-width: 12px;
+      min-height: 1em;
+      line-height: 1.25;
+      color: #111;
+      white-space: pre-wrap;
+      user-select: none;
+      cursor: grab;
+      outline: none;
+    }
+
+    .text-node.editing {
+      user-select: text;
+      cursor: text;
+    }
+  </style>
+</head>
+<body>
+  <div id="viewport">
+    <div id="world"></div>
+  </div>
+
+  <script>
+    const viewport = document.getElementById("viewport");
+    const world = document.getElementById("world");
+
+    const BASE_TEXT_PX = 28;
+    const MIN_SCALE = 0.1;
+    const MAX_SCALE = 8;
+
+    const camera = {
+      x: window.innerWidth / 2,
+      y: window.innerHeight / 2,
+      scale: 1
+    };
+
+    function clamp(value, min, max) {
+      return Math.min(max, Math.max(min, value));
+    }
+
+    function render() {
+      world.style.transform = `translate(${camera.x}px, ${camera.y}px) scale(${camera.scale})`;
+    }
+
+    function screenToWorld(clientX, clientY) {
+      return {
+        x: (clientX - camera.x) / camera.scale,
+        y: (clientY - camera.y) / camera.scale
+      };
+    }
+
+    function setNodePosition(node, x, y) {
+      node.dataset.x = String(x);
+      node.dataset.y = String(y);
+      node.style.left = `${x}px`;
+      node.style.top = `${y}px`;
+    }
+
+    function zoomTo(newScale, clientX, clientY) {
+      const nextScale = clamp(newScale, MIN_SCALE, MAX_SCALE);
+      const worldPoint = screenToWorld(clientX, clientY);
+      camera.scale = nextScale;
+      camera.x = clientX - worldPoint.x * camera.scale;
+      camera.y = clientY - worldPoint.y * camera.scale;
+      render();
+    }
+
+    function selectAllText(node) {
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+
+    function startEditing(node, selectAll = false) {
+      node.classList.add("editing");
+      node.contentEditable = "true";
+      node.focus();
+      if (selectAll) selectAllText(node);
+    }
+
+    function stopEditing(node) {
+      node.contentEditable = "false";
+      node.classList.remove("editing");
+    }
+
+    function attachNodeHandlers(node) {
+      let dragPointerId = null;
+      let dragOffsetX = 0;
+      let dragOffsetY = 0;
+
+      node.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0 || node.classList.contains("editing")) return;
+        dragPointerId = event.pointerId;
+        node.setPointerCapture(dragPointerId);
+        const pointer = screenToWorld(event.clientX, event.clientY);
+        dragOffsetX = Number(node.dataset.x) - pointer.x;
+        dragOffsetY = Number(node.dataset.y) - pointer.y;
+        event.preventDefault();
+        event.stopPropagation();
+      });
+
+      node.addEventListener("pointermove", (event) => {
+        if (event.pointerId !== dragPointerId) return;
+        const pointer = screenToWorld(event.clientX, event.clientY);
+        setNodePosition(node, pointer.x + dragOffsetX, pointer.y + dragOffsetY);
+      });
+
+      function endDrag(event) {
+        if (event.pointerId !== dragPointerId) return;
+        dragPointerId = null;
+      }
+
+      node.addEventListener("pointerup", endDrag);
+      node.addEventListener("pointercancel", endDrag);
+
+      node.addEventListener("dblclick", (event) => {
+        event.stopPropagation();
+        startEditing(node);
+      });
+
+      node.addEventListener("blur", () => stopEditing(node));
+
+      node.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          node.blur();
+        }
+      });
+    }
+
+    function createTextNode(worldX, worldY, initialText = "Text") {
+      const node = document.createElement("div");
+      node.className = "text-node";
+      node.textContent = initialText;
+      node.contentEditable = "false";
+
+      // Keeps newly-created text visually consistent regardless of current zoom.
+      node.style.fontSize = `${BASE_TEXT_PX / camera.scale}px`;
+      setNodePosition(node, worldX, worldY);
+      attachNodeHandlers(node);
+      world.appendChild(node);
+      return node;
+    }
+
+    viewport.addEventListener("wheel", (event) => {
+      event.preventDefault();
+
+      const isZoomGesture = event.ctrlKey || event.metaKey;
+      if (isZoomGesture) {
+        const factor = Math.exp(-event.deltaY * 0.002);
+        zoomTo(camera.scale * factor, event.clientX, event.clientY);
+      } else {
+        camera.x -= event.deltaX;
+        camera.y -= event.deltaY;
+        render();
+      }
+    }, { passive: false });
+
+    let gestureStartScale = camera.scale;
+    viewport.addEventListener("gesturestart", (event) => {
+      event.preventDefault();
+      gestureStartScale = camera.scale;
+    });
+
+    viewport.addEventListener("gesturechange", (event) => {
+      event.preventDefault();
+      const centerX = event.clientX || window.innerWidth / 2;
+      const centerY = event.clientY || window.innerHeight / 2;
+      zoomTo(gestureStartScale * event.scale, centerX, centerY);
+    });
+
+    viewport.addEventListener("dblclick", (event) => {
+      if (event.target !== viewport && event.target !== world) return;
+      const point = screenToWorld(event.clientX, event.clientY);
+      const node = createTextNode(point.x, point.y);
+      startEditing(node, true);
+    });
+
+    render();
+  </script>
+</body>
+</html>
