@@ -5,12 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Minimal Mind Map</title>
   <style>
+    @import url("https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap");
+
     html, body {
       margin: 0;
       width: 100%;
       height: 100%;
       overflow: hidden;
       background: #fff;
+      font-family: "Roboto", sans-serif;
     }
 
     #viewport {
@@ -36,7 +39,11 @@
       min-height: 1em;
       line-height: 1.25;
       color: #111;
-      white-space: pre-wrap;
+      white-space: pre;
+      width: max-content;
+      max-width: none;
+      overflow-wrap: normal;
+      word-break: keep-all;
       user-select: none;
       cursor: grab;
       outline: none;
@@ -187,7 +194,8 @@
 
       const isZoomGesture = event.ctrlKey || event.metaKey;
       if (isZoomGesture) {
-        const factor = Math.exp(-event.deltaY * 0.002);
+        // Uses native trackpad wheel deltas (including macOS momentum events).
+        const factor = Math.exp(-event.deltaY * 0.004);
         zoomTo(camera.scale * factor, event.clientX, event.clientY);
       } else {
         camera.x -= event.deltaX;
