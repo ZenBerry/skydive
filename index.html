@@ -565,7 +565,7 @@
       for (const entry of nextNodes) {
         const x = Number.isFinite(Number(entry.x)) ? Number(entry.x) : 0;
         const y = Number.isFinite(Number(entry.y)) ? Number(entry.y) : 0;
-        const text = typeof entry.text === "string" ? entry.text : "";
+        const text = typeof entry.text === "string" ? entry.text : "Text";
         const html = typeof entry.html === "string" ? sanitizeNodeHtml(entry.html) : null;
         const id = typeof entry.id === "string" ? entry.id : "";
         const baseFontSize = Number.isFinite(Number(entry.baseFontSize)) && Number(entry.baseFontSize) > 0
@@ -732,7 +732,7 @@
     function createTextNode(
       worldX,
       worldY,
-      initialText = "",
+      initialText = "Text",
       baseFontSize = BASE_TEXT_PX / camera.scale,
       preferredId = "",
       initialHtml = null
@@ -863,14 +863,7 @@
       closeNodeContextMenu();
       const point = screenToWorld(event.clientX, event.clientY);
       const node = createTextNode(point.x, point.y);
-      const nodeWorldSize = getNodeWorldSize(node);
-      setNodePosition(
-        node,
-        point.x - nodeWorldSize.width / 2,
-        point.y - nodeWorldSize.height / 2
-      );
-      scheduleAutosave();
-      startEditing(node);
+      startEditing(node, true);
     });
 
     openFileInput.addEventListener("change", async () => {
