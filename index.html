@@ -124,6 +124,9 @@
 
     const BASE_TEXT_PX = 28;
     const ZOOM_SENSITIVITY = 0.012;
+    const NAVIGATION_VIEWPORT_FILL = 0.92;
+    const MIN_NAVIGATION_SCALE = 0.08;
+    const MAX_NAVIGATION_SCALE = 24;
     const STORAGE_KEY = "mindmap.v1";
     const FILE_TYPES = [{
       description: "Mind Map JSON",
@@ -299,35 +302,85 @@
       }
     }
 
-    function animateCameraTo(targetX, targetY, durationMs = 340) {
+    function clamp(value, min, max) {
+      return Math.min(max, Math.max(min, value));
+    }
+
+    function easeInOutHeavy(t) {
+      if (t < 0.5) {
+        return 16 * Math.pow(t, 5);
+      }
+      return 1 - Math.pow(-2 * t + 2, 5) / 2;
+    }
+
+    function getNodeWorldSize(node) {
+      const rect = node.getBoundingClientRect();
+      const scale = camera.scale > 0 ? camera.scale : 1;
+      return {
+        width: Math.max(1, rect.width / scale),
+        height: Math.max(1, rect.height / scale)
+      };
+    }
+
+    function getNodeFitScale(nodeWorldSize) {
+      const viewWidth = Math.max(1, viewport.clientWidth);
+      const viewHeight = Math.max(1, viewport.clientHeight);
+      const scaleByWidth = (viewWidth * NAVIGATION_VIEWPORT_FILL) / nodeWorldSize.width;
+      const scaleByHeight = (viewHeight * NAVIGATION_VIEWPORT_FILL) / nodeWorldSize.height;
+      const targetScale = Math.min(scaleByWidth, scaleByHeight);
+      return clamp(targetScale, MIN_NAVIGATION_SCALE, MAX_NAVIGATION_SCALE);
+    }
+
+    function getNavigationDuration(targetX, targetY, targetScale) {
+      const dx = targetX - camera.x;
+      const dy = targetY - camera.y;
+      const panDistance = Math.hypot(dx, dy);
+      const viewportDiagonal = Math.max(1, Math.hypot(viewport.clientWidth, viewport.clientHeight));
+      const panFactor = clamp(panDistance / viewportDiagonal, 0, 2);
+      const scaleFactor = clamp(Math.abs(Math.log(targetScale / camera.scale)), 0, 2);
+      const duration = 620 + panFactor * 200 + scaleFactor * 220;
+      return clamp(duration, 620, 1300);
+    }
+
+    function animateCameraTo(targetX, targetY, targetScale, durationMs = 760) {
       cancelCameraAnimation();
       const startX = camera.x;
       const startY = camera.y;
+      const startScale = camera.scale;
       const start = performance.now();
 
       function tick(now) {
         const elapsed = now - start;
         const t = Math.min(1, elapsed / durationMs);
-        const eased = 1 - Math.pow(1 - t, 3);
+        const eased = easeInOutHeavy(t);
         camera.x = startX + (targetX - startX) * eased;
         camera.y = startY + (targetY - startY) * eased;
+        camera.scale = startScale + (targetScale - startScale) * eased;
         render();
         if (t < 1) {
           cameraAnimationFrame = requestAnimationFrame(tick);
         } else {
           cameraAnimationFrame = null;
+          scheduleAutosave();
         }
       }
 
       cameraAnimationFrame = requestAnimationFrame(tick);
     }
 
-    function centerNodeSmoothly(node) {
-      const viewWidth = viewport.clientWidth;
-      const viewHeight = viewport.clientHeight;
-      const targetX = viewWidth / 2 - Number(node.dataset.x) * camera.scale;
-      const targetY = viewHeight / 2 - Number(node.dataset.y) * camera.scale;
-      animateCameraTo(targetX, targetY);
+    function focusNodeFullScreen(node) {
+      const nodeWorldSize = getNodeWorldSize(node);
+      const targetScale = getNodeFitScale(nodeWorldSize);
+
+      const nodeCenterWorldX = Number(node.dataset.x) + nodeWorldSize.width / 2;
+      const nodeCenterWorldY = Number(node.dataset.y) + nodeWorldSize.height / 2;
+      const viewWidth = Math.max(1, viewport.clientWidth);
+      const viewHeight = Math.max(1, viewport.clientHeight);
+      const targetX = viewWidth / 2 - nodeCenterWorldX * targetScale;
+      const targetY = viewHeight / 2 - nodeCenterWorldY * targetScale;
+      const duration = getNavigationDuration(targetX, targetY, targetScale);
+
+      animateCameraTo(targetX, targetY, targetScale, duration);
     }
 
     function linkSelectionToTarget(node, selectionRange, targetNodeId) {
@@ -604,7 +657,7 @@
 
         event.preventDefault();
         event.stopPropagation();
-        centerNodeSmoothly(targetNode);
+        focusNodeFullScreen(targetNode);
       });
 
       node.addEventListener("input", scheduleAutosave);
