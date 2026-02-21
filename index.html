@@ -156,9 +156,9 @@
 
     const BASE_TEXT_PX = 28;
     const ZOOM_SENSITIVITY = 0.012;
-    const NAVIGATION_VIEWPORT_FILL = 0.92;
+    const NAVIGATION_VIEWPORT_FILL = 1;
     const MIN_NAVIGATION_SCALE = 0.08;
-    const MAX_NAVIGATION_SCALE = 24;
+    const MAX_NAVIGATION_SCALE = 180;
     const STORAGE_KEY = "mindmap.v1";
     const FILE_TYPES = [{
       description: "Mind Map JSON",
@@ -347,20 +347,21 @@
     }
 
     function getNodeWorldSize(node) {
-      const rect = node.getBoundingClientRect();
       const scale = camera.scale > 0 ? camera.scale : 1;
+      const rect = node.getBoundingClientRect();
+      const widthPx = Math.max(rect.width, node.scrollWidth, node.offsetWidth, 1);
+      const heightPx = Math.max(rect.height, node.scrollHeight, node.offsetHeight, 1);
       return {
-        width: Math.max(1, rect.width / scale),
-        height: Math.max(1, rect.height / scale)
+        width: widthPx / scale,
+        height: heightPx / scale
       };
     }
 
     function getNodeFitScale(nodeWorldSize) {
       const viewWidth = Math.max(1, viewport.clientWidth);
-      const viewHeight = Math.max(1, viewport.clientHeight);
       const scaleByWidth = (viewWidth * NAVIGATION_VIEWPORT_FILL) / nodeWorldSize.width;
-      const scaleByHeight = (viewHeight * NAVIGATION_VIEWPORT_FILL) / nodeWorldSize.height;
-      const targetScale = Math.min(scaleByWidth, scaleByHeight);
+      // Width-driven zoom makes short/long single-line nodes scale predictably.
+      const targetScale = scaleByWidth;
       return clamp(targetScale, MIN_NAVIGATION_SCALE, MAX_NAVIGATION_SCALE);
     }
 
