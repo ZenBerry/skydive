@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" spellcheck="false" data-gramm="false" data-gramm_editor="false" data-enable-grammarly="false">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -136,7 +136,7 @@
     }
   </style>
 </head>
-<body>
+<body spellcheck="false" data-gramm="false" data-gramm_editor="false" data-enable-grammarly="false">
   <div id="viewport">
     <div id="world"></div>
   </div>
@@ -347,14 +347,24 @@
     }
 
     function getNodeWorldSize(node) {
-      const scale = camera.scale > 0 ? camera.scale : 1;
-      const rect = node.getBoundingClientRect();
-      const widthPx = Math.max(rect.width, node.scrollWidth, node.offsetWidth, 1);
-      const heightPx = Math.max(rect.height, node.scrollHeight, node.offsetHeight, 1);
-      return {
-        width: widthPx / scale,
-        height: heightPx / scale
-      };
+      const probe = node.cloneNode(true);
+      const baseFontSize = Number(node.dataset.baseFontSize);
+      probe.classList.remove("editing", "navigation-target-highlight");
+      probe.contentEditable = "false";
+      probe.style.position = "fixed";
+      probe.style.left = "-100000px";
+      probe.style.top = "-100000px";
+      probe.style.visibility = "hidden";
+      probe.style.pointerEvents = "none";
+      probe.style.fontSize = `${Number.isFinite(baseFontSize) && baseFontSize > 0 ? baseFontSize : BASE_TEXT_PX}px`;
+      document.body.appendChild(probe);
+
+      const rect = probe.getBoundingClientRect();
+      const width = Math.max(rect.width, probe.scrollWidth, probe.offsetWidth, 1);
+      const height = Math.max(rect.height, probe.scrollHeight, probe.offsetHeight, 1);
+      probe.remove();
+
+      return { width, height };
     }
 
     function getNodeFitScale(nodeWorldSize) {
@@ -788,6 +798,13 @@
       const node = document.createElement("div");
       node.className = "text-node";
       node.dataset.nodeId = resolveNodeId(preferredId);
+      node.spellcheck = false;
+      node.setAttribute("spellcheck", "false");
+      node.setAttribute("autocorrect", "off");
+      node.setAttribute("autocapitalize", "off");
+      node.setAttribute("data-gramm", "false");
+      node.setAttribute("data-gramm_editor", "false");
+      node.setAttribute("data-enable-grammarly", "false");
       if (typeof initialHtml === "string") {
         node.innerHTML = sanitizeNodeHtml(initialHtml);
       } else {
