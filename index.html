@@ -49,6 +49,7 @@
       outline: none;
       text-rendering: geometricPrecision;
       -webkit-font-smoothing: antialiased;
+      isolation: isolate;
     }
 
     .text-node.editing {
@@ -57,13 +58,44 @@
     }
 
     .internal-link {
-      color: #0b57d0;
+      color: #6b7280;
       text-decoration: underline;
       cursor: pointer;
     }
 
     .text-node.editing .internal-link {
       cursor: text;
+    }
+
+    .text-node.navigation-target-highlight {
+      animation: destination-text-glow 5000ms linear forwards;
+    }
+
+    @keyframes destination-text-glow {
+      0% {
+        text-shadow:
+          0 0 0 rgba(255, 255, 255, 0),
+          0 0 0 rgba(255, 255, 255, 0),
+          0 0 0 rgba(255, 255, 255, 0);
+      }
+      16% {
+        text-shadow:
+          0 0 0.22em rgba(255, 255, 255, 0.98),
+          0 0 0.56em rgba(255, 255, 255, 0.9),
+          0 0 1.28em rgba(255, 255, 255, 0.72);
+      }
+      74% {
+        text-shadow:
+          0 0 0.26em rgba(255, 255, 255, 0.88),
+          0 0 0.66em rgba(255, 255, 255, 0.74),
+          0 0 1.38em rgba(255, 255, 255, 0.52);
+      }
+      100% {
+        text-shadow:
+          0 0 0.36em rgba(255, 255, 255, 0),
+          0 0 0.9em rgba(255, 255, 255, 0),
+          0 0 1.7em rgba(255, 255, 255, 0);
+      }
     }
 
     #node-context-menu {
@@ -140,6 +172,7 @@
     let cameraAnimationFrame = null;
     let contextMenuNode = null;
     let contextMenuSelectionRange = null;
+    const nodeHighlightTimeouts = new WeakMap();
 
     const camera = {
       x: window.innerWidth / 2,
@@ -342,7 +375,20 @@
       return clamp(duration, 620, 1300);
     }
 
-    function animateCameraTo(targetX, targetY, targetScale, durationMs = 760) {
+    function highlightNavigationTarget(node, durationMs = 5000) {
+      const previousTimeout = nodeHighlightTimeouts.get(node);
+      if (previousTimeout) clearTimeout(previousTimeout);
+      node.classList.remove("navigation-target-highlight");
+      void node.offsetWidth;
+      node.classList.add("navigation-target-highlight");
+      const timeoutId = setTimeout(() => {
+        node.classList.remove("navigation-target-highlight");
+        nodeHighlightTimeouts.delete(node);
+      }, durationMs);
+      nodeHighlightTimeouts.set(node, timeoutId);
+    }
+
+    function animateCameraTo(targetX, targetY, targetScale, durationMs = 760, onComplete = null) {
       cancelCameraAnimation();
       const startX = camera.x;
       const startY = camera.y;
@@ -362,6 +408,7 @@
         } else {
           cameraAnimationFrame = null;
           scheduleAutosave();
+          if (typeof onComplete === "function") onComplete();
         }
       }
 
@@ -380,6 +427,7 @@
       const targetY = viewHeight / 2 - nodeCenterWorldY * targetScale;
       const duration = getNavigationDuration(targetX, targetY, targetScale);
 
+      // highlightNavigationTarget(node);
       animateCameraTo(targetX, targetY, targetScale, duration);
     }
 
