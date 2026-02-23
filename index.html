@@ -52,6 +52,11 @@
       isolation: isolate;
     }
 
+    .text-node.selected {
+      outline: 1px solid rgba(29, 78, 216, 0.5);
+      outline-offset: 2px;
+    }
+
     .text-node.editing {
       user-select: text;
       cursor: text;
@@ -134,11 +139,53 @@
       color: #999;
       cursor: not-allowed;
     }
+
+    #marquee-selection {
+      position: absolute;
+      z-index: 430;
+      border: 1px solid #2563eb;
+      background: rgba(37, 99, 235, 0.16);
+      pointer-events: none;
+    }
+
+    #marquee-selection[hidden] {
+      display: none;
+    }
+
+    #group-selection-box {
+      position: absolute;
+      z-index: 420;
+      border: 1px solid #1d4ed8;
+      background: rgba(29, 78, 216, 0.05);
+      cursor: move;
+      touch-action: none;
+      box-sizing: border-box;
+    }
+
+    #group-selection-box[hidden] {
+      display: none;
+    }
+
+    #group-selection-handle {
+      position: absolute;
+      width: 12px;
+      height: 12px;
+      right: -7px;
+      bottom: -7px;
+      border: 1px solid #fff;
+      background: #1d4ed8;
+      box-sizing: border-box;
+      cursor: nwse-resize;
+    }
   </style>
 </head>
 <body>
   <div id="viewport">
     <div id="world"></div>
+    <div id="marquee-selection" hidden></div>
+    <div id="group-selection-box" hidden>
+      <div id="group-selection-handle"></div>
+    </div>
   </div>
   <div id="node-context-menu" hidden>
     <button id="copy-node-id-btn" type="button">Copy node ID</button>
@@ -149,6 +196,9 @@
   <script>
     const viewport = document.getElementById("viewport");
     const world = document.getElementById("world");
+    const marqueeSelection = document.getElementById("marquee-selection");
+    const groupSelectionBox = document.getElementById("group-selection-box");
+    const groupSelectionHandle = document.getElementById("group-selection-handle");
     const openFileInput = document.getElementById("open-file-input");
     const nodeContextMenu = document.getElementById("node-context-menu");
     const copyNodeIdBtn = document.getElementById("copy-node-id-btn");
@@ -159,6 +209,10 @@
     const NAVIGATION_VIEWPORT_FILL = 0.98;
     const MIN_NAVIGATION_SCALE = 0.08;
     const MAX_NAVIGATION_SCALE = 180;
+    const MARQUEE_DRAG_THRESHOLD_PX = 3;
+    const GROUP_SELECTION_PADDING_PX = 8;
+    const MIN_GROUP_RESIZE_SCALE = 0.15;
+    const MIN_BASE_FONT_SIZE = 4;
     const STORAGE_KEY = "mindmap.v1";
     const FILE_TYPES = [{
       description: "Mind Map JSON",
@@ -172,7 +226,11 @@
     let cameraAnimationFrame = null;
     let contextMenuNode = null;
     let contextMenuSelectionRange = null;
+    let marqueeSession = null;
+    let groupTransform = null;
+    let selectionBoundsWorld = null;
     const nodeHighlightTimeouts = new WeakMap();
+    const selectedNodes = new Set();
 
     const camera = {
       x: window.innerWidth / 2,
@@ -454,10 +512,276 @@
       selectionRange.insertNode(link);
     }
 
+    function isEditableTarget(target) {
+      if (!(target instanceof HTMLElement)) return false;
+      if (target.isContentEditable) return true;
+      const tag = target.tagName;
+      return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+    }
+
+    function getScreenRectBetweenPoints(startX, startY, endX, endY) {
+      const left = Math.min(startX, endX);
+      const top = Math.min(startY, endY);
+      const right = Math.max(startX, endX);
+      const bottom = Math.max(startY, endY);
+      return {
+        left,
+        top,
+        right,
+        bottom,
+        width: right - left,
+        height: bottom - top
+      };
+    }
+
+    function renderMarqueeRect(rect) {
+      marqueeSelection.hidden = false;
+      marqueeSelection.style.left = `${rect.left}px`;
+      marqueeSelection.style.top = `${rect.top}px`;
+      marqueeSelection.style.width = `${rect.width}px`;
+      marqueeSelection.style.height = `${rect.height}px`;
+    }
+
+    function hideMarqueeRect() {
+      marqueeSelection.hidden = true;
+    }
+
+    function getNodesIntersectingScreenRect(rect) {
+      const matches = [];
+      for (const node of world.children) {
+        if (!(node instanceof HTMLElement)) continue;
+        const nodeRect = node.getBoundingClientRect();
+        const intersects =
+          nodeRect.right >= rect.left &&
+          nodeRect.left <= rect.right &&
+          nodeRect.bottom >= rect.top &&
+          nodeRect.top <= rect.bottom;
+        if (intersects) matches.push(node);
+      }
+      return matches;
+    }
+
+    function applySelectionNodeClasses() {
+      for (const node of world.children) {
+        if (!(node instanceof HTMLElement)) continue;
+        node.classList.toggle("selected", selectedNodes.has(node));
+      }
+    }
+
+    function renderGroupSelectionBox() {
+      if (selectedNodes.size === 0 || !selectionBoundsWorld) {
+        groupSelectionBox.hidden = true;
+        return;
+      }
+
+      const left = camera.x + selectionBoundsWorld.minX * camera.scale - GROUP_SELECTION_PADDING_PX;
+      const top = camera.y + selectionBoundsWorld.minY * camera.scale - GROUP_SELECTION_PADDING_PX;
+      const width = selectionBoundsWorld.width * camera.scale + GROUP_SELECTION_PADDING_PX * 2;
+      const height = selectionBoundsWorld.height * camera.scale + GROUP_SELECTION_PADDING_PX * 2;
+
+      groupSelectionBox.hidden = false;
+      groupSelectionBox.style.left = `${left}px`;
+      groupSelectionBox.style.top = `${top}px`;
+      groupSelectionBox.style.width = `${width}px`;
+      groupSelectionBox.style.height = `${height}px`;
+    }
+
+    function refreshSelectionBounds() {
+      if (selectedNodes.size === 0) {
+        selectionBoundsWorld = null;
+        renderGroupSelectionBox();
+        return;
+      }
+
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+
+      for (const node of selectedNodes) {
+        if (!world.contains(node)) continue;
+        const x = Number(node.dataset.x);
+        const y = Number(node.dataset.y);
+        const size = getNodeWorldSize(node);
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x + size.width);
+        maxY = Math.max(maxY, y + size.height);
+      }
+
+      if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+        selectedNodes.clear();
+        selectionBoundsWorld = null;
+        applySelectionNodeClasses();
+        renderGroupSelectionBox();
+        return;
+      }
+
+      selectionBoundsWorld = {
+        minX,
+        minY,
+        maxX,
+        maxY,
+        width: Math.max(0.001, maxX - minX),
+        height: Math.max(0.001, maxY - minY)
+      };
+      renderGroupSelectionBox();
+    }
+
+    function setSelectedNodes(nodes) {
+      const next = new Set();
+      for (const node of nodes) {
+        if (node instanceof HTMLElement && world.contains(node)) {
+          next.add(node);
+        }
+      }
+
+      selectedNodes.clear();
+      for (const node of next) {
+        selectedNodes.add(node);
+      }
+
+      applySelectionNodeClasses();
+      refreshSelectionBounds();
+    }
+
+    function clearSelection() {
+      if (selectedNodes.size === 0) {
+        selectionBoundsWorld = null;
+        renderGroupSelectionBox();
+        return;
+      }
+      selectedNodes.clear();
+      applySelectionNodeClasses();
+      refreshSelectionBounds();
+    }
+
+    function beginMarqueeSelection(event) {
+      marqueeSession = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        currentX: event.clientX,
+        currentY: event.clientY,
+        hasMoved: false
+      };
+      viewport.setPointerCapture(event.pointerId);
+    }
+
+    function updateMarqueeSelection(event) {
+      if (!marqueeSession || event.pointerId !== marqueeSession.pointerId) return;
+      marqueeSession.currentX = event.clientX;
+      marqueeSession.currentY = event.clientY;
+
+      const distance = Math.hypot(
+        marqueeSession.currentX - marqueeSession.startX,
+        marqueeSession.currentY - marqueeSession.startY
+      );
+      if (!marqueeSession.hasMoved && distance >= MARQUEE_DRAG_THRESHOLD_PX) {
+        marqueeSession.hasMoved = true;
+      }
+      if (!marqueeSession.hasMoved) return;
+
+      const rect = getScreenRectBetweenPoints(
+        marqueeSession.startX,
+        marqueeSession.startY,
+        marqueeSession.currentX,
+        marqueeSession.currentY
+      );
+      renderMarqueeRect(rect);
+      setSelectedNodes(getNodesIntersectingScreenRect(rect));
+    }
+
+    function endMarqueeSelection(event) {
+      if (!marqueeSession || event.pointerId !== marqueeSession.pointerId) return;
+      const didMove = marqueeSession.hasMoved;
+      if (viewport.hasPointerCapture(event.pointerId)) {
+        viewport.releasePointerCapture(event.pointerId);
+      }
+      marqueeSession = null;
+      hideMarqueeRect();
+      if (!didMove) {
+        clearSelection();
+      }
+    }
+
+    function beginGroupTransform(event, mode, captureElement) {
+      if (event.button !== 0) return;
+      if (selectedNodes.size === 0 || !selectionBoundsWorld) return;
+
+      closeNodeContextMenu();
+      cancelCameraAnimation();
+
+      groupTransform = {
+        pointerId: event.pointerId,
+        mode,
+        captureElement,
+        startPointer: screenToWorld(event.clientX, event.clientY),
+        initialBounds: { ...selectionBoundsWorld },
+        nodeSnapshots: Array.from(selectedNodes).map((node) => ({
+          node,
+          x: Number(node.dataset.x),
+          y: Number(node.dataset.y),
+          baseFontSize: Number(node.dataset.baseFontSize)
+        }))
+      };
+
+      captureElement.setPointerCapture(event.pointerId);
+      event.preventDefault();
+      event.stopPropagation();
+    }
+
+    function updateGroupTransform(event) {
+      if (!groupTransform || event.pointerId !== groupTransform.pointerId) return;
+
+      const pointer = screenToWorld(event.clientX, event.clientY);
+      const dx = pointer.x - groupTransform.startPointer.x;
+      const dy = pointer.y - groupTransform.startPointer.y;
+
+      if (groupTransform.mode === "drag") {
+        for (const snapshot of groupTransform.nodeSnapshots) {
+          setNodePosition(snapshot.node, snapshot.x + dx, snapshot.y + dy, { skipSelectionUpdate: true });
+        }
+        refreshSelectionBounds();
+        return;
+      }
+
+      const initialWidth = Math.max(0.001, groupTransform.initialBounds.width);
+      const initialHeight = Math.max(0.001, groupTransform.initialBounds.height);
+      const nextWidth = Math.max(initialWidth * MIN_GROUP_RESIZE_SCALE, initialWidth + dx);
+      const nextHeight = Math.max(initialHeight * MIN_GROUP_RESIZE_SCALE, initialHeight + dy);
+      const scaleX = nextWidth / initialWidth;
+      const scaleY = nextHeight / initialHeight;
+      const fontScale = Math.max(MIN_GROUP_RESIZE_SCALE, Math.sqrt(scaleX * scaleY));
+
+      for (const snapshot of groupTransform.nodeSnapshots) {
+        const nextX = groupTransform.initialBounds.minX + (snapshot.x - groupTransform.initialBounds.minX) * scaleX;
+        const nextY = groupTransform.initialBounds.minY + (snapshot.y - groupTransform.initialBounds.minY) * scaleY;
+        snapshot.node.dataset.baseFontSize = String(
+          Math.max(MIN_BASE_FONT_SIZE, snapshot.baseFontSize * fontScale)
+        );
+        setNodePosition(snapshot.node, nextX, nextY, { skipSelectionUpdate: true });
+      }
+
+      refreshSelectionBounds();
+    }
+
+    function endGroupTransform(event) {
+      if (!groupTransform || event.pointerId !== groupTransform.pointerId) return;
+      const { captureElement, pointerId } = groupTransform;
+      if (captureElement.hasPointerCapture(pointerId)) {
+        captureElement.releasePointerCapture(pointerId);
+      }
+      groupTransform = null;
+      refreshSelectionBounds();
+      scheduleAutosave();
+    }
+
     function render() {
       for (const node of world.children) {
         renderNode(node);
       }
+      renderGroupSelectionBox();
     }
 
     function screenToWorld(clientX, clientY) {
@@ -467,10 +791,14 @@
       };
     }
 
-    function setNodePosition(node, x, y) {
+    function setNodePosition(node, x, y, options = {}) {
+      const { skipSelectionUpdate = false } = options;
       node.dataset.x = String(x);
       node.dataset.y = String(y);
       renderNode(node);
+      if (!skipSelectionUpdate && selectedNodes.has(node)) {
+        refreshSelectionBounds();
+      }
     }
 
     function renderNode(node) {
@@ -553,6 +881,10 @@
       suppressAutosave = true;
       cancelCameraAnimation();
       closeNodeContextMenu();
+      clearSelection();
+      hideMarqueeRect();
+      marqueeSession = null;
+      groupTransform = null;
       world.innerHTML = "";
       nextNodeNumber = 1;
 
@@ -656,6 +988,9 @@
       node.addEventListener("pointerdown", (event) => {
         if (event.button !== 0 || node.classList.contains("editing")) return;
         if (event.target instanceof Element && event.target.closest(".internal-link")) return;
+        if (selectedNodes.size > 0 && !selectedNodes.has(node)) {
+          clearSelection();
+        }
         closeNodeContextMenu();
         cancelCameraAnimation();
         dragPointerId = event.pointerId;
@@ -687,6 +1022,7 @@
 
       node.addEventListener("dblclick", (event) => {
         event.stopPropagation();
+        clearSelection();
         startEditing(node);
       });
 
@@ -818,11 +1154,44 @@
       }
     });
 
+    groupSelectionBox.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+    });
+
+    groupSelectionBox.addEventListener("pointerdown", (event) => {
+      if (event.target === groupSelectionHandle) return;
+      beginGroupTransform(event, "drag", groupSelectionBox);
+    });
+
+    groupSelectionBox.addEventListener("pointermove", updateGroupTransform);
+    groupSelectionBox.addEventListener("pointerup", endGroupTransform);
+    groupSelectionBox.addEventListener("pointercancel", endGroupTransform);
+
+    groupSelectionHandle.addEventListener("pointerdown", (event) => {
+      beginGroupTransform(event, "resize", groupSelectionHandle);
+    });
+    groupSelectionHandle.addEventListener("pointermove", updateGroupTransform);
+    groupSelectionHandle.addEventListener("pointerup", endGroupTransform);
+    groupSelectionHandle.addEventListener("pointercancel", endGroupTransform);
+
     window.addEventListener("pointerdown", (event) => {
       if (nodeContextMenu.hidden) return;
       if (event.target instanceof Node && nodeContextMenu.contains(event.target)) return;
       closeNodeContextMenu();
     }, { capture: true });
+
+    viewport.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      if (event.target !== viewport && event.target !== world) return;
+      closeNodeContextMenu();
+      cancelCameraAnimation();
+      beginMarqueeSelection(event);
+      event.preventDefault();
+    });
+
+    viewport.addEventListener("pointermove", updateMarqueeSelection);
+    viewport.addEventListener("pointerup", endMarqueeSelection);
+    viewport.addEventListener("pointercancel", endMarqueeSelection);
 
     viewport.addEventListener("wheel", (event) => {
       event.preventDefault();
@@ -861,6 +1230,7 @@
     viewport.addEventListener("dblclick", (event) => {
       if (event.target !== viewport && event.target !== world) return;
       closeNodeContextMenu();
+      clearSelection();
       const point = screenToWorld(event.clientX, event.clientY);
       const node = createTextNode(point.x, point.y);
       const nodeWorldSize = getNodeWorldSize(node);
@@ -890,6 +1260,20 @@
     window.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
         closeNodeContextMenu();
+      }
+
+      if ((event.key === "Backspace" || event.key === "Delete") && selectedNodes.size > 0) {
+        if (isEditableTarget(event.target)) return;
+        event.preventDefault();
+        closeNodeContextMenu();
+        for (const node of Array.from(selectedNodes)) {
+          if (world.contains(node)) {
+            world.removeChild(node);
+          }
+        }
+        clearSelection();
+        scheduleAutosave();
+        return;
       }
 
       const key = event.key.toLowerCase();
