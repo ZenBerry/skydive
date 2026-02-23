@@ -519,6 +519,22 @@
       return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
     }
 
+    function getActiveEditingNode() {
+      for (const node of world.children) {
+        if (node instanceof HTMLElement && node.classList.contains("editing")) {
+          return node;
+        }
+      }
+      return null;
+    }
+
+    function deactivateEditingNodeOnOutsidePointerDown(target) {
+      const editingNode = getActiveEditingNode();
+      if (!editingNode) return;
+      if (target instanceof Node && editingNode.contains(target)) return;
+      editingNode.blur();
+    }
+
     function getScreenRectBetweenPoints(startX, startY, endX, endY) {
       const left = Math.min(startX, endX);
       const top = Math.min(startY, endY);
@@ -1175,6 +1191,7 @@
     groupSelectionHandle.addEventListener("pointercancel", endGroupTransform);
 
     window.addEventListener("pointerdown", (event) => {
+      deactivateEditingNodeOnOutsidePointerDown(event.target);
       if (nodeContextMenu.hidden) return;
       if (event.target instanceof Node && nodeContextMenu.contains(event.target)) return;
       closeNodeContextMenu();
