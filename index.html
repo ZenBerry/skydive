@@ -211,8 +211,6 @@
     const MAX_NAVIGATION_SCALE = 180;
     const MARQUEE_DRAG_THRESHOLD_PX = 3;
     const GROUP_SELECTION_PADDING_PX = 8;
-    const MIN_GROUP_RESIZE_SCALE = 0.15;
-    const MIN_BASE_FONT_SIZE = 4;
     const STORAGE_KEY = "mindmap.v1";
     const FILE_TYPES = [{
       description: "Mind Map JSON",
@@ -764,17 +762,17 @@
 
       const initialWidth = Math.max(0.001, groupTransform.initialBounds.width);
       const initialHeight = Math.max(0.001, groupTransform.initialBounds.height);
-      const nextWidth = Math.max(initialWidth * MIN_GROUP_RESIZE_SCALE, initialWidth + dx);
-      const nextHeight = Math.max(initialHeight * MIN_GROUP_RESIZE_SCALE, initialHeight + dy);
+      const nextWidth = Math.max(0.001, initialWidth + dx);
+      const nextHeight = Math.max(0.001, initialHeight + dy);
       const scaleX = nextWidth / initialWidth;
       const scaleY = nextHeight / initialHeight;
-      const fontScale = Math.max(MIN_GROUP_RESIZE_SCALE, Math.sqrt(scaleX * scaleY));
+      const fontScale = Math.sqrt(scaleX * scaleY);
 
       for (const snapshot of groupTransform.nodeSnapshots) {
         const nextX = groupTransform.initialBounds.minX + (snapshot.x - groupTransform.initialBounds.minX) * scaleX;
         const nextY = groupTransform.initialBounds.minY + (snapshot.y - groupTransform.initialBounds.minY) * scaleY;
         snapshot.node.dataset.baseFontSize = String(
-          Math.max(MIN_BASE_FONT_SIZE, snapshot.baseFontSize * fontScale)
+          Math.max(0.001, snapshot.baseFontSize * fontScale)
         );
         setNodePosition(snapshot.node, nextX, nextY, { skipSelectionUpdate: true });
       }
