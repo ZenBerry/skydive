@@ -208,6 +208,8 @@
     const ZOOM_SENSITIVITY = 0.012;
     const NAVIGATION_VIEWPORT_FILL = 0.98;
     const MIN_NAVIGATION_SCALE = 0.08;
+    const NODE_MIN_WIDTH_PX = 12;
+    const NODE_MIN_HEIGHT_EM = 1;
     const MARQUEE_DRAG_THRESHOLD_PX = 3;
     const GROUP_SELECTION_PADDING_PX = 8;
     const STORAGE_KEY = "mindmap.v1";
@@ -507,10 +509,21 @@
       const nodeWorldSize = getNodeIntrinsicWorldSize(node);
       const targetScale = getNodeFitScale(nodeWorldSize);
 
-      const nodeX = Number.isFinite(Number(node.dataset.x)) ? Number(node.dataset.x) : 0;
-      const nodeY = Number.isFinite(Number(node.dataset.y)) ? Number(node.dataset.y) : 0;
-      const nodeCenterWorldX = nodeX + nodeWorldSize.width / 2;
-      const nodeCenterWorldY = nodeY + nodeWorldSize.height / 2;
+      const rect = node.getBoundingClientRect();
+      const nodeXRaw = Number(node.dataset.x);
+      const nodeYRaw = Number(node.dataset.y);
+      const nodeX = Number.isFinite(nodeXRaw) ? nodeXRaw : (rect.left - camera.x) / camera.scale;
+      const nodeY = Number.isFinite(nodeYRaw) ? nodeYRaw : (rect.top - camera.y) / camera.scale;
+      const baseFontSizeRaw = Number(node.dataset.baseFontSize);
+      const baseFontSize = Number.isFinite(baseFontSizeRaw) && baseFontSizeRaw > 0
+        ? baseFontSizeRaw
+        : BASE_TEXT_PX;
+
+      // Predict rendered world size at target scale so pan and zoom agree for tiny nodes.
+      const targetWorldWidth = Math.max(nodeWorldSize.width, NODE_MIN_WIDTH_PX / targetScale);
+      const targetWorldHeight = Math.max(nodeWorldSize.height, baseFontSize * NODE_MIN_HEIGHT_EM);
+      const nodeCenterWorldX = nodeX + targetWorldWidth / 2;
+      const nodeCenterWorldY = nodeY + targetWorldHeight / 2;
       const viewWidth = Math.max(1, viewport.clientWidth);
       const viewHeight = Math.max(1, viewport.clientHeight);
       const targetX = viewWidth / 2 - nodeCenterWorldX * targetScale;
