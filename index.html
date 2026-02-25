@@ -208,7 +208,6 @@
     const ZOOM_SENSITIVITY = 0.012;
     const NAVIGATION_VIEWPORT_FILL = 0.98;
     const MIN_NAVIGATION_SCALE = 0.08;
-    const MAX_NAVIGATION_SCALE = 180;
     const MARQUEE_DRAG_THRESHOLD_PX = 3;
     const GROUP_SELECTION_PADDING_PX = 8;
     const STORAGE_KEY = "mindmap.v1";
@@ -413,12 +412,44 @@
       };
     }
 
+    function getNodeIntrinsicWorldSize(node) {
+      const baseFontSizeRaw = Number(node.dataset.baseFontSize);
+      const baseFontSize = Number.isFinite(baseFontSizeRaw) && baseFontSizeRaw > 0
+        ? baseFontSizeRaw
+        : BASE_TEXT_PX;
+
+      const probe = node.cloneNode(true);
+      probe.classList.remove("selected", "navigation-target-highlight", "editing");
+      probe.contentEditable = "false";
+
+      // Measure in a hidden probe at scale 1 to avoid viewport/layout floors (for example min-width).
+      probe.style.position = "fixed";
+      probe.style.left = "-100000px";
+      probe.style.top = "-100000px";
+      probe.style.visibility = "hidden";
+      probe.style.pointerEvents = "none";
+      probe.style.minWidth = "0";
+      probe.style.minHeight = "0";
+      probe.style.width = "max-content";
+      probe.style.maxWidth = "none";
+      probe.style.fontSize = `${baseFontSize}px`;
+
+      document.body.appendChild(probe);
+      const rect = probe.getBoundingClientRect();
+      probe.remove();
+
+      return {
+        width: Math.max(0.001, rect.width),
+        height: Math.max(0.001, rect.height)
+      };
+    }
+
     function getNodeFitScale(nodeWorldSize) {
       const viewWidth = Math.max(1, viewport.clientWidth);
       const scaleByWidth = (viewWidth * NAVIGATION_VIEWPORT_FILL) / nodeWorldSize.width;
       // Width-driven zoom makes short/long single-line nodes scale predictably.
       const targetScale = scaleByWidth;
-      return clamp(targetScale, MIN_NAVIGATION_SCALE, MAX_NAVIGATION_SCALE);
+      return Math.max(MIN_NAVIGATION_SCALE, targetScale);
     }
 
     function getNavigationDuration(targetX, targetY, targetScale) {
@@ -473,11 +504,13 @@
     }
 
     function focusNodeFullScreen(node) {
-      const nodeWorldSize = getNodeWorldSize(node);
+      const nodeWorldSize = getNodeIntrinsicWorldSize(node);
       const targetScale = getNodeFitScale(nodeWorldSize);
 
-      const nodeCenterWorldX = Number(node.dataset.x) + nodeWorldSize.width / 2;
-      const nodeCenterWorldY = Number(node.dataset.y) + nodeWorldSize.height / 2;
+      const nodeX = Number.isFinite(Number(node.dataset.x)) ? Number(node.dataset.x) : 0;
+      const nodeY = Number.isFinite(Number(node.dataset.y)) ? Number(node.dataset.y) : 0;
+      const nodeCenterWorldX = nodeX + nodeWorldSize.width / 2;
+      const nodeCenterWorldY = nodeY + nodeWorldSize.height / 2;
       const viewWidth = Math.max(1, viewport.clientWidth);
       const viewHeight = Math.max(1, viewport.clientHeight);
       const targetX = viewWidth / 2 - nodeCenterWorldX * targetScale;
