@@ -177,6 +177,25 @@
       box-sizing: border-box;
       cursor: nwse-resize;
     }
+
+    .fit-marker {
+      position: fixed;
+      width: 10px;
+      height: 10px;
+      transform: translate(-50%, -50%);
+      box-sizing: border-box;
+      border: 1px solid rgba(0, 0, 0, 0.45);
+      pointer-events: none;
+      z-index: 1500;
+    }
+
+    .fit-marker.guide {
+      background: #22c55e;
+    }
+
+    .fit-marker.target {
+      background: #facc15;
+    }
   </style>
 </head>
 <body>
@@ -187,6 +206,10 @@
       <div id="group-selection-handle"></div>
     </div>
   </div>
+  <div id="fit-guide-left" class="fit-marker guide" aria-hidden="true"></div>
+  <div id="fit-guide-right" class="fit-marker guide" aria-hidden="true"></div>
+  <div id="fit-target-left" class="fit-marker target" aria-hidden="true" hidden></div>
+  <div id="fit-target-right" class="fit-marker target" aria-hidden="true" hidden></div>
   <div id="node-context-menu" hidden>
     <button id="copy-node-id-btn" type="button">Copy node ID</button>
     <button id="link-selection-btn" type="button">Link selection to node ID...</button>
@@ -203,13 +226,15 @@
     const nodeContextMenu = document.getElementById("node-context-menu");
     const copyNodeIdBtn = document.getElementById("copy-node-id-btn");
     const linkSelectionBtn = document.getElementById("link-selection-btn");
+    const fitGuideLeft = document.getElementById("fit-guide-left");
+    const fitGuideRight = document.getElementById("fit-guide-right");
+    const fitTargetLeft = document.getElementById("fit-target-left");
+    const fitTargetRight = document.getElementById("fit-target-right");
 
     const BASE_TEXT_PX = 28;
     const ZOOM_SENSITIVITY = 0.012;
     const NAVIGATION_VIEWPORT_FILL = 0.98;
     const MIN_NAVIGATION_SCALE = 0.08;
-    const NODE_MIN_WIDTH_PX = 12;
-    const NODE_MIN_HEIGHT_EM = 1;
     const MARQUEE_DRAG_THRESHOLD_PX = 3;
     const GROUP_SELECTION_PADDING_PX = 8;
     const STORAGE_KEY = "mindmap.v1";
@@ -228,6 +253,7 @@
     let marqueeSession = null;
     let groupTransform = null;
     let selectionBoundsWorld = null;
+    let navigationFitTargetNode = null;
     const nodeHighlightTimeouts = new WeakMap();
     const selectedNodes = new Set();
 
@@ -414,17 +440,12 @@
       };
     }
 
-    function getNodeIntrinsicWorldSize(node) {
-      const baseFontSizeRaw = Number(node.dataset.baseFontSize);
-      const baseFontSize = Number.isFinite(baseFontSizeRaw) && baseFontSizeRaw > 0
-        ? baseFontSizeRaw
-        : BASE_TEXT_PX;
-
+    function measureNodeRenderedSizePx(node, fontSizePx) {
       const probe = node.cloneNode(true);
       probe.classList.remove("selected", "navigation-target-highlight", "editing");
       probe.contentEditable = "false";
 
-      // Measure in a hidden probe at scale 1 to avoid viewport/layout floors (for example min-width).
+      // Measure in a hidden probe with node floors disabled for stable fitting math.
       probe.style.position = "fixed";
       probe.style.left = "-100000px";
       probe.style.top = "-100000px";
@@ -434,7 +455,7 @@
       probe.style.minHeight = "0";
       probe.style.width = "max-content";
       probe.style.maxWidth = "none";
-      probe.style.fontSize = `${baseFontSize}px`;
+      probe.style.fontSize = `${Math.max(0.001, fontSizePx)}px`;
 
       document.body.appendChild(probe);
       const rect = probe.getBoundingClientRect();
@@ -446,12 +467,63 @@
       };
     }
 
-    function getNodeFitScale(nodeWorldSize) {
+    function solveNodeFitScale(node, guideWidthPx) {
+      const baseFontSizeRaw = Number(node.dataset.baseFontSize);
+      const baseFontSize = Number.isFinite(baseFontSizeRaw) && baseFontSizeRaw > 0
+        ? baseFontSizeRaw
+        : BASE_TEXT_PX;
+
+      const rect = node.getBoundingClientRect();
+      const startWidth = Math.max(0.001, rect.width);
+      let scale = Math.max(MIN_NAVIGATION_SCALE, camera.scale * (guideWidthPx / startWidth));
+
+      // Converges rapidly even when tiny-font glyph rasterization is non-linear.
+      for (let i = 0; i < 6; i += 1) {
+        const measured = measureNodeRenderedSizePx(node, baseFontSize * scale);
+        const ratio = guideWidthPx / Math.max(0.001, measured.width);
+        scale = Math.max(MIN_NAVIGATION_SCALE, scale * ratio);
+        if (Math.abs(1 - ratio) < 0.0015) break;
+      }
+
+      return scale;
+    }
+
+    function getNavigationGuideBounds() {
       const viewWidth = Math.max(1, viewport.clientWidth);
-      const scaleByWidth = (viewWidth * NAVIGATION_VIEWPORT_FILL) / nodeWorldSize.width;
-      // Width-driven zoom makes short/long single-line nodes scale predictably.
-      const targetScale = scaleByWidth;
-      return Math.max(MIN_NAVIGATION_SCALE, targetScale);
+      const viewHeight = Math.max(1, viewport.clientHeight);
+      const guideWidth = Math.max(1, viewWidth * NAVIGATION_VIEWPORT_FILL);
+      const left = (viewWidth - guideWidth) / 2;
+      return {
+        left,
+        right: left + guideWidth,
+        width: guideWidth,
+        centerY: viewHeight / 2
+      };
+    }
+
+    function placeFitMarker(marker, x, y, visible = true) {
+      if (!marker) return;
+      marker.hidden = !visible;
+      if (!visible) return;
+      marker.style.left = `${x}px`;
+      marker.style.top = `${y}px`;
+    }
+
+    function renderNavigationFitMarkers() {
+      const guide = getNavigationGuideBounds();
+      placeFitMarker(fitGuideLeft, guide.left, guide.centerY, true);
+      placeFitMarker(fitGuideRight, guide.right, guide.centerY, true);
+
+      if (!navigationFitTargetNode || !world.contains(navigationFitTargetNode)) {
+        placeFitMarker(fitTargetLeft, 0, 0, false);
+        placeFitMarker(fitTargetRight, 0, 0, false);
+        return;
+      }
+
+      const rect = navigationFitTargetNode.getBoundingClientRect();
+      const centerY = rect.top + rect.height / 2;
+      placeFitMarker(fitTargetLeft, rect.left, centerY, true);
+      placeFitMarker(fitTargetRight, rect.right, centerY, true);
     }
 
     function getNavigationDuration(targetX, targetY, targetScale) {
@@ -506,28 +578,22 @@
     }
 
     function focusNodeFullScreen(node) {
-      const nodeWorldSize = getNodeIntrinsicWorldSize(node);
-      const targetScale = getNodeFitScale(nodeWorldSize);
+      const guide = getNavigationGuideBounds();
+      const targetScale = solveNodeFitScale(node, guide.width);
+      navigationFitTargetNode = node;
 
       const rect = node.getBoundingClientRect();
-      const nodeXRaw = Number(node.dataset.x);
-      const nodeYRaw = Number(node.dataset.y);
-      const nodeX = Number.isFinite(nodeXRaw) ? nodeXRaw : (rect.left - camera.x) / camera.scale;
-      const nodeY = Number.isFinite(nodeYRaw) ? nodeYRaw : (rect.top - camera.y) / camera.scale;
       const baseFontSizeRaw = Number(node.dataset.baseFontSize);
       const baseFontSize = Number.isFinite(baseFontSizeRaw) && baseFontSizeRaw > 0
         ? baseFontSizeRaw
         : BASE_TEXT_PX;
-
-      // Predict rendered world size at target scale so pan and zoom agree for tiny nodes.
-      const targetWorldWidth = Math.max(nodeWorldSize.width, NODE_MIN_WIDTH_PX / targetScale);
-      const targetWorldHeight = Math.max(nodeWorldSize.height, baseFontSize * NODE_MIN_HEIGHT_EM);
-      const nodeCenterWorldX = nodeX + targetWorldWidth / 2;
-      const nodeCenterWorldY = nodeY + targetWorldHeight / 2;
-      const viewWidth = Math.max(1, viewport.clientWidth);
-      const viewHeight = Math.max(1, viewport.clientHeight);
-      const targetX = viewWidth / 2 - nodeCenterWorldX * targetScale;
-      const targetY = viewHeight / 2 - nodeCenterWorldY * targetScale;
+      const nodeXRaw = Number(node.dataset.x);
+      const nodeYRaw = Number(node.dataset.y);
+      const nodeX = Number.isFinite(nodeXRaw) ? nodeXRaw : (rect.left - camera.x) / camera.scale;
+      const nodeY = Number.isFinite(nodeYRaw) ? nodeYRaw : (rect.top - camera.y) / camera.scale;
+      const finalMeasured = measureNodeRenderedSizePx(node, baseFontSize * targetScale);
+      const targetX = guide.left - nodeX * targetScale;
+      const targetY = guide.centerY - nodeY * targetScale - finalMeasured.height / 2;
       const duration = getNavigationDuration(targetX, targetY, targetScale);
 
       // highlightNavigationTarget(node);
@@ -842,6 +908,7 @@
         renderNode(node);
       }
       renderGroupSelectionBox();
+      renderNavigationFitMarkers();
     }
 
     function screenToWorld(clientX, clientY) {
@@ -945,6 +1012,7 @@
       hideMarqueeRect();
       marqueeSession = null;
       groupTransform = null;
+      navigationFitTargetNode = null;
       world.innerHTML = "";
       nextNodeNumber = 1;
 
