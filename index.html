@@ -206,8 +206,8 @@
       <div id="group-selection-handle"></div>
     </div>
   </div>
-  <div id="fit-guide-left" class="fit-marker guide" aria-hidden="true"></div>
-  <div id="fit-guide-right" class="fit-marker guide" aria-hidden="true"></div>
+  <div id="fit-guide-left" class="fit-marker guide" aria-hidden="true" hidden></div>
+  <div id="fit-guide-right" class="fit-marker guide" aria-hidden="true" hidden></div>
   <div id="fit-target-left" class="fit-marker target" aria-hidden="true" hidden></div>
   <div id="fit-target-right" class="fit-marker target" aria-hidden="true" hidden></div>
   <div id="node-context-menu" hidden>
@@ -254,6 +254,7 @@
     let groupTransform = null;
     let selectionBoundsWorld = null;
     let navigationFitTargetNode = null;
+    let navigationFitMarkersVisible = false;
     const nodeHighlightTimeouts = new WeakMap();
     const selectedNodes = new Set();
 
@@ -510,6 +511,14 @@
     }
 
     function renderNavigationFitMarkers() {
+      if (!navigationFitMarkersVisible) {
+        placeFitMarker(fitGuideLeft, 0, 0, false);
+        placeFitMarker(fitGuideRight, 0, 0, false);
+        placeFitMarker(fitTargetLeft, 0, 0, false);
+        placeFitMarker(fitTargetRight, 0, 0, false);
+        return;
+      }
+
       const guide = getNavigationGuideBounds();
       placeFitMarker(fitGuideLeft, guide.left, guide.centerY, true);
       placeFitMarker(fitGuideRight, guide.right, guide.centerY, true);
@@ -1406,6 +1415,13 @@
       }
 
       const key = event.key.toLowerCase();
+      if (event.altKey && !event.metaKey && !event.ctrlKey && event.code === "KeyD") {
+        event.preventDefault();
+        navigationFitMarkersVisible = !navigationFitMarkersVisible;
+        render();
+        return;
+      }
+
       const hasPrimaryModifier = event.metaKey || event.ctrlKey;
       if (!hasPrimaryModifier) return;
 
