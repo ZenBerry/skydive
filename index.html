@@ -142,6 +142,67 @@
       cursor: not-allowed;
     }
 
+    #link-node-dialog {
+      position: fixed;
+      z-index: 1100;
+      width: min(300px, calc(100vw - 16px));
+      padding: 6px;
+      border: 1px solid #d0d0d0;
+      border-radius: 8px;
+      background: #fff;
+      box-shadow: 0 6px 22px rgba(0, 0, 0, 0.12);
+      display: grid;
+      gap: 4px;
+    }
+
+    #link-node-dialog[hidden] {
+      display: none;
+    }
+
+    #link-node-dialog-title {
+      padding: 8px 10px 6px;
+      border-radius: 6px;
+      font: 500 14px/1.2 "Roboto", sans-serif;
+      color: #111;
+      cursor: move;
+      touch-action: none;
+    }
+
+    #link-node-dialog-input {
+      border: 1px solid #d0d0d0;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font: 500 14px/1.2 "Roboto", sans-serif;
+      color: #111;
+      outline: none;
+    }
+
+    #link-node-dialog-input:focus {
+      border-color: #2563eb;
+      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.16);
+    }
+
+    #link-node-dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 4px;
+    }
+
+    #link-node-dialog button {
+      border: 0;
+      background: transparent;
+      padding: 8px 10px;
+      text-align: left;
+      border-radius: 6px;
+      font: 500 14px/1.2 "Roboto", sans-serif;
+      color: #111;
+      cursor: pointer;
+    }
+
+    #link-node-dialog button:hover {
+      background: #f2f4f7;
+    }
+
     #marquee-selection {
       position: absolute;
       z-index: 430;
@@ -216,6 +277,14 @@
     <button id="copy-node-id-btn" type="button">Copy node ID</button>
     <button id="link-selection-btn" type="button">Link selection to node ID...</button>
   </div>
+  <div id="link-node-dialog" hidden>
+    <div id="link-node-dialog-title">Paste target node ID</div>
+    <input id="link-node-dialog-input" type="text" autocomplete="off" spellcheck="false">
+    <div id="link-node-dialog-actions">
+      <button id="link-node-dialog-cancel-btn" type="button">Cancel</button>
+      <button id="link-node-dialog-confirm-btn" type="button">Link</button>
+    </div>
+  </div>
   <input id="open-file-input" type="file" accept=".mind.json,.json,application/json" hidden>
 
   <script>
@@ -228,6 +297,11 @@
     const nodeContextMenu = document.getElementById("node-context-menu");
     const copyNodeIdBtn = document.getElementById("copy-node-id-btn");
     const linkSelectionBtn = document.getElementById("link-selection-btn");
+    const linkNodeDialog = document.getElementById("link-node-dialog");
+    const linkNodeDialogTitle = document.getElementById("link-node-dialog-title");
+    const linkNodeDialogInput = document.getElementById("link-node-dialog-input");
+    const linkNodeDialogCancelBtn = document.getElementById("link-node-dialog-cancel-btn");
+    const linkNodeDialogConfirmBtn = document.getElementById("link-node-dialog-confirm-btn");
     const fitGuideLeft = document.getElementById("fit-guide-left");
     const fitGuideRight = document.getElementById("fit-guide-right");
     const fitTargetLeft = document.getElementById("fit-target-left");
@@ -252,6 +326,9 @@
     let cameraAnimationFrame = null;
     let contextMenuNode = null;
     let contextMenuSelectionRange = null;
+    let pendingLinkSourceNode = null;
+    let pendingLinkSelectionRange = null;
+    let linkDialogDrag = null;
     let marqueeSession = null;
     let groupTransform = null;
     let selectionBoundsWorld = null;
@@ -401,7 +478,75 @@
       nodeContextMenu.hidden = true;
     }
 
+    function closeLinkNodeDialog() {
+      pendingLinkSourceNode = null;
+      pendingLinkSelectionRange = null;
+      linkDialogDrag = null;
+      linkNodeDialog.hidden = true;
+    }
+
+    function positionLinkNodeDialog(clientX, clientY) {
+      const desiredX = Number.isFinite(clientX) ? clientX : window.innerWidth / 2;
+      const desiredY = Number.isFinite(clientY) ? clientY : window.innerHeight / 2;
+      const rect = linkNodeDialog.getBoundingClientRect();
+      const left = clamp(desiredX, 8, Math.max(8, window.innerWidth - rect.width - 8));
+      const top = clamp(desiredY, 8, Math.max(8, window.innerHeight - rect.height - 8));
+      linkNodeDialog.style.left = `${left}px`;
+      linkNodeDialog.style.top = `${top}px`;
+    }
+
+    function openLinkNodeDialog(sourceNode, selectionRange, clientX, clientY) {
+      pendingLinkSourceNode = sourceNode;
+      pendingLinkSelectionRange = selectionRange;
+      linkNodeDialogInput.value = "";
+      linkNodeDialog.hidden = false;
+      positionLinkNodeDialog(clientX, clientY);
+      linkNodeDialogInput.focus();
+      linkNodeDialogInput.select();
+    }
+
+    function submitLinkNodeDialog() {
+      const sourceNode = pendingLinkSourceNode;
+      const selectionRange = pendingLinkSelectionRange;
+      if (!sourceNode || !selectionRange) {
+        closeLinkNodeDialog();
+        alert("Select a word inside the node first.");
+        return;
+      }
+
+      const targetNodeId = linkNodeDialogInput.value.trim();
+      if (!targetNodeId) {
+        alert("Target node ID is required.");
+        linkNodeDialogInput.focus();
+        return;
+      }
+
+      const targetNode = getNodeById(targetNodeId);
+      if (!targetNode) {
+        alert(`Node "${targetNodeId}" does not exist.`);
+        linkNodeDialogInput.focus();
+        return;
+      }
+
+      if (targetNode === sourceNode) {
+        alert("Choose a different node ID.");
+        linkNodeDialogInput.focus();
+        return;
+      }
+
+      try {
+        linkSelectionToTarget(sourceNode, selectionRange, targetNodeId);
+        normalizeNodeMarkup(sourceNode);
+        scheduleAutosave();
+        closeLinkNodeDialog();
+      } catch (error) {
+        console.error("Linking failed:", error);
+        alert("Could not link the selected text.");
+      }
+    }
+
     function openNodeContextMenu(node, clientX, clientY) {
+      closeLinkNodeDialog();
       contextMenuNode = node;
       contextMenuSelectionRange = getSelectionRangeWithinNode(node);
       linkSelectionBtn.disabled = !contextMenuSelectionRange;
@@ -1019,6 +1164,7 @@
       suppressAutosave = true;
       cancelCameraAnimation();
       closeNodeContextMenu();
+      closeLinkNodeDialog();
       clearSelection();
       hideMarqueeRect();
       marqueeSession = null;
@@ -1254,44 +1400,77 @@
       }
     });
 
-    linkSelectionBtn.addEventListener("click", () => {
+    linkSelectionBtn.addEventListener("click", (event) => {
       const sourceNode = contextMenuNode;
       const selectionRange = contextMenuSelectionRange;
+      const menuRect = nodeContextMenu.getBoundingClientRect();
+      const hasPointerLocation =
+        Number.isFinite(event.clientX) &&
+        Number.isFinite(event.clientY) &&
+        event.clientX > 0 &&
+        event.clientY > 0;
+      const spawnX = hasPointerLocation ? event.clientX : menuRect.left + 12;
+      const spawnY = hasPointerLocation ? event.clientY : menuRect.top + 12;
       closeNodeContextMenu();
       if (!sourceNode || !selectionRange) {
         alert("Select a word inside the node first.");
         return;
       }
+      openLinkNodeDialog(sourceNode, selectionRange, spawnX, spawnY);
+    });
 
-      const targetNodeIdRaw = window.prompt("Paste target node ID");
-      if (targetNodeIdRaw === null) return;
+    linkNodeDialogCancelBtn.addEventListener("click", () => {
+      closeLinkNodeDialog();
+    });
 
-      const targetNodeId = targetNodeIdRaw.trim();
-      if (!targetNodeId) {
-        alert("Target node ID is required.");
-        return;
+    linkNodeDialogConfirmBtn.addEventListener("click", () => {
+      submitLinkNodeDialog();
+    });
+
+    linkNodeDialogInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        submitLinkNodeDialog();
       }
 
-      const targetNode = getNodeById(targetNodeId);
-      if (!targetNode) {
-        alert(`Node "${targetNodeId}" does not exist.`);
-        return;
-      }
-
-      if (targetNode === sourceNode) {
-        alert("Choose a different node ID.");
-        return;
-      }
-
-      try {
-        linkSelectionToTarget(sourceNode, selectionRange, targetNodeId);
-        normalizeNodeMarkup(sourceNode);
-        scheduleAutosave();
-      } catch (error) {
-        console.error("Linking failed:", error);
-        alert("Could not link the selected text.");
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeLinkNodeDialog();
       }
     });
+
+    linkNodeDialogTitle.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || linkNodeDialog.hidden) return;
+      const rect = linkNodeDialog.getBoundingClientRect();
+      linkDialogDrag = {
+        pointerId: event.pointerId,
+        offsetX: event.clientX - rect.left,
+        offsetY: event.clientY - rect.top
+      };
+      linkNodeDialogTitle.setPointerCapture(event.pointerId);
+      event.preventDefault();
+      event.stopPropagation();
+    });
+
+    linkNodeDialogTitle.addEventListener("pointermove", (event) => {
+      if (!linkDialogDrag || event.pointerId !== linkDialogDrag.pointerId) return;
+      positionLinkNodeDialog(
+        event.clientX - linkDialogDrag.offsetX,
+        event.clientY - linkDialogDrag.offsetY
+      );
+      event.preventDefault();
+    });
+
+    function endLinkNodeDialogDrag(event) {
+      if (!linkDialogDrag || event.pointerId !== linkDialogDrag.pointerId) return;
+      if (linkNodeDialogTitle.hasPointerCapture(linkDialogDrag.pointerId)) {
+        linkNodeDialogTitle.releasePointerCapture(linkDialogDrag.pointerId);
+      }
+      linkDialogDrag = null;
+    }
+
+    linkNodeDialogTitle.addEventListener("pointerup", endLinkNodeDialogDrag);
+    linkNodeDialogTitle.addEventListener("pointercancel", endLinkNodeDialogDrag);
 
     groupSelectionBox.addEventListener("contextmenu", (event) => {
       event.preventDefault();
@@ -1400,6 +1579,7 @@
     window.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
         closeNodeContextMenu();
+        closeLinkNodeDialog();
       }
 
       if ((event.key === "Backspace" || event.key === "Delete") && selectedNodes.size > 0) {
@@ -1440,6 +1620,7 @@
 
     window.addEventListener("resize", () => {
       closeNodeContextMenu();
+      closeLinkNodeDialog();
       render();
     });
 
