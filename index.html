@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Skydive</title>
   <script src="https://unpkg.com/@zenberry/quico@latest/dist/quico.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
   <quico>S</quico>
   <style>
     @import url("https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap");
@@ -316,18 +315,8 @@
     const MARQUEE_DRAG_THRESHOLD_PX = 3;
     const GROUP_SELECTION_PADDING_PX = 8;
     const STORAGE_KEY = "mindmap.v1";
-    const REDIRECT_STORAGE_KEY = "skydive.redirect";
-    restoreRedirectedPath();
     const SHARED_SPACE_SLUG = getSharedSpaceSlug();
-    const SHARED_SPACE_ROOT = "skydive.spaces.v1";
-    const SHARED_SPACE_PEERS = [
-      "https://relay.peer.ooo/gun",
-      "https://gun-manhattan.herokuapp.com/gun",
-      "https://gunjs.herokuapp.com/gun"
-    ];
-    const CLIENT_ID = window.crypto && typeof window.crypto.randomUUID === "function"
-      ? window.crypto.randomUUID()
-      : String(Date.now() + Math.random());
+    const SHARED_POLL_MS = 2000;
     const FILE_TYPES = [{
       description: "Mind Map JSON",
       accept: { "application/json": [".mind.json", ".json"] }
@@ -348,9 +337,10 @@
     let selectionBoundsWorld = null;
     let navigationFitTargetNode = null;
     let navigationFitMarkersVisible = false;
-    let sharedSpace = null;
     let latestSharedUpdatedAt = 0;
     let applyingSharedState = false;
+    let savingSharedState = false;
+    let sharedPollTimer = null;
     const nodeHighlightTimeouts = new WeakMap();
     const selectedNodes = new Set();
 
@@ -359,13 +349,6 @@
       y: window.innerHeight / 2,
       scale: 1
     };
-
-    function restoreRedirectedPath() {
-      const redirectedPath = sessionStorage.getItem(REDIRECT_STORAGE_KEY);
-      if (!redirectedPath) return;
-      sessionStorage.removeItem(REDIRECT_STORAGE_KEY);
-      history.replaceState(null, "", redirectedPath);
-    }
 
     function getSharedSpaceSlug() {
       const parts = window.location.pathname.split("/").filter(Boolean);
@@ -1180,30 +1163,52 @@
       };
     }
 
-    function saveCurrentState() {
-      const json = JSON.stringify(serializeState());
-      if (sharedSpace) {
-        latestSharedUpdatedAt = Date.now();
-        sharedSpace.put({
-          json,
-          updatedAt: latestSharedUpdatedAt,
-          clientId: CLIENT_ID
-        });
+    function getSharedSpaceUrl() {
+      return `/api/spaces/${encodeURIComponent(SHARED_SPACE_SLUG)}`;
+    }
+
+    async function requestSharedSpace(options = {}) {
+      const response = await fetch(getSharedSpaceUrl(), {
+        headers: {
+          "Accept": "application/json",
+          ...(options.body ? { "Content-Type": "application/json" } : {})
+        },
+        ...options
+      });
+
+      if (!response.ok) {
+        throw new Error(`Shared space request failed: ${response.status}`);
+      }
+
+      return response.json();
+    }
+
+    async function saveCurrentState() {
+      const state = serializeState();
+      if (SHARED_SPACE_SLUG) {
+        savingSharedState = true;
+        try {
+          const data = await requestSharedSpace({
+            method: "PUT",
+            body: JSON.stringify({ state })
+          });
+          latestSharedUpdatedAt = Number(data.updatedAt) || latestSharedUpdatedAt;
+        } finally {
+          savingSharedState = false;
+        }
         return;
       }
 
-      localStorage.setItem(getStorageKey(), json);
+      localStorage.setItem(getStorageKey(), JSON.stringify(state));
     }
 
     function scheduleAutosave() {
       if (suppressAutosave || applyingSharedState) return;
       clearTimeout(saveTimer);
       saveTimer = setTimeout(() => {
-        try {
-          saveCurrentState();
-        } catch (error) {
+        void saveCurrentState().catch((error) => {
           console.error("Autosave failed:", error);
-        }
+        });
       }, 120);
     }
 
@@ -1693,8 +1698,7 @@
     }
 
     function applySharedState(data) {
-      if (!data || typeof data.json !== "string") return false;
-      if (data.clientId === CLIENT_ID) return false;
+      if (!data || !data.state) return false;
 
       const updatedAt = Number(data.updatedAt) || 1;
       if (updatedAt <= latestSharedUpdatedAt) return false;
@@ -1702,7 +1706,7 @@
       try {
         applyingSharedState = true;
         latestSharedUpdatedAt = updatedAt;
-        loadState(JSON.parse(data.json), { autosave: false });
+        loadState(data.state, { autosave: false });
         return true;
       } catch (error) {
         console.error("Shared space restore failed:", error);
@@ -1712,36 +1716,38 @@
       }
     }
 
-    function loadFromSharedSpace() {
-      if (!SHARED_SPACE_SLUG || typeof GUN !== "function") return Promise.resolve(false);
+    async function loadFromSharedSpace() {
+      if (!SHARED_SPACE_SLUG) return false;
+      const data = await requestSharedSpace();
+      if (!data.state) {
+        latestSharedUpdatedAt = Number(data.updatedAt) || latestSharedUpdatedAt;
+        return false;
+      }
+      return applySharedState(data);
+    }
 
-      const gun = GUN({ peers: SHARED_SPACE_PEERS });
-      sharedSpace = gun.get(SHARED_SPACE_ROOT).get(SHARED_SPACE_SLUG);
-
-      return new Promise((resolve) => {
-        let settled = false;
-        const finish = (loaded) => {
-          if (settled) return;
-          settled = true;
-          resolve(loaded);
-        };
-
-        const timeout = setTimeout(() => finish(false), 1200);
-        sharedSpace.once((data) => {
-          clearTimeout(timeout);
-          finish(applySharedState(data));
-        });
-
-        sharedSpace.on((data) => {
-          applySharedState(data);
-        });
-      });
+    function startSharedPolling() {
+      if (!SHARED_SPACE_SLUG || sharedPollTimer) return;
+      sharedPollTimer = setInterval(() => {
+        if (savingSharedState) return;
+        void requestSharedSpace()
+          .then(applySharedState)
+          .catch((error) => {
+            console.error("Shared space refresh failed:", error);
+          });
+      }, SHARED_POLL_MS);
     }
 
     async function boot() {
       void requestPersistentStorage();
       if (SHARED_SPACE_SLUG) {
-        if (!await loadFromSharedSpace()) {
+        try {
+          if (!await loadFromSharedSpace()) {
+            render();
+          }
+          startSharedPolling();
+        } catch (error) {
+          console.error("Shared space load failed:", error);
           render();
         }
         return;
