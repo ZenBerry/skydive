@@ -1164,7 +1164,8 @@
     }
 
     function getSharedSpaceUrl() {
-      return `/api/spaces/${encodeURIComponent(SHARED_SPACE_SLUG)}`;
+      const params = new URLSearchParams({ slug: SHARED_SPACE_SLUG });
+      return `/.netlify/functions/spaces?${params.toString()}`;
     }
 
     async function requestSharedSpace(options = {}) {

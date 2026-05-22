@@ -1,6 +1,6 @@
 {
   "scripts": {
-    "start": "node server.js"
+    "dev": "npx netlify dev"
   },
   "dependencies": {
     "mongodb": "^6.21.0"
