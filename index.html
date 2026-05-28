@@ -89,6 +89,78 @@
       cursor: text;
     }
 
+    .external-link-card {
+      display: inline-grid;
+      gap: 0.35em;
+      max-width: 18em;
+      margin: 0 0.12em;
+      padding: 0.45em 0.52em 0.42em;
+      border: 0.04em solid #e4d7c5;
+      border-radius: 0.55em;
+      background: #fff8ed;
+      box-shadow: 0 0.22em 0.8em rgba(82, 59, 36, 0.07);
+      color: #3f3328;
+      vertical-align: middle;
+      white-space: normal;
+      user-select: none;
+    }
+
+    .external-link-label {
+      overflow: hidden;
+      color: #4b3b2d;
+      font: 500 0.78em/1.16 "Roboto", sans-serif;
+      text-decoration: none;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .external-link-label:hover {
+      text-decoration: underline;
+    }
+
+    .external-link-actions,
+    .external-link-editor-actions {
+      display: flex;
+      gap: 0.25em;
+      align-items: center;
+    }
+
+    .external-link-card button {
+      border: 0;
+      border-radius: 0.38em;
+      background: #eee1cf;
+      padding: 0.26em 0.42em;
+      color: #4b3b2d;
+      font: 500 0.45em/1 "Roboto", sans-serif;
+      cursor: pointer;
+    }
+
+    .external-link-card button:hover {
+      background: #e7d6bf;
+    }
+
+    .external-link-editor {
+      display: grid;
+      gap: 0.25em;
+    }
+
+    .external-link-editor[hidden] {
+      display: none;
+    }
+
+    .external-link-editor input {
+      width: 17em;
+      max-width: 100%;
+      box-sizing: border-box;
+      border: 0.04em solid #e0d2c0;
+      border-radius: 0.38em;
+      background: #fffdf9;
+      padding: 0.28em 0.38em;
+      color: #3f3328;
+      font: 400 0.46em/1.2 "Roboto", sans-serif;
+      outline: none;
+    }
+
     .text-node.navigation-target-highlight {
       animation: destination-text-glow 5000ms linear forwards;
     }
@@ -476,6 +548,119 @@
       return candidate;
     }
 
+    function normalizeExternalHref(value) {
+      const raw = typeof value === "string" ? value.trim() : "";
+      if (!raw) return "";
+
+      try {
+        const url = new URL(raw);
+        if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+        return url.href;
+      } catch (error) {
+        return "";
+      }
+    }
+
+    function getDefaultExternalLinkLabel(href) {
+      const normalized = normalizeExternalHref(href);
+      if (!normalized) return "";
+
+      try {
+        const url = new URL(normalized);
+        if (url.search) {
+          return `${url.origin}${url.pathname}...`;
+        }
+      } catch (error) {
+        return normalized;
+      }
+
+      return normalized;
+    }
+
+    function getExternalLinkDisplayLabel(href, label) {
+      const custom = typeof label === "string" ? label.trim() : "";
+      return custom || getDefaultExternalLinkLabel(href);
+    }
+
+    function createExternalLinkCard(href, label = "", options = {}) {
+      const normalizedHref = normalizeExternalHref(href);
+      if (!normalizedHref) return null;
+
+      const card = document.createElement("span");
+      card.className = "external-link-card";
+      card.contentEditable = "false";
+      card.dataset.href = normalizedHref;
+      card.dataset.label = typeof label === "string" ? label.trim() : "";
+
+      renderExternalLinkCard(card, options);
+      return card;
+    }
+
+    function renderExternalLinkCard(card, options = {}) {
+      const href = normalizeExternalHref(card.dataset.href || "");
+      const label = typeof card.dataset.label === "string" ? card.dataset.label : "";
+      if (!href) return;
+
+      const isEditing = Boolean(options.editing);
+      card.replaceChildren();
+
+      const link = document.createElement("a");
+      link.className = "external-link-label";
+      link.href = href;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = getExternalLinkDisplayLabel(href, label);
+      card.appendChild(link);
+
+      const actions = document.createElement("span");
+      actions.className = "external-link-actions";
+      actions.hidden = isEditing;
+
+      const editButton = document.createElement("button");
+      editButton.type = "button";
+      editButton.dataset.externalLinkAction = "edit";
+      editButton.textContent = "Edit";
+
+      const flattenButton = document.createElement("button");
+      flattenButton.type = "button";
+      flattenButton.dataset.externalLinkAction = "flatten";
+      flattenButton.textContent = "Flatten";
+      actions.append(editButton, flattenButton);
+      card.appendChild(actions);
+
+      const editor = document.createElement("span");
+      editor.className = "external-link-editor";
+      editor.hidden = !isEditing;
+
+      const labelInput = document.createElement("input");
+      labelInput.type = "text";
+      labelInput.dataset.externalLinkField = "label";
+      labelInput.placeholder = "Label";
+      labelInput.value = label;
+
+      const hrefInput = document.createElement("input");
+      hrefInput.type = "url";
+      hrefInput.dataset.externalLinkField = "href";
+      hrefInput.placeholder = "Link";
+      hrefInput.value = href;
+
+      const editorActions = document.createElement("span");
+      editorActions.className = "external-link-editor-actions";
+
+      const saveButton = document.createElement("button");
+      saveButton.type = "button";
+      saveButton.dataset.externalLinkAction = "save";
+      saveButton.textContent = "Save";
+
+      const cancelButton = document.createElement("button");
+      cancelButton.type = "button";
+      cancelButton.dataset.externalLinkAction = "cancel";
+      cancelButton.textContent = "Cancel";
+      editorActions.append(saveButton, cancelButton);
+      editor.append(labelInput, hrefInput, editorActions);
+      card.appendChild(editor);
+    }
+
     function sanitizeNodeHtml(rawHtml) {
       if (typeof rawHtml !== "string" || rawHtml.length === 0) return "";
 
@@ -506,6 +691,31 @@
             link.dataset.targetId = targetId;
             link.textContent = element.textContent || "";
             target.appendChild(link);
+            return;
+          }
+        }
+
+        if (tag === "SPAN" && element.classList.contains("external-link-plain")) {
+          const href = normalizeExternalHref(element.textContent || "");
+          if (href) {
+            const span = document.createElement("span");
+            span.className = "external-link-plain";
+            span.textContent = href;
+            target.appendChild(span);
+            return;
+          }
+        }
+
+        if (tag === "SPAN" && element.classList.contains("external-link-card")) {
+          const href = normalizeExternalHref(
+            element.dataset.href ||
+            (element.querySelector("a") && element.querySelector("a").getAttribute("href")) ||
+            element.textContent ||
+            ""
+          );
+          if (href) {
+            const card = createExternalLinkCard(href, element.dataset.label || "");
+            if (card) target.appendChild(card);
             return;
           }
         }
@@ -862,6 +1072,205 @@
 
       selectionRange.deleteContents();
       selectionRange.insertNode(link);
+    }
+
+    function setCaretToEnd(node) {
+      if (!node || !node.isContentEditable) return;
+      const selection = window.getSelection();
+      if (!selection) return;
+
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+
+    function trimExternalUrlMatch(rawUrl) {
+      let href = rawUrl;
+      let trailing = "";
+
+      while (/[.,!?;:]$/.test(href)) {
+        trailing = href.slice(-1) + trailing;
+        href = href.slice(0, -1);
+      }
+
+      if (href.endsWith(")") && !href.includes("(")) {
+        trailing = ")" + trailing;
+        href = href.slice(0, -1);
+      }
+
+      return { href, trailing };
+    }
+
+    function autoLinkExternalUrls(node, options = {}) {
+      if (!node || isCommandNode(node)) return false;
+      const { force = false, moveCaretToEnd = false } = options;
+      const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, {
+        acceptNode(textNode) {
+          const parent = textNode.parentElement;
+          if (!parent) return NodeFilter.FILTER_REJECT;
+          if (parent.closest(".external-link-card, .external-link-plain, .internal-link")) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      });
+
+      const textNodes = [];
+      let textNode = walker.nextNode();
+      while (textNode) {
+        textNodes.push(textNode);
+        textNode = walker.nextNode();
+      }
+
+      let changed = false;
+      const urlPattern = /https?:\/\/[^\s<>"']+/gi;
+
+      for (const currentTextNode of textNodes) {
+        const text = currentTextNode.textContent || "";
+        let lastIndex = 0;
+        urlPattern.lastIndex = 0;
+        let match = urlPattern.exec(text);
+        const fragment = document.createDocumentFragment();
+        let textNodeChanged = false;
+
+        while (match) {
+          const rawUrl = match[0];
+          const start = match.index;
+          const end = start + rawUrl.length;
+          const isStillBeingTyped = !force && end === text.length;
+          const { href, trailing } = trimExternalUrlMatch(rawUrl);
+          const normalizedHref = normalizeExternalHref(href);
+
+          if (start > lastIndex) {
+            fragment.appendChild(document.createTextNode(text.slice(lastIndex, start)));
+          }
+
+          if (normalizedHref && !isStillBeingTyped) {
+            const card = createExternalLinkCard(normalizedHref);
+            if (card) {
+              fragment.appendChild(card);
+              if (trailing) fragment.appendChild(document.createTextNode(trailing));
+              textNodeChanged = true;
+            } else {
+              fragment.appendChild(document.createTextNode(rawUrl));
+            }
+          } else {
+            fragment.appendChild(document.createTextNode(rawUrl));
+          }
+
+          lastIndex = end;
+          match = urlPattern.exec(text);
+        }
+
+        if (!textNodeChanged) continue;
+        if (lastIndex < text.length) {
+          fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
+        }
+        currentTextNode.replaceWith(fragment);
+        changed = true;
+      }
+
+      if (changed) {
+        if (moveCaretToEnd) setCaretToEnd(node);
+        refreshSelectionBounds();
+        scheduleAutosave();
+      }
+
+      return changed;
+    }
+
+    function getExternalLinkCardFromTarget(node, target) {
+      if (!(target instanceof Element)) return null;
+      const card = target.closest(".external-link-card");
+      if (!card || !node.contains(card)) return null;
+      return card;
+    }
+
+    function flattenExternalLinkCard(card) {
+      const href = normalizeExternalHref(card.dataset.href || "");
+      if (!href) return;
+      const span = document.createElement("span");
+      span.className = "external-link-plain";
+      span.textContent = href;
+      card.replaceWith(span);
+    }
+
+    function saveExternalLinkCardEdit(card) {
+      const hrefInput = card.querySelector('[data-external-link-field="href"]');
+      const labelInput = card.querySelector('[data-external-link-field="label"]');
+      const nextHref = normalizeExternalHref(hrefInput ? hrefInput.value : "");
+      if (!nextHref) {
+        if (hrefInput) hrefInput.focus();
+        return;
+      }
+
+      card.dataset.href = nextHref;
+      card.dataset.label = labelInput ? labelInput.value.trim() : "";
+      renderExternalLinkCard(card);
+    }
+
+    function handleExternalLinkAction(node, event) {
+      const card = getExternalLinkCardFromTarget(node, event.target);
+      if (!card) return false;
+
+      const actionTarget = event.target instanceof Element
+        ? event.target.closest("[data-external-link-action]")
+        : null;
+      if (!actionTarget || !card.contains(actionTarget)) return false;
+
+      const action = actionTarget.dataset.externalLinkAction;
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (action === "edit") {
+        renderExternalLinkCard(card, { editing: true });
+        const labelInput = card.querySelector('[data-external-link-field="label"]');
+        if (labelInput) labelInput.focus();
+      }
+
+      if (action === "flatten") {
+        flattenExternalLinkCard(card);
+        refreshSelectionBounds();
+      }
+
+      if (action === "save") {
+        saveExternalLinkCardEdit(card);
+        refreshSelectionBounds();
+      }
+
+      if (action === "cancel") {
+        renderExternalLinkCard(card);
+      }
+
+      scheduleAutosave();
+      return true;
+    }
+
+    function handleExternalLinkKeydown(node, event) {
+      const card = getExternalLinkCardFromTarget(node, event.target);
+      if (!card) return false;
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        event.stopPropagation();
+        saveExternalLinkCardEdit(card);
+        refreshSelectionBounds();
+        scheduleAutosave();
+        return true;
+      }
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        renderExternalLinkCard(card);
+        scheduleAutosave();
+        return true;
+      }
+
+      event.stopPropagation();
+      return true;
     }
 
     function isEditableTarget(target) {
@@ -1676,6 +2085,7 @@
       node.addEventListener("pointerdown", (event) => {
         if (event.button !== 0 || node.classList.contains("editing")) return;
         if (event.target instanceof Element && event.target.closest(".internal-link")) return;
+        if (event.target instanceof Element && event.target.closest(".external-link-card")) return;
         if (isCommandNode(node) && isCommandInteractiveTarget(event.target)) return;
         if (selectedNodes.size > 0 && !selectedNodes.has(node)) {
           clearSelection();
@@ -1717,6 +2127,7 @@
       });
 
       node.addEventListener("click", (event) => {
+        if (handleExternalLinkAction(node, event)) return;
         if (node.classList.contains("editing")) return;
         if (!(event.target instanceof Element)) return;
         const link = event.target.closest(".internal-link");
@@ -1736,18 +2147,29 @@
       });
 
       node.addEventListener("input", () => {
+        autoLinkExternalUrls(node, { moveCaretToEnd: true });
         scheduleAutosave();
         updateSlashMenuForNode(node);
       });
 
+      node.addEventListener("paste", () => {
+        setTimeout(() => {
+          autoLinkExternalUrls(node, { force: true, moveCaretToEnd: true });
+          updateSlashMenuForNode(node);
+        }, 0);
+      });
+
       node.addEventListener("blur", () => {
         if (isCommandNode(node)) return;
+        autoLinkExternalUrls(node, { force: true });
         stopEditing(node);
         closeSlashCommandMenu();
         scheduleAutosave();
       });
 
       node.addEventListener("keydown", (event) => {
+        if (handleExternalLinkKeydown(node, event)) return;
+
         if (slashCommandSession && slashCommandSession.node === node) {
           if (event.key === "ArrowDown") {
             event.preventDefault();
