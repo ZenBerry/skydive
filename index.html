@@ -100,22 +100,25 @@
       background: #fff8ed;
       box-shadow: 0 0.22em 0.8em rgba(82, 59, 36, 0.07);
       color: #3f3328;
+      cursor: grab;
       vertical-align: middle;
       white-space: normal;
       user-select: none;
     }
 
     .external-link-label {
-      overflow: hidden;
-      color: #4b3b2d;
-      font: 500 0.78em/1.16 "Roboto", sans-serif;
-      text-decoration: none;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      display: none;
     }
 
-    .external-link-label:hover {
+    .external-link-card::before {
+      content: attr(data-display-label);
+      overflow: hidden;
+      color: #4b3b2d;
+      display: block;
+      font: 500 0.78em/1.16 "Roboto", sans-serif;
       text-decoration: underline;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .external-link-actions,
@@ -477,6 +480,7 @@
     let sharedPollTimer = null;
     let slashCommandSession = null;
     let slashCommandSelectedIndex = 0;
+    let externalLinkCardPointer = null;
     const nodeHighlightTimeouts = new WeakMap();
     const selectedNodes = new Set();
 
@@ -591,6 +595,7 @@
       card.contentEditable = "false";
       card.dataset.href = normalizedHref;
       card.dataset.label = typeof label === "string" ? label.trim() : "";
+      attachExternalLinkCardPointerHandlers(card);
 
       renderExternalLinkCard(card, options);
       return card;
@@ -602,19 +607,17 @@
       if (!href) return;
 
       const isEditing = Boolean(options.editing);
+      card.dataset.displayLabel = getExternalLinkDisplayLabel(href, label);
       card.replaceChildren();
-
-      const link = document.createElement("a");
-      link.className = "external-link-label";
-      link.href = href;
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-      link.textContent = getExternalLinkDisplayLabel(href, label);
-      card.appendChild(link);
 
       const actions = document.createElement("span");
       actions.className = "external-link-actions";
       actions.hidden = isEditing;
+
+      const openButton = document.createElement("button");
+      openButton.type = "button";
+      openButton.dataset.externalLinkAction = "open";
+      openButton.textContent = "Open";
 
       const editButton = document.createElement("button");
       editButton.type = "button";
@@ -625,7 +628,7 @@
       flattenButton.type = "button";
       flattenButton.dataset.externalLinkAction = "flatten";
       flattenButton.textContent = "Flatten";
-      actions.append(editButton, flattenButton);
+      actions.append(openButton, editButton, flattenButton);
       card.appendChild(actions);
 
       const editor = document.createElement("span");
@@ -1211,6 +1214,75 @@
       renderExternalLinkCard(card);
     }
 
+    function isExternalLinkControlTarget(target) {
+      if (!(target instanceof Element)) return false;
+      return Boolean(target.closest("button, input, textarea, select"));
+    }
+
+    function attachExternalLinkCardPointerHandlers(card) {
+      card.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0 || isExternalLinkControlTarget(event.target)) return;
+
+        const node = card.closest(".text-node");
+        if (!(node instanceof HTMLElement) || !world.contains(node)) return;
+
+        closeNodeContextMenu();
+        cancelCameraAnimation();
+        const pointer = screenToWorld(event.clientX, event.clientY);
+        externalLinkCardPointer = {
+          pointerId: event.pointerId,
+          card,
+          node,
+          startClientX: event.clientX,
+          startClientY: event.clientY,
+          dragOffsetX: Number(node.dataset.x) - pointer.x,
+          dragOffsetY: Number(node.dataset.y) - pointer.y,
+          href: normalizeExternalHref(card.dataset.href || ""),
+          moved: false
+        };
+        card.setPointerCapture(event.pointerId);
+        event.preventDefault();
+        event.stopPropagation();
+      });
+
+      card.addEventListener("pointermove", (event) => {
+        const session = externalLinkCardPointer;
+        if (!session || session.card !== card || session.pointerId !== event.pointerId) return;
+
+        if (!session.moved && Math.hypot(event.clientX - session.startClientX, event.clientY - session.startClientY) >= MARQUEE_DRAG_THRESHOLD_PX) {
+          session.moved = true;
+        }
+
+        const pointer = screenToWorld(event.clientX, event.clientY);
+        setNodePosition(session.node, pointer.x + session.dragOffsetX, pointer.y + session.dragOffsetY);
+        event.preventDefault();
+        event.stopPropagation();
+      });
+
+      function endExternalLinkCardPointer(event) {
+        const session = externalLinkCardPointer;
+        if (!session || session.card !== card || session.pointerId !== event.pointerId) return;
+
+        if (card.hasPointerCapture(session.pointerId)) {
+          card.releasePointerCapture(session.pointerId);
+        }
+
+        externalLinkCardPointer = null;
+        if (event.type === "pointerup" && session.href && !session.moved) {
+          openExternalHref(session.href);
+          card.dataset.suppressNextVisit = "true";
+        } else if (session.moved) {
+          card.dataset.suppressNextVisit = "true";
+        }
+        scheduleAutosave();
+        event.preventDefault();
+        event.stopPropagation();
+      }
+
+      card.addEventListener("pointerup", endExternalLinkCardPointer);
+      card.addEventListener("pointercancel", endExternalLinkCardPointer);
+    }
+
     function handleExternalLinkAction(node, event) {
       const card = getExternalLinkCardFromTarget(node, event.target);
       if (!card) return false;
@@ -1223,6 +1295,11 @@
       const action = actionTarget.dataset.externalLinkAction;
       event.preventDefault();
       event.stopPropagation();
+
+      if (action === "open") {
+        const href = normalizeExternalHref(card.dataset.href || "");
+        openExternalHref(href);
+      }
 
       if (action === "edit") {
         renderExternalLinkCard(card, { editing: true });
@@ -1246,6 +1323,36 @@
 
       scheduleAutosave();
       return true;
+    }
+
+    function handleExternalLinkVisit(node, event) {
+      const card = getExternalLinkCardFromTarget(node, event.target);
+      if (!card) return false;
+
+      if (event.target instanceof Element && event.target.closest("button, input, textarea, select")) {
+        return false;
+      }
+
+      if (card.dataset.suppressNextVisit === "true") {
+        delete card.dataset.suppressNextVisit;
+        event.preventDefault();
+        event.stopPropagation();
+        return true;
+      }
+
+      const href = normalizeExternalHref(card.dataset.href || "");
+      if (!href) return false;
+
+      event.preventDefault();
+      event.stopPropagation();
+      openExternalHref(href);
+      return true;
+    }
+
+    function openExternalHref(href) {
+      const normalizedHref = normalizeExternalHref(href);
+      if (!normalizedHref) return;
+      window.open(normalizedHref, "_blank", "noopener,noreferrer");
     }
 
     function handleExternalLinkKeydown(node, event) {
@@ -2081,11 +2188,20 @@
       let dragPointerId = null;
       let dragOffsetX = 0;
       let dragOffsetY = 0;
+      let dragStartClientX = 0;
+      let dragStartClientY = 0;
+      let dragMoved = false;
+      let pendingExternalLinkHref = "";
+      let suppressExternalLinkVisit = false;
 
       node.addEventListener("pointerdown", (event) => {
         if (event.button !== 0 || node.classList.contains("editing")) return;
         if (event.target instanceof Element && event.target.closest(".internal-link")) return;
-        if (event.target instanceof Element && event.target.closest(".external-link-card")) return;
+        if (event.target instanceof Element) {
+          const externalLinkCard = event.target.closest(".external-link-card");
+          if (externalLinkCard && event.target.closest("button, input, textarea, select")) return;
+          pendingExternalLinkHref = normalizeExternalHref(externalLinkCard ? externalLinkCard.dataset.href : "");
+        }
         if (isCommandNode(node) && isCommandInteractiveTarget(event.target)) return;
         if (selectedNodes.size > 0 && !selectedNodes.has(node)) {
           clearSelection();
@@ -2094,6 +2210,9 @@
         cancelCameraAnimation();
         dragPointerId = event.pointerId;
         node.setPointerCapture(dragPointerId);
+        dragStartClientX = event.clientX;
+        dragStartClientY = event.clientY;
+        dragMoved = false;
         const pointer = screenToWorld(event.clientX, event.clientY);
         dragOffsetX = Number(node.dataset.x) - pointer.x;
         dragOffsetY = Number(node.dataset.y) - pointer.y;
@@ -2103,6 +2222,9 @@
 
       node.addEventListener("pointermove", (event) => {
         if (event.pointerId !== dragPointerId) return;
+        if (!dragMoved && Math.hypot(event.clientX - dragStartClientX, event.clientY - dragStartClientY) >= MARQUEE_DRAG_THRESHOLD_PX) {
+          dragMoved = true;
+        }
         const pointer = screenToWorld(event.clientX, event.clientY);
         setNodePosition(node, pointer.x + dragOffsetX, pointer.y + dragOffsetY);
       });
@@ -2112,7 +2234,14 @@
         if (node.hasPointerCapture(dragPointerId)) {
           node.releasePointerCapture(dragPointerId);
         }
+        if (event.type === "pointerup" && pendingExternalLinkHref && !dragMoved) {
+          openExternalHref(pendingExternalLinkHref);
+          suppressExternalLinkVisit = true;
+        } else {
+          suppressExternalLinkVisit = Boolean(pendingExternalLinkHref && dragMoved);
+        }
         dragPointerId = null;
+        pendingExternalLinkHref = "";
         scheduleAutosave();
       }
 
@@ -2128,6 +2257,13 @@
 
       node.addEventListener("click", (event) => {
         if (handleExternalLinkAction(node, event)) return;
+        if (suppressExternalLinkVisit) {
+          suppressExternalLinkVisit = false;
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+        if (handleExternalLinkVisit(node, event)) return;
         if (node.classList.contains("editing")) return;
         if (!(event.target instanceof Element)) return;
         const link = event.target.closest(".internal-link");
