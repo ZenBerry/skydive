@@ -5,6 +5,8 @@ const mongoUri = process.env.MONGODB_URI;
 const dbName = process.env.MONGODB_DB || "ZENBERRY_MAIN";
 const collectionName = process.env.MONGODB_COLLECTION || "SKYDIVE_SPACES";
 const agentToken = process.env.SKYDIVE_AGENT_TOKEN || "";
+const agentAuthMode = (process.env.SKYDIVE_AGENT_AUTH_MODE || "public").trim().toLowerCase();
+const agentAuthRequired = agentAuthMode === "token" || agentAuthMode === "private" || agentAuthMode === "required";
 
 const MAX_NODES = 1200;
 const MAX_OPS = 120;
@@ -83,15 +85,17 @@ function timingSafeEqualString(left, right) {
 }
 
 function isAuthorized(event) {
+  if (!agentAuthRequired) return true;
   if (!agentToken) return false;
   const token = getToken(event);
   return Boolean(token) && timingSafeEqualString(token, agentToken);
 }
 
 function requireAuth(event) {
+  if (!agentAuthRequired) return;
   if (isAuthorized(event)) return;
   if (!agentToken) {
-    throw new HttpError(503, "Agent access is not configured. Set SKYDIVE_AGENT_TOKEN in Netlify.");
+    throw new HttpError(503, "Agent token mode is enabled, but SKYDIVE_AGENT_TOKEN is not set in Netlify.");
   }
   throw new HttpError(401, "Agent token is required.");
 }
@@ -567,11 +571,14 @@ function buildManifest(event) {
   return {
     name: "Skydive Agent Interface",
     schemaVersion: 1,
+    access: agentAuthRequired ? "token" : "public",
     authenticated: authed,
     auth: {
-      requiredFor: ["list_spaces", "read_space", "apply_ops"],
+      required: agentAuthRequired,
+      requiredFor: agentAuthRequired ? ["list_spaces", "read_space", "apply_ops"] : [],
       header: "Authorization: Bearer <SKYDIVE_AGENT_TOKEN>",
-      queryFallback: "token=<SKYDIVE_AGENT_TOKEN>"
+      queryFallback: "token=<SKYDIVE_AGENT_TOKEN>",
+      privateMode: "Set SKYDIVE_AGENT_AUTH_MODE=token and SKYDIVE_AGENT_TOKEN to require auth."
     },
     endpoints: {
       manifest: "GET /api/agent?manifest=1",

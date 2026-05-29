@@ -134,14 +134,16 @@
     </div>
 
     <section>
-      <h2>Authentication</h2>
+      <h2>Access</h2>
       <p>
-        Listing spaces, reading spaces, and applying edits require an agent token. Prefer an HTTP header:
+        By default, no token is required. Give this page to an AI agent and it can discover the API, list spaces, read spaces, and apply edits.
+      </p>
+      <p>
+        If private mode is enabled later, agents should send:
       </p>
       <pre><code>Authorization: Bearer &lt;SKYDIVE_AGENT_TOKEN&gt;</code></pre>
       <p>
-        If an agent tool cannot set headers, use the query fallback:
-        <code>?token=&lt;SKYDIVE_AGENT_TOKEN&gt;</code>. Treat tokenized URLs as secrets.
+        Private mode is optional: set <code>SKYDIVE_AGENT_AUTH_MODE=token</code> and <code>SKYDIVE_AGENT_TOKEN</code> in Netlify.
       </p>
     </section>
 
@@ -269,7 +271,7 @@ Authorization: Bearer &lt;SKYDIVE_AGENT_TOKEN&gt;
 {
   "api": "/api/agent",
   "manifest": "/api/agent?manifest=1",
-  "auth": "Authorization: Bearer <SKYDIVE_AGENT_TOKEN>",
+  "auth": "No token required by default. If private mode is enabled, use Authorization: Bearer <SKYDIVE_AGENT_TOKEN>.",
   "mutationModel": "Read a space revision, then POST a batch of ops with baseRevision.",
   "dynamicCommandsFutureProofing": "Command instances already carry commandId, commandVersion, and commandState. Future executable definitions should be added to the registry, not embedded in space nodes."
 }
