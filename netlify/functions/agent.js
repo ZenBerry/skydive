@@ -1,0 +1,748 @@
+const crypto = require("crypto");
+const { MongoClient } = require("mongodb");
+
+const mongoUri = process.env.MONGODB_URI;
+const dbName = process.env.MONGODB_DB || "ZENBERRY_MAIN";
+const collectionName = process.env.MONGODB_COLLECTION || "SKYDIVE_SPACES";
+const agentToken = process.env.SKYDIVE_AGENT_TOKEN || "";
+
+const MAX_NODES = 1200;
+const MAX_OPS = 120;
+const MAX_TEXT_LENGTH = 40000;
+const MAX_HTML_LENGTH = 80000;
+const MAX_COMMAND_STATE_LENGTH = 50000;
+
+let collectionPromise = null;
+let staticCommandRegistry = { schemaVersion: 1, commands: [] };
+
+try {
+  staticCommandRegistry = require("../../commands/registry.json");
+} catch (error) {
+  console.error("Could not load static command registry:", error);
+}
+
+class HttpError extends Error {
+  constructor(statusCode, message, details = null) {
+    super(message);
+    this.statusCode = statusCode;
+    this.details = details;
+  }
+}
+
+async function getCollection() {
+  if (!mongoUri) {
+    throw new HttpError(503, "MONGODB_URI is required for agent space access.");
+  }
+
+  if (!collectionPromise) {
+    collectionPromise = (async () => {
+      const client = new MongoClient(mongoUri);
+      await client.connect();
+      const collection = client.db(dbName).collection(collectionName);
+      await collection.createIndex({ slug: 1 }, { unique: true });
+      await collection.createIndex({ updatedAt: -1 });
+      return collection;
+    })();
+  }
+
+  return collectionPromise;
+}
+
+function json(statusCode, body) {
+  return {
+    statusCode,
+    headers: {
+      "Access-Control-Allow-Headers": "Authorization, Content-Type",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Origin": "*",
+      "Cache-Control": "no-store",
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body, null, 2)
+  };
+}
+
+function getQuery(event) {
+  return event.queryStringParameters || {};
+}
+
+function getToken(event) {
+  const headers = event.headers || {};
+  const authHeader = headers.authorization || headers.Authorization || "";
+  const bearer = /^Bearer\s+(.+)$/i.exec(authHeader);
+  if (bearer) return bearer[1].trim();
+
+  const query = getQuery(event);
+  return typeof query.token === "string" ? query.token.trim() : "";
+}
+
+function timingSafeEqualString(left, right) {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function isAuthorized(event) {
+  if (!agentToken) return false;
+  const token = getToken(event);
+  return Boolean(token) && timingSafeEqualString(token, agentToken);
+}
+
+function requireAuth(event) {
+  if (isAuthorized(event)) return;
+  if (!agentToken) {
+    throw new HttpError(503, "Agent access is not configured. Set SKYDIVE_AGENT_TOKEN in Netlify.");
+  }
+  throw new HttpError(401, "Agent token is required.");
+}
+
+function getSlug(value) {
+  const slug = typeof value === "string" ? value.trim() : "";
+  if (!slug || slug.length > 160 || slug.includes("/")) return "";
+  return slug;
+}
+
+function emptyState() {
+  return {
+    version: 1,
+    camera: { x: 0, y: 0, scale: 1 },
+    nodes: []
+  };
+}
+
+function cloneJson(value, fallback) {
+  try {
+    const cloned = JSON.parse(JSON.stringify(value));
+    return cloned === undefined ? fallback : cloned;
+  } catch (error) {
+    return fallback;
+  }
+}
+
+function boundedString(value, maxLength, fieldName, fallback = "") {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== "string") {
+    throw new HttpError(400, `${fieldName} must be a string.`);
+  }
+  if (value.length > maxLength) {
+    throw new HttpError(400, `${fieldName} is too long.`, { maxLength });
+  }
+  return value;
+}
+
+function finiteNumber(value, fallback, fieldName) {
+  if (value === undefined || value === null || value === "") return fallback;
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    throw new HttpError(400, `${fieldName} must be a finite number.`);
+  }
+  return number;
+}
+
+function positiveNumber(value, fallback, fieldName) {
+  const number = finiteNumber(value, fallback, fieldName);
+  if (number <= 0) {
+    throw new HttpError(400, `${fieldName} must be greater than 0.`);
+  }
+  return number;
+}
+
+function cleanNodeId(value, fieldName = "id") {
+  const id = boundedString(value, 128, fieldName).trim();
+  if (!id || !/^[a-zA-Z0-9_.:-]+$/.test(id)) {
+    throw new HttpError(400, `${fieldName} must contain only letters, numbers, dots, colons, underscores, or hyphens.`);
+  }
+  return id;
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function decodeBasicEntities(value) {
+  return String(value)
+    .replaceAll("&quot;", '"')
+    .replaceAll("&gt;", ">")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&amp;", "&");
+}
+
+function htmlToPlainText(value) {
+  return decodeBasicEntities(String(value || "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]*>/g, ""));
+}
+
+function createInternalLinkHtml(label, targetId) {
+  return `<span class="internal-link" data-target-id="${escapeHtml(targetId)}">${escapeHtml(label)}</span>`;
+}
+
+function normalizeCommandState(value) {
+  const state = value && typeof value === "object" && !Array.isArray(value) ? cloneJson(value, {}) : {};
+  if (JSON.stringify(state).length > MAX_COMMAND_STATE_LENGTH) {
+    throw new HttpError(400, "commandState is too large.", { maxLength: MAX_COMMAND_STATE_LENGTH });
+  }
+  return state;
+}
+
+function normalizeNode(entry, seenIds) {
+  if (!entry || typeof entry !== "object") {
+    throw new HttpError(400, "Every node must be an object.");
+  }
+
+  const id = cleanNodeId(entry.id);
+  if (seenIds.has(id)) {
+    throw new HttpError(400, `Duplicate node id "${id}".`);
+  }
+  seenIds.add(id);
+
+  const base = {
+    id,
+    x: finiteNumber(entry.x, 0, `node ${id}.x`),
+    y: finiteNumber(entry.y, 0, `node ${id}.y`),
+    baseFontSize: positiveNumber(entry.baseFontSize, 28, `node ${id}.baseFontSize`)
+  };
+
+  if (entry.kind === "command") {
+    return {
+      ...base,
+      kind: "command",
+      commandId: boundedString(entry.commandId, 128, `node ${id}.commandId`).trim(),
+      ...(entry.commandVersion ? { commandVersion: boundedString(entry.commandVersion, 64, `node ${id}.commandVersion`).trim() } : {}),
+      commandState: normalizeCommandState(entry.commandState)
+    };
+  }
+
+  const html = boundedString(entry.html, MAX_HTML_LENGTH, `node ${id}.html`, "");
+  const text = boundedString(
+    entry.text,
+    MAX_TEXT_LENGTH,
+    `node ${id}.text`,
+    html ? htmlToPlainText(html) : ""
+  );
+
+  return {
+    ...base,
+    kind: "text",
+    html: html || escapeHtml(text),
+    text
+  };
+}
+
+function normalizeState(rawState) {
+  const source = rawState && typeof rawState === "object" ? rawState : emptyState();
+  const rawNodes = Array.isArray(source.nodes) ? source.nodes : [];
+  if (rawNodes.length > MAX_NODES) {
+    throw new HttpError(400, "State has too many nodes.", { maxNodes: MAX_NODES });
+  }
+
+  const camera = source.camera && typeof source.camera === "object" ? source.camera : {};
+  const seenIds = new Set();
+  return {
+    version: Number.isFinite(Number(source.version)) ? Number(source.version) : 1,
+    camera: {
+      x: finiteNumber(camera.x, 0, "camera.x"),
+      y: finiteNumber(camera.y, 0, "camera.y"),
+      scale: positiveNumber(camera.scale, 1, "camera.scale")
+    },
+    nodes: rawNodes.map((entry) => normalizeNode(entry, seenIds))
+  };
+}
+
+function getNodeMap(state) {
+  return new Map(state.nodes.map((node) => [node.id, node]));
+}
+
+function requireNode(state, idValue) {
+  const id = cleanNodeId(idValue);
+  const node = getNodeMap(state).get(id);
+  if (!node) throw new HttpError(404, `Node "${id}" was not found.`);
+  return node;
+}
+
+function getNextNodeNumber(state) {
+  return state.nodes.reduce((next, node) => {
+    const match = /^node-(\d+)$/.exec(node.id);
+    if (!match) return next;
+    const value = Number(match[1]);
+    return Number.isFinite(value) ? Math.max(next, value + 1) : next;
+  }, 1);
+}
+
+function nthIndexOf(source, needle, occurrence) {
+  let fromIndex = 0;
+  for (let index = 1; index <= occurrence; index += 1) {
+    const foundAt = source.indexOf(needle, fromIndex);
+    if (foundAt === -1) return -1;
+    if (index === occurrence) return foundAt;
+    fromIndex = foundAt + needle.length;
+  }
+  return -1;
+}
+
+function applyNodePosition(node, op) {
+  if (op.x !== undefined) node.x = finiteNumber(op.x, node.x, "x");
+  if (op.y !== undefined) node.y = finiteNumber(op.y, node.y, "y");
+}
+
+function applyNodeSize(node, op) {
+  if (op.baseFontSize !== undefined) {
+    node.baseFontSize = positiveNumber(op.baseFontSize, node.baseFontSize, "baseFontSize");
+  }
+}
+
+function applyTextUpdate(node, op) {
+  if (node.kind !== "text") {
+    throw new HttpError(400, `Node "${node.id}" is not a text node.`);
+  }
+
+  if (op.text !== undefined) {
+    node.text = boundedString(op.text, MAX_TEXT_LENGTH, "text");
+    node.html = escapeHtml(node.text);
+  }
+
+  if (op.html !== undefined) {
+    node.html = boundedString(op.html, MAX_HTML_LENGTH, "html");
+    node.text = op.text !== undefined ? node.text : htmlToPlainText(node.html);
+  }
+}
+
+function applyCommandUpdate(node, op) {
+  if (node.kind !== "command") {
+    throw new HttpError(400, `Node "${node.id}" is not a command node.`);
+  }
+
+  if (op.commandId !== undefined) {
+    node.commandId = boundedString(op.commandId, 128, "commandId").trim();
+  }
+  if (op.commandVersion !== undefined) {
+    const version = boundedString(op.commandVersion, 64, "commandVersion").trim();
+    if (version) node.commandVersion = version;
+    else delete node.commandVersion;
+  }
+  if (op.commandState !== undefined) {
+    node.commandState = normalizeCommandState(op.commandState);
+  }
+}
+
+function applyAlignNodes(state, op) {
+  const ids = Array.isArray(op.ids) ? op.ids.map((id) => cleanNodeId(id, "ids[]")) : [];
+  if (ids.length < 2) {
+    throw new HttpError(400, "align_nodes requires at least two ids.");
+  }
+
+  const nodes = ids.map((id) => requireNode(state, id));
+  const alignment = boundedString(op.alignment, 24, "alignment").trim();
+  const xs = nodes.map((node) => node.x);
+  const ys = nodes.map((node) => node.y);
+
+  if (alignment === "left") {
+    const x = Math.min(...xs);
+    nodes.forEach((node) => { node.x = x; });
+    return;
+  }
+  if (alignment === "right") {
+    const x = Math.max(...xs);
+    nodes.forEach((node) => { node.x = x; });
+    return;
+  }
+  if (alignment === "center") {
+    const x = xs.reduce((total, value) => total + value, 0) / xs.length;
+    nodes.forEach((node) => { node.x = x; });
+    return;
+  }
+  if (alignment === "top") {
+    const y = Math.min(...ys);
+    nodes.forEach((node) => { node.y = y; });
+    return;
+  }
+  if (alignment === "bottom") {
+    const y = Math.max(...ys);
+    nodes.forEach((node) => { node.y = y; });
+    return;
+  }
+  if (alignment === "middle") {
+    const y = ys.reduce((total, value) => total + value, 0) / ys.length;
+    nodes.forEach((node) => { node.y = y; });
+    return;
+  }
+
+  throw new HttpError(400, "alignment must be left, right, center, top, bottom, or middle.");
+}
+
+function applyDistributeNodes(state, op) {
+  const ids = Array.isArray(op.ids) ? op.ids.map((id) => cleanNodeId(id, "ids[]")) : [];
+  if (ids.length < 3) {
+    throw new HttpError(400, "distribute_nodes requires at least three ids.");
+  }
+
+  const direction = boundedString(op.direction, 24, "direction").trim();
+  const axis = direction === "vertical" ? "y" : direction === "horizontal" ? "x" : "";
+  if (!axis) throw new HttpError(400, "direction must be horizontal or vertical.");
+
+  const nodes = ids.map((id) => requireNode(state, id)).sort((left, right) => left[axis] - right[axis]);
+  const first = nodes[0][axis];
+  const last = nodes[nodes.length - 1][axis];
+  const step = (last - first) / (nodes.length - 1);
+  nodes.forEach((node, index) => {
+    node[axis] = first + step * index;
+  });
+}
+
+function applyLinkText(state, op) {
+  const source = requireNode(state, op.sourceId);
+  const target = requireNode(state, op.targetId);
+  if (source.kind !== "text") {
+    throw new HttpError(400, "link_text sourceId must point to a text node.");
+  }
+
+  const sourceText = source.text || htmlToPlainText(source.html);
+  const needle = boundedString(op.text, MAX_TEXT_LENGTH, "text");
+  const label = boundedString(op.label, MAX_TEXT_LENGTH, "label", needle);
+  const occurrence = Math.max(1, Math.floor(finiteNumber(op.occurrence, 1, "occurrence")));
+  const start = nthIndexOf(sourceText, needle, occurrence);
+  if (!needle || start === -1) {
+    throw new HttpError(400, `Could not find text "${needle}" in node "${source.id}".`);
+  }
+
+  const before = sourceText.slice(0, start);
+  const after = sourceText.slice(start + needle.length);
+  source.text = sourceText;
+  source.html = `${escapeHtml(before)}${createInternalLinkHtml(label, target.id)}${escapeHtml(after)}`;
+}
+
+function applyOps(currentState, ops) {
+  if (!Array.isArray(ops) || ops.length === 0) {
+    throw new HttpError(400, "ops must be a non-empty array.");
+  }
+  if (ops.length > MAX_OPS) {
+    throw new HttpError(400, "Too many ops.", { maxOps: MAX_OPS });
+  }
+
+  let state = normalizeState(currentState);
+  const allocatedIds = new Set(state.nodes.map((node) => node.id));
+  let nextNodeNumber = getNextNodeNumber(state);
+
+  function allocateNodeId(requested) {
+    if (requested !== undefined && requested !== null && requested !== "") {
+      const id = cleanNodeId(requested);
+      if (allocatedIds.has(id)) throw new HttpError(409, `Node "${id}" already exists.`);
+      allocatedIds.add(id);
+      return id;
+    }
+
+    let id = `node-${nextNodeNumber}`;
+    while (allocatedIds.has(id)) {
+      nextNodeNumber += 1;
+      id = `node-${nextNodeNumber}`;
+    }
+    nextNodeNumber += 1;
+    allocatedIds.add(id);
+    return id;
+  }
+
+  for (const op of ops) {
+    if (!op || typeof op !== "object") {
+      throw new HttpError(400, "Every op must be an object.");
+    }
+
+    const opName = boundedString(op.op, 64, "op").trim();
+    if (opName === "replace_state") {
+      state = normalizeState(op.state);
+      allocatedIds.clear();
+      state.nodes.forEach((node) => allocatedIds.add(node.id));
+      nextNodeNumber = getNextNodeNumber(state);
+      continue;
+    }
+
+    if (opName === "create_text_node") {
+      const text = boundedString(op.text, MAX_TEXT_LENGTH, "text", "");
+      const html = op.html === undefined ? escapeHtml(text) : boundedString(op.html, MAX_HTML_LENGTH, "html");
+      state.nodes.push({
+        id: allocateNodeId(op.id),
+        kind: "text",
+        x: finiteNumber(op.x, 0, "x"),
+        y: finiteNumber(op.y, 0, "y"),
+        baseFontSize: positiveNumber(op.baseFontSize, 28, "baseFontSize"),
+        text: op.text === undefined ? htmlToPlainText(html) : text,
+        html
+      });
+      continue;
+    }
+
+    if (opName === "create_command_node") {
+      const commandVersion = boundedString(op.commandVersion, 64, "commandVersion", "").trim();
+      state.nodes.push({
+        id: allocateNodeId(op.id),
+        kind: "command",
+        x: finiteNumber(op.x, 0, "x"),
+        y: finiteNumber(op.y, 0, "y"),
+        baseFontSize: positiveNumber(op.baseFontSize, 28, "baseFontSize"),
+        commandId: boundedString(op.commandId, 128, "commandId").trim(),
+        ...(commandVersion ? { commandVersion } : {}),
+        commandState: normalizeCommandState(op.commandState)
+      });
+      continue;
+    }
+
+    if (opName === "update_node" || opName === "edit_node") {
+      const node = requireNode(state, op.id);
+      applyNodePosition(node, op);
+      applyNodeSize(node, op);
+      if (op.text !== undefined || op.html !== undefined) applyTextUpdate(node, op);
+      if (op.commandId !== undefined || op.commandVersion !== undefined || op.commandState !== undefined) {
+        applyCommandUpdate(node, op);
+      }
+      continue;
+    }
+
+    if (opName === "move_node") {
+      applyNodePosition(requireNode(state, op.id), op);
+      continue;
+    }
+
+    if (opName === "resize_node") {
+      applyNodeSize(requireNode(state, op.id), op);
+      continue;
+    }
+
+    if (opName === "delete_node") {
+      const id = cleanNodeId(op.id);
+      const beforeLength = state.nodes.length;
+      state.nodes = state.nodes.filter((node) => node.id !== id);
+      allocatedIds.delete(id);
+      if (state.nodes.length === beforeLength) throw new HttpError(404, `Node "${id}" was not found.`);
+      continue;
+    }
+
+    if (opName === "align_nodes") {
+      applyAlignNodes(state, op);
+      continue;
+    }
+
+    if (opName === "distribute_nodes") {
+      applyDistributeNodes(state, op);
+      continue;
+    }
+
+    if (opName === "link_text") {
+      applyLinkText(state, op);
+      continue;
+    }
+
+    if (opName === "set_camera") {
+      state.camera = {
+        x: finiteNumber(op.x, state.camera.x, "camera.x"),
+        y: finiteNumber(op.y, state.camera.y, "camera.y"),
+        scale: positiveNumber(op.scale, state.camera.scale, "camera.scale")
+      };
+      continue;
+    }
+
+    throw new HttpError(400, `Unknown op "${opName}".`);
+  }
+
+  return normalizeState(state);
+}
+
+async function ensureSpace(collection, slug) {
+  const now = Date.now();
+  await collection.updateOne(
+    { slug },
+    { $setOnInsert: { slug, state: null, revision: 0, createdAt: now, updatedAt: now } },
+    { upsert: true }
+  );
+  return collection.findOne(
+    { slug },
+    { projection: { _id: 0, slug: 1, state: 1, updatedAt: 1, revision: 1 } }
+  );
+}
+
+function buildManifest(event) {
+  const authed = isAuthorized(event);
+  return {
+    name: "Skydive Agent Interface",
+    schemaVersion: 1,
+    authenticated: authed,
+    auth: {
+      requiredFor: ["list_spaces", "read_space", "apply_ops"],
+      header: "Authorization: Bearer <SKYDIVE_AGENT_TOKEN>",
+      queryFallback: "token=<SKYDIVE_AGENT_TOKEN>"
+    },
+    endpoints: {
+      manifest: "GET /api/agent?manifest=1",
+      listSpaces: "GET /api/agent?spaces=1",
+      readSpace: "GET /api/agent?space=<slug>",
+      applyOps: "POST /api/agent"
+    },
+    stateShape: {
+      version: "number",
+      camera: { x: "number", y: "number", scale: "number" },
+      nodes: [
+        {
+          kind: "text",
+          id: "string",
+          x: "number",
+          y: "number",
+          baseFontSize: "number",
+          text: "string",
+          html: "string"
+        },
+        {
+          kind: "command",
+          id: "string",
+          x: "number",
+          y: "number",
+          baseFontSize: "number",
+          commandId: "string",
+          commandVersion: "optional string",
+          commandState: "object"
+        }
+      ]
+    },
+    operations: [
+      "create_text_node",
+      "create_command_node",
+      "update_node",
+      "move_node",
+      "resize_node",
+      "delete_node",
+      "align_nodes",
+      "distribute_nodes",
+      "link_text",
+      "set_camera",
+      "replace_state"
+    ],
+    commands: {
+      staticCommands: true,
+      dynamicCommandDefinitions: false,
+      definitionSchemaVersion: staticCommandRegistry.schemaVersion || 1,
+      definitions: Array.isArray(staticCommandRegistry.commands) ? staticCommandRegistry.commands : [],
+      futureRuntimeNote: "Command nodes already preserve commandVersion. Dynamic executable definitions can later be added as another registry source without changing space nodes."
+    },
+    limits: {
+      maxOps: MAX_OPS,
+      maxNodes: MAX_NODES,
+      maxTextLength: MAX_TEXT_LENGTH,
+      maxHtmlLength: MAX_HTML_LENGTH
+    }
+  };
+}
+
+async function listSpaces(collection) {
+  const spaces = await collection.find(
+    {},
+    { projection: { _id: 0, slug: 1, updatedAt: 1, revision: 1 } }
+  ).sort({ updatedAt: -1 }).limit(500).toArray();
+
+  return spaces.map((space) => ({
+    slug: space.slug,
+    updatedAt: Number(space.updatedAt) || 0,
+    revision: Number(space.revision) || 0
+  }));
+}
+
+async function applySpaceOps(collection, payload) {
+  const slug = getSlug(payload.space);
+  if (!slug) throw new HttpError(400, "A valid space slug is required.");
+
+  const current = await ensureSpace(collection, slug);
+  const currentRevision = Number(current.revision) || 0;
+  if (payload.baseRevision !== undefined && Number(payload.baseRevision) !== currentRevision) {
+    throw new HttpError(409, "Space revision changed before ops could be applied.", {
+      expectedRevision: payload.baseRevision,
+      currentRevision,
+      space: {
+        slug,
+        revision: currentRevision,
+        updatedAt: Number(current.updatedAt) || 0,
+        state: normalizeState(current.state)
+      }
+    });
+  }
+
+  const state = applyOps(current.state, payload.ops);
+  const now = Date.now();
+  const revisionFilter = current.revision === undefined
+    ? { $or: [{ revision: { $exists: false } }, { revision: 0 }] }
+    : { revision: currentRevision };
+  const result = await collection.updateOne(
+    { slug, ...revisionFilter },
+    {
+      $set: { slug, state, updatedAt: now },
+      $inc: { revision: 1 },
+      $setOnInsert: { createdAt: now }
+    },
+    { upsert: false }
+  );
+
+  if (result.matchedCount !== 1) {
+    throw new HttpError(409, "Space changed while ops were being saved. Read it again and retry.");
+  }
+
+  return {
+    slug,
+    revision: currentRevision + 1,
+    updatedAt: now,
+    appliedOps: payload.ops.length,
+    state
+  };
+}
+
+exports.handler = async (event) => {
+  if (event.httpMethod === "OPTIONS") {
+    return json(204, {});
+  }
+
+  try {
+    const query = getQuery(event);
+    if (event.httpMethod === "GET" && (query.manifest || (!query.spaces && !query.space))) {
+      return json(200, buildManifest(event));
+    }
+
+    if (event.httpMethod === "GET" && query.spaces) {
+      requireAuth(event);
+      const collection = await getCollection();
+      return json(200, { spaces: await listSpaces(collection) });
+    }
+
+    if (event.httpMethod === "GET" && query.space) {
+      requireAuth(event);
+      const collection = await getCollection();
+      const slug = getSlug(query.space);
+      if (!slug) return json(400, { error: "A valid space slug is required." });
+      const space = await ensureSpace(collection, slug);
+      return json(200, {
+        slug,
+        revision: Number(space.revision) || 0,
+        updatedAt: Number(space.updatedAt) || 0,
+        state: normalizeState(space.state)
+      });
+    }
+
+    if (event.httpMethod === "POST") {
+      requireAuth(event);
+      const collection = await getCollection();
+      const payload = event.body ? JSON.parse(event.body) : {};
+      return json(200, await applySpaceOps(collection, payload));
+    }
+
+    return json(405, { error: "Method not allowed." });
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      return json(400, { error: "Request body must be valid JSON." });
+    }
+    if (error instanceof HttpError) {
+      return json(error.statusCode, {
+        error: error.message,
+        ...(error.details ? { details: error.details } : {})
+      });
+    }
+    console.error(error);
+    return json(500, { error: "Server error." });
+  }
+};

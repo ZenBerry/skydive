@@ -452,6 +452,7 @@
     const MARQUEE_DRAG_THRESHOLD_PX = 3;
     const GROUP_SELECTION_PADDING_PX = 8;
     const STORAGE_KEY = "mindmap.v1";
+    const RESERVED_SHARED_SPACE_SLUGS = new Set(["agents", "api"]);
     const SHARED_SPACE_SLUG = getSharedSpaceSlug();
     const SHARED_POLL_MS = 2000;
     const FILE_TYPES = [{
@@ -494,11 +495,13 @@
       const parts = window.location.pathname.split("/").filter(Boolean);
       if (parts.length !== 1 || parts[0] === "index.html") return "";
 
+      let slug = "";
       try {
-        return decodeURIComponent(parts[0]).trim();
+        slug = decodeURIComponent(parts[0]).trim();
       } catch (error) {
-        return parts[0].trim();
+        slug = parts[0].trim();
       }
+      return RESERVED_SHARED_SPACE_SLUGS.has(slug) ? "" : slug;
     }
 
     function getStorageKey() {
@@ -1472,6 +1475,7 @@
           ...base,
           kind: "command",
           commandId: node.dataset.commandId || "",
+          ...(node.dataset.commandVersion ? { commandVersion: node.dataset.commandVersion } : {}),
           commandState: readCommandState(node)
         };
       }
@@ -2101,10 +2105,11 @@
           : BASE_TEXT_PX / camera.scale;
         if (entry.kind === "command") {
           const commandId = typeof entry.commandId === "string" ? entry.commandId : "";
+          const commandVersion = typeof entry.commandVersion === "string" ? entry.commandVersion : "";
           const commandState = entry.commandState && typeof entry.commandState === "object"
             ? entry.commandState
             : {};
-          createCommandNode(x, y, commandId, commandState, baseFontSize, id);
+          createCommandNode(x, y, commandId, commandState, baseFontSize, id, commandVersion);
         } else {
           createTextNode(x, y, text, baseFontSize, id, html);
         }
@@ -2379,13 +2384,15 @@
       commandId,
       commandState = {},
       baseFontSize = BASE_TEXT_PX / camera.scale,
-      preferredId = ""
+      preferredId = "",
+      commandVersion = ""
     ) {
       const node = document.createElement("div");
       node.className = "text-node command-node";
       node.dataset.kind = "command";
       node.dataset.nodeId = resolveNodeId(preferredId);
       node.dataset.commandId = commandId;
+      if (commandVersion) node.dataset.commandVersion = commandVersion;
       writeCommandState(node, commandState);
       node.contentEditable = "false";
       node.dataset.baseFontSize = String(baseFontSize);

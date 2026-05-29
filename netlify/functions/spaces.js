@@ -59,13 +59,13 @@ exports.handler = async (event) => {
       const now = Date.now();
       await collection.updateOne(
         { slug },
-        { $setOnInsert: { slug, state: null, createdAt: now, updatedAt: now } },
+        { $setOnInsert: { slug, state: null, revision: 0, createdAt: now, updatedAt: now } },
         { upsert: true }
       );
 
       const space = await collection.findOne(
         { slug },
-        { projection: { _id: 0, slug: 1, state: 1, updatedAt: 1 } }
+        { projection: { _id: 0, slug: 1, state: 1, updatedAt: 1, revision: 1 } }
       );
 
       return json(200, space);
@@ -82,6 +82,7 @@ exports.handler = async (event) => {
         { slug },
         {
           $set: { slug, state: payload.state, updatedAt: now },
+          $inc: { revision: 1 },
           $setOnInsert: { createdAt: now }
         },
         { upsert: true }

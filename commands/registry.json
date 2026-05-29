@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "commands": [
+    {
+      "id": "stw",
+      "version": "1.0.0",
+      "title": "Stopwatch",
+      "description": "A tiny persistent stopwatch.",
+      "aliases": ["stopwatch", "timer"],
+      "source": "static",
+      "dynamicExecutable": false,
+      "stateSchema": {
+        "type": "object",
+        "properties": {
+          "running": { "type": "boolean" },
+          "startedAt": { "type": ["number", "null"] },
+          "elapsedMs": { "type": "number" }
+        }
+      }
+    }
+  ]
+}

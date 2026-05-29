@@ -1,1 +1,4 @@
+/agents /agents.html 200
+/agents/ /agents.html 200
+/api/agent /.netlify/functions/agent 200
 /* /index.html 200

@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Skydive Agent Interface</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1f2520;
+      --muted: #5e665f;
+      --line: #d9ded7;
+      --paper: #fbfcf9;
+      --panel: #ffffff;
+      --accent: #1f6f5b;
+      --code: #f3f6f2;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font: 16px/1.55 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    main {
+      width: min(920px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 40px 0 56px;
+    }
+
+    h1,
+    h2,
+    h3 {
+      line-height: 1.12;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      margin: 0 0 12px;
+      font-size: clamp(2rem, 7vw, 4.5rem);
+      font-weight: 650;
+    }
+
+    h2 {
+      margin: 34px 0 10px;
+      font-size: 1.35rem;
+    }
+
+    h3 {
+      margin: 24px 0 8px;
+      font-size: 1rem;
+    }
+
+    p,
+    li {
+      max-width: 72ch;
+    }
+
+    a {
+      color: var(--accent);
+    }
+
+    code,
+    pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+    }
+
+    code {
+      padding: 0.08em 0.28em;
+      border-radius: 4px;
+      background: var(--code);
+    }
+
+    pre {
+      overflow: auto;
+      margin: 12px 0 18px;
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    .summary {
+      max-width: 68ch;
+      color: var(--muted);
+      font-size: 1.08rem;
+    }
+
+    .callout {
+      margin: 20px 0;
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--accent);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 16px 0 8px;
+    }
+
+    .tile {
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    .tile strong {
+      display: block;
+      margin-bottom: 4px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Skydive Agent Interface</h1>
+    <p class="summary">
+      This page is intended for AI agents. It describes how to read and modify Skydive spaces through a small JSON API backed by Netlify Functions.
+    </p>
+
+    <div class="callout">
+      Start by fetching the machine-readable manifest:
+      <code>GET /api/agent?manifest=1</code>
+    </div>
+
+    <section>
+      <h2>Authentication</h2>
+      <p>
+        Listing spaces, reading spaces, and applying edits require an agent token. Prefer an HTTP header:
+      </p>
+      <pre><code>Authorization: Bearer &lt;SKYDIVE_AGENT_TOKEN&gt;</code></pre>
+      <p>
+        If an agent tool cannot set headers, use the query fallback:
+        <code>?token=&lt;SKYDIVE_AGENT_TOKEN&gt;</code>. Treat tokenized URLs as secrets.
+      </p>
+    </section>
+
+    <section>
+      <h2>Core Workflow</h2>
+      <ol>
+        <li>Fetch <code>/api/agent?manifest=1</code> to discover capabilities and limits.</li>
+        <li>Fetch <code>/api/agent?spaces=1</code> to list known spaces.</li>
+        <li>Fetch <code>/api/agent?space=&lt;slug&gt;</code> before editing a space.</li>
+        <li>Send <code>POST /api/agent</code> with <code>space</code>, <code>baseRevision</code>, and a batch of <code>ops</code>.</li>
+        <li>If the API returns <code>409</code>, re-read the space and retry against the new revision.</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>Endpoints</h2>
+      <div class="grid">
+        <div class="tile">
+          <strong>Manifest</strong>
+          <code>GET /api/agent?manifest=1</code>
+        </div>
+        <div class="tile">
+          <strong>List spaces</strong>
+          <code>GET /api/agent?spaces=1</code>
+        </div>
+        <div class="tile">
+          <strong>Read a space</strong>
+          <code>GET /api/agent?space=&lt;slug&gt;</code>
+        </div>
+        <div class="tile">
+          <strong>Apply edits</strong>
+          <code>POST /api/agent</code>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>State Shape</h2>
+      <pre><code>{
+  "version": 1,
+  "camera": { "x": 0, "y": 0, "scale": 1 },
+  "nodes": [
+    {
+      "kind": "text",
+      "id": "node-1",
+      "x": 0,
+      "y": 0,
+      "baseFontSize": 28,
+      "text": "Hello",
+      "html": "Hello"
+    },
+    {
+      "kind": "command",
+      "id": "node-2",
+      "x": 120,
+      "y": 80,
+      "baseFontSize": 28,
+      "commandId": "stw",
+      "commandVersion": "1.0.0",
+      "commandState": {}
+    }
+  ]
+}</code></pre>
+    </section>
+
+    <section>
+      <h2>Batch Edit Example</h2>
+      <pre><code>POST /api/agent
+Content-Type: application/json
+Authorization: Bearer &lt;SKYDIVE_AGENT_TOKEN&gt;
+
+{
+  "space": "my-space",
+  "baseRevision": 7,
+  "ops": [
+    {
+      "op": "create_text_node",
+      "id": "node-agent-note",
+      "x": 0,
+      "y": 0,
+      "text": "A new agent-created thought"
+    },
+    {
+      "op": "create_command_node",
+      "id": "node-agent-stopwatch",
+      "x": 0,
+      "y": 90,
+      "commandId": "stw",
+      "commandVersion": "1.0.0",
+      "commandState": { "running": false, "startedAt": null, "elapsedMs": 0 }
+    },
+    {
+      "op": "align_nodes",
+      "ids": ["node-agent-note", "node-agent-stopwatch"],
+      "alignment": "left"
+    }
+  ]
+}</code></pre>
+    </section>
+
+    <section>
+      <h2>Supported Ops</h2>
+      <ul>
+        <li><code>create_text_node</code>: create a text node with <code>text</code> or trusted <code>html</code>.</li>
+        <li><code>create_command_node</code>: create an instance of a registered command.</li>
+        <li><code>update_node</code>: edit position, size, text/html, or command state.</li>
+        <li><code>move_node</code>, <code>resize_node</code>, <code>delete_node</code>: targeted node edits.</li>
+        <li><code>align_nodes</code>: align by <code>left</code>, <code>right</code>, <code>center</code>, <code>top</code>, <code>bottom</code>, or <code>middle</code>.</li>
+        <li><code>distribute_nodes</code>: distribute horizontally or vertically.</li>
+        <li><code>link_text</code>: wrap matching source text in a Skydive internal link to another node.</li>
+        <li><code>set_camera</code>: update the saved camera.</li>
+        <li><code>replace_state</code>: replace the whole space state after reading the latest revision.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Commands</h2>
+      <p>
+        Command nodes store a command instance: <code>commandId</code>, optional <code>commandVersion</code>, and <code>commandState</code>.
+        Executable command definitions are registry entries. Today the registry contains static commands, and the schema already leaves room for dynamic executable definitions later without changing node storage.
+      </p>
+    </section>
+
+    <script type="application/json" id="skydive-agent-bootstrap">
+{
+  "api": "/api/agent",
+  "manifest": "/api/agent?manifest=1",
+  "auth": "Authorization: Bearer <SKYDIVE_AGENT_TOKEN>",
+  "mutationModel": "Read a space revision, then POST a batch of ops with baseRevision.",
+  "dynamicCommandsFutureProofing": "Command instances already carry commandId, commandVersion, and commandState. Future executable definitions should be added to the registry, not embedded in space nodes."
+}
+    </script>
+  </main>
+</body>
+</html>
