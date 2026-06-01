@@ -35,6 +35,22 @@
       height: 100%;
     }
 
+    #loading-screen {
+      position: fixed;
+      inset: 0;
+      z-index: 5000;
+      display: grid;
+      place-items: center;
+      background: #fff;
+      color: #111;
+      font: 400 16px/1.4 "Roboto", sans-serif;
+      letter-spacing: 0;
+    }
+
+    #loading-screen[hidden] {
+      display: none;
+    }
+
     .text-node {
       position: absolute;
       min-width: 12px;
@@ -397,6 +413,7 @@
   </style>
 </head>
 <body>
+  <div id="loading-screen" role="status" aria-live="polite">Loading... 0% done</div>
   <div id="viewport">
     <div id="world"></div>
     <div id="marquee-selection" hidden></div>
@@ -427,6 +444,7 @@
   <script>
     const viewport = document.getElementById("viewport");
     const world = document.getElementById("world");
+    const loadingScreen = document.getElementById("loading-screen");
     const marqueeSelection = document.getElementById("marquee-selection");
     const groupSelectionBox = document.getElementById("group-selection-box");
     const groupSelectionHandle = document.getElementById("group-selection-handle");
@@ -482,6 +500,7 @@
     let slashCommandSession = null;
     let slashCommandSelectedIndex = 0;
     let externalLinkCardPointer = null;
+    let loadingProgressValue = 0;
     const nodeHighlightTimeouts = new WeakMap();
     const selectedNodes = new Set();
 
@@ -506,6 +525,19 @@
 
     function getStorageKey() {
       return SHARED_SPACE_SLUG ? `${STORAGE_KEY}.${SHARED_SPACE_SLUG}` : STORAGE_KEY;
+    }
+
+    function setLoadingProgress(percent) {
+      if (!loadingScreen) return;
+      const value = Math.max(0, Math.min(100, Math.round(percent)));
+      if (value < loadingProgressValue) return;
+      loadingProgressValue = value;
+      loadingScreen.textContent = `Loading... ${value}% done`;
+    }
+
+    function hideLoadingScreen() {
+      setLoadingProgress(100);
+      if (loadingScreen) loadingScreen.hidden = true;
     }
 
     function getNodeById(nodeId) {
@@ -2068,9 +2100,10 @@
         throw new Error("Invalid state file.");
       }
 
-      const { autosave = true } = options;
+      const { autosave = true, onProgress = null } = options;
       const nextCamera = state.camera || {};
       const nextNodes = Array.isArray(state.nodes) ? state.nodes : [];
+      const reportProgress = typeof onProgress === "function" ? onProgress : null;
 
       suppressAutosave = true;
       cancelCameraAnimation();
@@ -2094,7 +2127,7 @@
         ? Number(nextCamera.scale)
         : 1;
 
-      for (const entry of nextNodes) {
+      nextNodes.forEach((entry, index) => {
         const x = Number.isFinite(Number(entry.x)) ? Number(entry.x) : 0;
         const y = Number.isFinite(Number(entry.y)) ? Number(entry.y) : 0;
         const text = typeof entry.text === "string" ? entry.text : "";
@@ -2113,7 +2146,10 @@
         } else {
           createTextNode(x, y, text, baseFontSize, id, html);
         }
-      }
+        if (reportProgress) reportProgress((index + 1) / Math.max(1, nextNodes.length));
+      });
+
+      if (nextNodes.length === 0 && reportProgress) reportProgress(1);
 
       suppressAutosave = false;
       render();
@@ -2663,12 +2699,12 @@
       updateSlashMenuForNode(editingNode);
     });
 
-    function loadFromLocalStorage() {
+    function loadFromLocalStorage(options = {}) {
       const raw = localStorage.getItem(getStorageKey());
       if (!raw) return false;
 
       try {
-        loadState(JSON.parse(raw));
+        loadState(JSON.parse(raw), options);
         return true;
       } catch (error) {
         console.error("Restore failed:", error);
@@ -2676,7 +2712,7 @@
       }
     }
 
-    function applySharedState(data) {
+    function applySharedState(data, options = {}) {
       if (!data || !data.state) return false;
 
       const updatedAt = Number(data.updatedAt) || 1;
@@ -2685,7 +2721,7 @@
       try {
         applyingSharedState = true;
         latestSharedUpdatedAt = updatedAt;
-        loadState(data.state, { autosave: false });
+        loadState(data.state, { autosave: false, onProgress: options.onProgress });
         return true;
       } catch (error) {
         console.error("Shared space restore failed:", error);
@@ -2695,14 +2731,14 @@
       }
     }
 
-    async function loadFromSharedSpace() {
+    async function loadFromSharedSpace(options = {}) {
       if (!SHARED_SPACE_SLUG) return false;
       const data = await requestSharedSpace();
       if (!data.state) {
         latestSharedUpdatedAt = Number(data.updatedAt) || latestSharedUpdatedAt;
         return false;
       }
-      return applySharedState(data);
+      return applySharedState(data, options);
     }
 
     function startSharedPolling() {
@@ -2718,22 +2754,35 @@
     }
 
     async function boot() {
+      setLoadingProgress(10);
       void requestPersistentStorage();
-      if (SHARED_SPACE_SLUG) {
-        try {
-          if (!await loadFromSharedSpace()) {
+      try {
+        if (SHARED_SPACE_SLUG) {
+          setLoadingProgress(20);
+          try {
+            if (!await loadFromSharedSpace({
+              onProgress: (progress) => setLoadingProgress(35 + progress * 60)
+            })) {
+              setLoadingProgress(80);
+              render();
+            }
+            startSharedPolling();
+          } catch (error) {
+            console.error("Shared space load failed:", error);
             render();
           }
-          startSharedPolling();
-        } catch (error) {
-          console.error("Shared space load failed:", error);
+          return;
+        }
+
+        setLoadingProgress(20);
+        if (!loadFromLocalStorage({
+          onProgress: (progress) => setLoadingProgress(20 + progress * 75)
+        })) {
+          setLoadingProgress(80);
           render();
         }
-        return;
-      }
-
-      if (!loadFromLocalStorage()) {
-        render();
+      } finally {
+        hideLoadingScreen();
       }
     }
 
