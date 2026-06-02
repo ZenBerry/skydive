@@ -33,7 +33,7 @@
 
   window.SkydiveCommands.push({
     id: "stw",
-    aliases: ["stopwatch", "timer"],
+    aliases: ["stopwatch"],
     title: "Stopwatch",
     description: "A tiny persistent stopwatch.",
 

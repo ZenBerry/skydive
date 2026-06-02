@@ -6,7 +6,7 @@
       "version": "1.0.0",
       "title": "Stopwatch",
       "description": "A tiny persistent stopwatch.",
-      "aliases": ["stopwatch", "timer"],
+      "aliases": ["stopwatch"],
       "source": "static",
       "dynamicExecutable": false,
       "stateSchema": {
@@ -15,6 +15,29 @@
           "running": { "type": "boolean" },
           "startedAt": { "type": ["number", "null"] },
           "elapsedMs": { "type": "number" }
+        }
+      }
+    },
+    {
+      "id": "timer",
+      "version": "1.0.0",
+      "title": "Timer",
+      "description": "A tiny persistent countdown timer.",
+      "aliases": ["countdown", "alarm"],
+      "acceptsArgs": true,
+      "source": "static",
+      "dynamicExecutable": false,
+      "stateSchema": {
+        "type": "object",
+        "properties": {
+          "durationMs": { "type": "number" },
+          "remainingMs": { "type": "number" },
+          "running": { "type": "boolean" },
+          "startedAt": { "type": ["number", "null"] },
+          "completed": { "type": "boolean" },
+          "completedAt": { "type": ["number", "null"] },
+          "alarmed": { "type": "boolean" },
+          "input": { "type": "string" }
         }
       }
     }

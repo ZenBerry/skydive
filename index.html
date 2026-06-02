@@ -441,6 +441,7 @@
   <input id="open-file-input" type="file" accept=".mind.json,.json,application/json" hidden>
 
   <script src="/commands/stw.js"></script>
+  <script src="/commands/timer.js"></script>
   <script>
     const viewport = document.getElementById("viewport");
     const world = document.getElementById("world");
@@ -1553,11 +1554,14 @@
 
       const caretOffset = getCaretTextOffset(node, range);
       const textBeforeCaret = (node.textContent || "").slice(0, caretOffset);
-      const match = /(^|\s)\/([a-z0-9_-]*)$/i.exec(textBeforeCaret);
+      const match = /(^|\s)\/([a-z0-9_-]*)(?:\s+([\s\S]*))?$/i.exec(textBeforeCaret);
       if (!match) return null;
+      if (match[3] !== undefined && !match[2]) return null;
 
       return {
         query: match[2].toLowerCase(),
+        args: typeof match[3] === "string" ? match[3].trim() : "",
+        hasArgs: match[3] !== undefined,
         tokenStart: match.index + match[1].length,
         tokenEnd: caretOffset,
         range
@@ -1637,7 +1641,9 @@
         return;
       }
 
-      const commands = getMatchingCommands(query.query);
+      const commands = getMatchingCommands(query.query).filter((command) => {
+        return !query.hasArgs || Boolean(command.acceptsArgs);
+      });
       if (commands.length === 0) {
         closeSlashCommandMenu();
         return;
@@ -1671,7 +1677,7 @@
       removeSlashToken(sourceNode, session);
 
       const state = typeof command.createState === "function"
-        ? command.createState()
+        ? command.createState({ args: session.args || "", query: session.query || "" })
         : {};
       const commandNode = createCommandNode(
         sourceX,
