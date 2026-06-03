@@ -27,6 +27,14 @@
       cursor: default;
     }
 
+    #viewport.panning,
+    #viewport.panning .text-node,
+    #viewport.panning .external-link-card,
+    #viewport.panning #group-selection-box,
+    #viewport.panning #group-selection-handle {
+      cursor: grabbing;
+    }
+
     #world {
       position: absolute;
       left: 0;
@@ -490,6 +498,7 @@
     let pendingLinkSelectionRange = null;
     let linkDialogDrag = null;
     let marqueeSession = null;
+    let panSession = null;
     let groupTransform = null;
     let selectionBoundsWorld = null;
     let navigationFitTargetNode = null;
@@ -1903,6 +1912,58 @@
       }
     }
 
+    function isCanvasPanExcludedTarget(target) {
+      if (!(target instanceof Element)) return false;
+      return Boolean(target.closest("button, input, textarea, select, [data-command-interactive], .editing"));
+    }
+
+    function beginCanvasPan(event) {
+      if (event.button !== 0 || !event.shiftKey || isCanvasPanExcludedTarget(event.target)) return;
+
+      closeNodeContextMenu();
+      cancelCameraAnimation();
+
+      panSession = {
+        pointerId: event.pointerId,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        startCameraX: camera.x,
+        startCameraY: camera.y,
+        moved: false
+      };
+
+      viewport.classList.add("panning");
+      viewport.setPointerCapture(event.pointerId);
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+
+    function updateCanvasPan(event) {
+      if (!panSession || event.pointerId !== panSession.pointerId) return;
+
+      const dx = event.clientX - panSession.startClientX;
+      const dy = event.clientY - panSession.startClientY;
+      panSession.moved = panSession.moved || dx !== 0 || dy !== 0;
+      camera.x = panSession.startCameraX + dx;
+      camera.y = panSession.startCameraY + dy;
+      render();
+      event.preventDefault();
+      event.stopPropagation();
+    }
+
+    function endCanvasPan(event) {
+      if (!panSession || event.pointerId !== panSession.pointerId) return;
+      const didMove = panSession.moved;
+      if (viewport.hasPointerCapture(event.pointerId)) {
+        viewport.releasePointerCapture(event.pointerId);
+      }
+      panSession = null;
+      viewport.classList.remove("panning");
+      if (didMove) scheduleAutosave();
+      event.preventDefault();
+      event.stopPropagation();
+    }
+
     function beginGroupTransform(event, mode, captureElement) {
       if (event.button !== 0) return;
       if (selectedNodes.size === 0 || !selectionBoundsWorld) return;
@@ -2119,6 +2180,8 @@
       clearSelection();
       hideMarqueeRect();
       marqueeSession = null;
+      panSession = null;
+      viewport.classList.remove("panning");
       groupTransform = null;
       navigationFitTargetNode = null;
       for (const node of Array.from(world.children)) {
@@ -2571,6 +2634,8 @@
       closeNodeContextMenu();
     }, { capture: true });
 
+    viewport.addEventListener("pointerdown", beginCanvasPan, { capture: true });
+
     viewport.addEventListener("pointerdown", (event) => {
       if (event.button !== 0) return;
       if (event.target !== viewport && event.target !== world) return;
@@ -2579,6 +2644,10 @@
       beginMarqueeSelection(event);
       event.preventDefault();
     });
+
+    viewport.addEventListener("pointermove", updateCanvasPan);
+    viewport.addEventListener("pointerup", endCanvasPan);
+    viewport.addEventListener("pointercancel", endCanvasPan);
 
     viewport.addEventListener("pointermove", updateMarqueeSelection);
     viewport.addEventListener("pointerup", endMarqueeSelection);
