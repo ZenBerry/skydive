@@ -1,6 +1,6 @@
 const crypto = require("crypto");
 
-const uploadFolder = (process.env.CLOUDINARY_UPLOAD_FOLDER || "skydive/files").trim();
+const uploadFolder = (process.env.CLOUDINARY_UPLOAD_FOLDER || "").trim();
 
 function json(statusCode, body) {
   return {
@@ -53,11 +53,11 @@ exports.handler = async (event) => {
 
   const timestamp = Math.floor(Date.now() / 1000);
   const uploadParams = {
-    folder: uploadFolder,
     timestamp,
     unique_filename: "true",
     use_filename: "true"
   };
+  if (uploadFolder) uploadParams.folder = uploadFolder;
 
   return json(200, {
     uploadUrl: `https://api.cloudinary.com/v1_1/${encodeURIComponent(cloudName)}/auto/upload`,

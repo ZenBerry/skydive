@@ -1,3 +1,6 @@
 [build]
   publish = "."
   functions = "netlify/functions"
+
+[build.environment]
+  SECRETS_SCAN_OMIT_KEYS = "CLOUDINARY_CLOUD_NAME,CLOUDINARY_UPLOAD_FOLDER"
