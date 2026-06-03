@@ -450,6 +450,7 @@
 
   <script src="/commands/stw.js"></script>
   <script src="/commands/timer.js"></script>
+  <script src="/commands/file.js"></script>
   <script>
     const viewport = document.getElementById("viewport");
     const world = document.getElementById("world");
@@ -479,6 +480,8 @@
     const MARQUEE_DRAG_THRESHOLD_PX = 3;
     const GROUP_SELECTION_PADDING_PX = 8;
     const STORAGE_KEY = "mindmap.v1";
+    const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
+    const FILE_WIDGET_COMMAND_ID = "file";
     const RESERVED_SHARED_SPACE_SLUGS = new Set(["agents", "api"]);
     const SHARED_SPACE_SLUG = getSharedSpaceSlug();
     const SHARED_POLL_MS = 2000;
@@ -1504,6 +1507,14 @@
       });
     }
 
+    function updateCommandNodeState(node, nextState, options = {}) {
+      if (!isCommandNode(node) || !world.contains(node)) return;
+      writeCommandState(node, nextState);
+      renderCommandNodeContent(node);
+      refreshSelectionBounds();
+      if (options.autosave !== false) scheduleAutosave();
+    }
+
     function serializeNode(node) {
       const base = {
         id: node.dataset.nodeId || "",
@@ -2294,6 +2305,209 @@
       openFileInput.click();
     }
 
+    function getFileExtension(fileName) {
+      const name = typeof fileName === "string" ? fileName.trim() : "";
+      const dotIndex = name.lastIndexOf(".");
+      if (dotIndex <= 0 || dotIndex === name.length - 1) return "";
+      return name.slice(dotIndex + 1).toLowerCase();
+    }
+
+    function getCloudinaryAttachmentUrl(url) {
+      const href = normalizeExternalHref(url);
+      if (!href) return "";
+
+      const marker = "/upload/";
+      const markerIndex = href.indexOf(marker);
+      if (markerIndex === -1) return href;
+
+      return `${href.slice(0, markerIndex + marker.length)}fl_attachment/${href.slice(markerIndex + marker.length)}`;
+    }
+
+    function getUploadErrorMessage(error) {
+      const message = error && error.message ? String(error.message).trim() : "";
+      return (message || "Upload failed.").slice(0, 180);
+    }
+
+    function createUploadingFileState(file) {
+      const fileName = file && file.name ? file.name : "Untitled file";
+      return {
+        status: "uploading",
+        progress: 0,
+        fileName,
+        extension: getFileExtension(fileName),
+        mimeType: file && file.type ? file.type : "",
+        bytes: file && Number.isFinite(Number(file.size)) ? Number(file.size) : 0,
+        url: "",
+        downloadUrl: "",
+        resourceType: "",
+        startedAt: Date.now()
+      };
+    }
+
+    function createUploadedFileState(file, upload) {
+      const fileName = file && file.name ? file.name : "Untitled file";
+      const url = normalizeExternalHref(upload.secure_url || upload.url || "");
+      if (!url) throw new Error("Cloudinary did not return a file URL.");
+
+      return {
+        status: "uploaded",
+        progress: 100,
+        fileName,
+        extension: getFileExtension(fileName) || String(upload.format || "").toLowerCase(),
+        mimeType: file && file.type ? file.type : "",
+        bytes: Number.isFinite(Number(upload.bytes)) ? Number(upload.bytes) : Number(file.size) || 0,
+        url,
+        downloadUrl: getCloudinaryAttachmentUrl(url),
+        resourceType: typeof upload.resource_type === "string" ? upload.resource_type : "",
+        publicId: typeof upload.public_id === "string" ? upload.public_id : "",
+        width: Number.isFinite(Number(upload.width)) ? Number(upload.width) : null,
+        height: Number.isFinite(Number(upload.height)) ? Number(upload.height) : null,
+        uploadedAt: Date.now()
+      };
+    }
+
+    function createFailedFileState(file, error) {
+      return {
+        ...createUploadingFileState(file),
+        status: "error",
+        progress: 0,
+        error: getUploadErrorMessage(error),
+        failedAt: Date.now()
+      };
+    }
+
+    async function requestCloudinaryUploadSignature(file) {
+      const response = await fetch(CLOUDINARY_SIGNATURE_URL, {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          fileName: file.name || "",
+          mimeType: file.type || "",
+          bytes: Number(file.size) || 0,
+          lastModified: Number(file.lastModified) || 0
+        })
+      });
+
+      let data = null;
+      try {
+        data = await response.json();
+      } catch (error) {
+        data = null;
+      }
+
+      if (!response.ok) {
+        throw new Error(data && data.error ? data.error : `Upload signature failed: ${response.status}`);
+      }
+
+      if (!data || !data.uploadUrl || !data.params || typeof data.params !== "object") {
+        throw new Error("Upload signature response was incomplete.");
+      }
+
+      return data;
+    }
+
+    async function uploadFileToCloudinary(file, onProgress) {
+      const signature = await requestCloudinaryUploadSignature(file);
+      const formData = new FormData();
+
+      for (const [key, value] of Object.entries(signature.params)) {
+        formData.append(key, String(value));
+      }
+      formData.append("file", file);
+
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", signature.uploadUrl);
+        xhr.responseType = "json";
+
+        xhr.upload.addEventListener("progress", (event) => {
+          if (!event.lengthComputable || event.total <= 0) return;
+          const progress = Math.min(99, Math.round((event.loaded / event.total) * 100));
+          onProgress(progress);
+        });
+
+        xhr.addEventListener("load", () => {
+          const body = xhr.response || {};
+          if (xhr.status >= 200 && xhr.status < 300) {
+            onProgress(100);
+            resolve(body);
+            return;
+          }
+
+          const cloudinaryMessage = body.error && body.error.message ? body.error.message : "";
+          reject(new Error(cloudinaryMessage || `Cloudinary upload failed: ${xhr.status}`));
+        });
+
+        xhr.addEventListener("error", () => {
+          reject(new Error("Network error while uploading file."));
+        });
+
+        xhr.addEventListener("abort", () => {
+          reject(new Error("Upload was canceled."));
+        });
+
+        xhr.send(formData);
+      });
+    }
+
+    function createFileUploadNode(file, worldX, worldY) {
+      return createCommandNode(
+        worldX,
+        worldY,
+        FILE_WIDGET_COMMAND_ID,
+        createUploadingFileState(file),
+        BASE_TEXT_PX / camera.scale
+      );
+    }
+
+    async function uploadFileForNode(file, node) {
+      try {
+        const upload = await uploadFileToCloudinary(file, (progress) => {
+          const state = readCommandState(node);
+          updateCommandNodeState(node, {
+            ...state,
+            status: "uploading",
+            progress
+          });
+        });
+
+        updateCommandNodeState(node, createUploadedFileState(file, upload));
+      } catch (error) {
+        console.error("File upload failed:", error);
+        updateCommandNodeState(node, createFailedFileState(file, error));
+      }
+    }
+
+    function isFileDragEvent(event) {
+      const transfer = event.dataTransfer;
+      if (!transfer || !transfer.types) return false;
+      return Array.from(transfer.types).includes("Files");
+    }
+
+    function getDroppedFiles(event) {
+      const transfer = event.dataTransfer;
+      if (!transfer || !transfer.files) return [];
+      return Array.from(transfer.files).filter((file) => file && typeof file.name === "string");
+    }
+
+    function handleDroppedFiles(files, clientX, clientY) {
+      if (files.length === 0) return;
+
+      const point = screenToWorld(clientX, clientY);
+      const offset = 18 / camera.scale;
+      const nodes = files.map((file, index) => {
+        const node = createFileUploadNode(file, point.x + index * offset, point.y + index * offset);
+        void uploadFileForNode(file, node);
+        return node;
+      });
+
+      clearSelection();
+      setSelectedNodes(nodes);
+    }
+
     function attachNodeHandlers(node) {
       let dragPointerId = null;
       let dragOffsetX = 0;
@@ -2701,6 +2915,30 @@
       );
       scheduleAutosave();
       startEditing(node);
+    });
+
+    window.addEventListener("dragenter", (event) => {
+      if (!isFileDragEvent(event)) return;
+      event.preventDefault();
+    });
+
+    window.addEventListener("dragover", (event) => {
+      if (!isFileDragEvent(event)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+    });
+
+    window.addEventListener("drop", (event) => {
+      const files = getDroppedFiles(event);
+      if (files.length === 0) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      closeNodeContextMenu();
+      closeLinkNodeDialog();
+      closeSlashCommandMenu();
+      cancelCameraAnimation();
+      handleDroppedFiles(files, event.clientX, event.clientY);
     });
 
     openFileInput.addEventListener("change", async () => {

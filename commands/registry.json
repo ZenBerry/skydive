@@ -40,6 +40,34 @@
           "input": { "type": "string" }
         }
       }
+    },
+    {
+      "id": "file",
+      "version": "1.0.0",
+      "title": "File",
+      "description": "A draggable uploaded file attachment.",
+      "aliases": ["upload", "attachment"],
+      "source": "static",
+      "dynamicExecutable": false,
+      "stateSchema": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string" },
+          "progress": { "type": "number" },
+          "fileName": { "type": "string" },
+          "extension": { "type": "string" },
+          "mimeType": { "type": "string" },
+          "bytes": { "type": "number" },
+          "url": { "type": "string" },
+          "downloadUrl": { "type": "string" },
+          "resourceType": { "type": "string" },
+          "publicId": { "type": "string" },
+          "startedAt": { "type": "number" },
+          "uploadedAt": { "type": "number" },
+          "failedAt": { "type": "number" },
+          "error": { "type": "string" }
+        }
+      }
     }
   ]
 }
