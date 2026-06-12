@@ -485,6 +485,7 @@
     const RESERVED_SHARED_SPACE_SLUGS = new Set(["agents", "api"]);
     const SHARED_SPACE_SLUG = getSharedSpaceSlug();
     const SHARED_POLL_MS = 2000;
+    const ALIGN_ANIMATION_DURATION_MS = 620;
     const FILE_TYPES = [{
       description: "Mind Map JSON",
       accept: { "application/json": [".mind.json", ".json"] }
@@ -495,6 +496,7 @@
     let suppressAutosave = false;
     let nextNodeNumber = 1;
     let cameraAnimationFrame = null;
+    let nodeLayoutAnimationFrame = null;
     let contextMenuNode = null;
     let contextMenuSelectionRange = null;
     let pendingLinkSourceNode = null;
@@ -913,6 +915,13 @@
       }
     }
 
+    function cancelNodeLayoutAnimation() {
+      if (nodeLayoutAnimationFrame !== null) {
+        cancelAnimationFrame(nodeLayoutAnimationFrame);
+        nodeLayoutAnimationFrame = null;
+      }
+    }
+
     function clamp(value, min, max) {
       return Math.min(max, Math.max(min, value));
     }
@@ -924,6 +933,11 @@
       return 1 - Math.pow(-2 * t + 2, 5) / 2;
     }
 
+    function easeInOutNatural(t) {
+      const clamped = clamp(t, 0, 1);
+      return clamped * clamped * clamped * (clamped * (clamped * 6 - 15) + 10);
+    }
+
     function getNodeWorldSize(node) {
       const scale = camera.scale > 0 ? camera.scale : 1;
       const rect = node.getBoundingClientRect();
@@ -933,6 +947,112 @@
         width: widthPx / scale,
         height: heightPx / scale
       };
+    }
+
+    function getSelectedNodeLayoutItems() {
+      return Array.from(selectedNodes)
+        .filter((node) => node instanceof HTMLElement && world.contains(node))
+        .map((node, index) => {
+          const x = Number(node.dataset.x);
+          const y = Number(node.dataset.y);
+          const size = getNodeWorldSize(node);
+          return { node, index, x, y, width: size.width, height: size.height };
+        })
+        .filter((item) =>
+          Number.isFinite(item.x) &&
+          Number.isFinite(item.y) &&
+          Number.isFinite(item.width) &&
+          Number.isFinite(item.height)
+        );
+    }
+
+    function getColumnAlignmentTargets(items) {
+      if (items.length < 2) return [];
+
+      const ordered = items.slice().sort((a, b) =>
+        a.y - b.y ||
+        a.x - b.x ||
+        a.index - b.index
+      );
+      const left = Math.min(...items.map((item) => item.x));
+      const top = Math.min(...items.map((item) => item.y));
+      const bottom = Math.max(...items.map((item) => item.y + item.height));
+      const totalHeight = ordered.reduce((sum, item) => sum + item.height, 0);
+      const gap = Math.max(0, (bottom - top - totalHeight) / (ordered.length - 1));
+      let nextY = top;
+
+      return ordered.map((item) => {
+        const target = {
+          node: item.node,
+          x: left,
+          y: nextY
+        };
+        nextY += item.height + gap;
+        return target;
+      });
+    }
+
+    function animateNodePositions(targets, durationMs = ALIGN_ANIMATION_DURATION_MS) {
+      cancelNodeLayoutAnimation();
+
+      const snapshots = targets
+        .filter((target) => target.node instanceof HTMLElement && world.contains(target.node))
+        .map((target) => ({
+          node: target.node,
+          startX: Number(target.node.dataset.x),
+          startY: Number(target.node.dataset.y),
+          targetX: target.x,
+          targetY: target.y
+        }))
+        .filter((snapshot) =>
+          Number.isFinite(snapshot.startX) &&
+          Number.isFinite(snapshot.startY) &&
+          Number.isFinite(snapshot.targetX) &&
+          Number.isFinite(snapshot.targetY)
+        );
+
+      if (snapshots.length === 0) return false;
+
+      const hasMovement = snapshots.some((snapshot) =>
+        Math.abs(snapshot.targetX - snapshot.startX) > 0.001 ||
+        Math.abs(snapshot.targetY - snapshot.startY) > 0.001
+      );
+      if (!hasMovement) return false;
+
+      const start = performance.now();
+
+      function tick(now) {
+        const elapsed = now - start;
+        const t = Math.min(1, elapsed / durationMs);
+        const eased = easeInOutNatural(t);
+
+        for (const snapshot of snapshots) {
+          if (!world.contains(snapshot.node)) continue;
+          setNodePosition(
+            snapshot.node,
+            snapshot.startX + (snapshot.targetX - snapshot.startX) * eased,
+            snapshot.startY + (snapshot.targetY - snapshot.startY) * eased,
+            { skipSelectionUpdate: true }
+          );
+        }
+        refreshSelectionBounds();
+
+        if (t < 1) {
+          nodeLayoutAnimationFrame = requestAnimationFrame(tick);
+          return;
+        }
+
+        for (const snapshot of snapshots) {
+          if (!world.contains(snapshot.node)) continue;
+          setNodePosition(snapshot.node, snapshot.targetX, snapshot.targetY, { skipSelectionUpdate: true });
+        }
+        nodeLayoutAnimationFrame = null;
+        refreshSelectionBounds();
+        scheduleAutosave();
+      }
+
+      nodeLayoutAnimationFrame = requestAnimationFrame(tick);
+      return true;
     }
 
     function measureNodeRenderedSizePx(node, fontSizePx) {
@@ -1276,6 +1396,7 @@
 
         closeNodeContextMenu();
         cancelCameraAnimation();
+        cancelNodeLayoutAnimation();
         const pointer = screenToWorld(event.clientX, event.clientY);
         externalLinkCardPointer = {
           pointerId: event.pointerId,
@@ -1863,6 +1984,14 @@
       refreshSelectionBounds();
     }
 
+    function alignSelectedNodesToColumn() {
+      if (selectedNodes.size < 2) return false;
+      const items = getSelectedNodeLayoutItems();
+      const targets = getColumnAlignmentTargets(items);
+      if (targets.length < 2) return false;
+      return animateNodePositions(targets);
+    }
+
     function clearSelection() {
       if (selectedNodes.size === 0) {
         selectionBoundsWorld = null;
@@ -1933,6 +2062,7 @@
 
       closeNodeContextMenu();
       cancelCameraAnimation();
+      cancelNodeLayoutAnimation();
 
       panSession = {
         pointerId: event.pointerId,
@@ -1981,6 +2111,7 @@
 
       closeNodeContextMenu();
       cancelCameraAnimation();
+      cancelNodeLayoutAnimation();
 
       groupTransform = {
         pointerId: event.pointerId,
@@ -2185,6 +2316,7 @@
 
       suppressAutosave = true;
       cancelCameraAnimation();
+      cancelNodeLayoutAnimation();
       closeNodeContextMenu();
       closeLinkNodeDialog();
       closeSlashCommandMenu();
@@ -2532,6 +2664,7 @@
         }
         closeNodeContextMenu();
         cancelCameraAnimation();
+        cancelNodeLayoutAnimation();
         dragPointerId = event.pointerId;
         node.setPointerCapture(dragPointerId);
         dragStartClientX = event.clientX;
@@ -2855,6 +2988,7 @@
       if (event.target !== viewport && event.target !== world) return;
       closeNodeContextMenu();
       cancelCameraAnimation();
+      cancelNodeLayoutAnimation();
       beginMarqueeSelection(event);
       event.preventDefault();
     });
@@ -2871,6 +3005,7 @@
       event.preventDefault();
       closeNodeContextMenu();
       cancelCameraAnimation();
+      cancelNodeLayoutAnimation();
 
       const isZoomGesture = event.ctrlKey || event.metaKey;
       if (isZoomGesture) {
@@ -2890,6 +3025,7 @@
       event.preventDefault();
       closeNodeContextMenu();
       cancelCameraAnimation();
+      cancelNodeLayoutAnimation();
       gestureStartScale = camera.scale;
     });
 
@@ -2904,6 +3040,7 @@
     viewport.addEventListener("dblclick", (event) => {
       if (event.target !== viewport && event.target !== world) return;
       closeNodeContextMenu();
+      cancelNodeLayoutAnimation();
       clearSelection();
       const point = screenToWorld(event.clientX, event.clientY);
       const node = createTextNode(point.x, point.y);
@@ -2938,6 +3075,7 @@
       closeLinkNodeDialog();
       closeSlashCommandMenu();
       cancelCameraAnimation();
+      cancelNodeLayoutAnimation();
       handleDroppedFiles(files, event.clientX, event.clientY);
     });
 
@@ -2966,6 +3104,7 @@
         if (isEditableTarget(event.target)) return;
         event.preventDefault();
         closeNodeContextMenu();
+        cancelNodeLayoutAnimation();
         for (const node of Array.from(selectedNodes)) {
           if (world.contains(node)) {
             destroyCommandNodeContent(node);
@@ -2974,6 +3113,22 @@
         }
         clearSelection();
         scheduleAutosave();
+        return;
+      }
+
+      const isPlainEqualKey =
+        !event.altKey &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.shiftKey &&
+        (event.key === "=" || event.code === "Equal");
+      if (isPlainEqualKey && selectedNodes.size > 1) {
+        if (isEditableTarget(event.target)) return;
+        event.preventDefault();
+        closeNodeContextMenu();
+        closeLinkNodeDialog();
+        closeSlashCommandMenu();
+        alignSelectedNodesToColumn();
         return;
       }
 
