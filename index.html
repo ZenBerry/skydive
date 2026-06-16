@@ -35,12 +35,57 @@
       cursor: grabbing;
     }
 
+    #viewport.line-drafting,
+    #viewport.line-drafting .text-node,
+    #viewport.line-drafting .external-link-card {
+      cursor: crosshair;
+    }
+
+    #line-layer {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+      pointer-events: none;
+    }
+
+    .connection-line {
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      vector-effect: non-scaling-stroke;
+    }
+
+    .connection-line-shadow {
+      stroke: rgba(255, 255, 255, 0.72);
+      stroke-width: 2.15px;
+    }
+
+    .connection-line-stroke {
+      stroke: rgba(54, 59, 68, 0.46);
+      stroke-width: 0.76px;
+    }
+
+    .connection-line-draft .connection-line-shadow {
+      stroke: rgba(255, 255, 255, 0.8);
+      stroke-width: 2.4px;
+    }
+
+    .connection-line-draft .connection-line-stroke {
+      stroke: rgba(46, 52, 62, 0.5);
+      stroke-dasharray: 2.5 5.5;
+      stroke-width: 0.82px;
+    }
+
     #world {
       position: absolute;
       left: 0;
       top: 0;
       width: 100%;
       height: 100%;
+      z-index: 1;
     }
 
     #loading-screen {
@@ -423,6 +468,7 @@
 <body>
   <div id="loading-screen" role="status" aria-live="polite">Loading... 0% done</div>
   <div id="viewport">
+    <svg id="line-layer" aria-hidden="true"></svg>
     <div id="world"></div>
     <div id="marquee-selection" hidden></div>
     <div id="group-selection-box" hidden>
@@ -435,6 +481,7 @@
   <div id="fit-target-right" class="fit-marker target" aria-hidden="true" hidden></div>
   <div id="node-context-menu" hidden>
     <button id="copy-node-id-btn" type="button">Copy node ID</button>
+    <button id="draw-line-btn" type="button">Line</button>
     <button id="link-selection-btn" type="button">Link selection to node ID...</button>
   </div>
   <div id="link-node-dialog" hidden>
@@ -453,6 +500,7 @@
   <script src="/commands/file.js"></script>
   <script>
     const viewport = document.getElementById("viewport");
+    const lineLayer = document.getElementById("line-layer");
     const world = document.getElementById("world");
     const loadingScreen = document.getElementById("loading-screen");
     const marqueeSelection = document.getElementById("marquee-selection");
@@ -461,6 +509,7 @@
     const openFileInput = document.getElementById("open-file-input");
     const nodeContextMenu = document.getElementById("node-context-menu");
     const copyNodeIdBtn = document.getElementById("copy-node-id-btn");
+    const drawLineBtn = document.getElementById("draw-line-btn");
     const linkSelectionBtn = document.getElementById("link-selection-btn");
     const linkNodeDialog = document.getElementById("link-node-dialog");
     const linkNodeDialogTitle = document.getElementById("link-node-dialog-title");
@@ -479,9 +528,13 @@
     const MIN_NAVIGATION_SCALE = 0.08;
     const MARQUEE_DRAG_THRESHOLD_PX = 3;
     const GROUP_SELECTION_PADDING_PX = 8;
+    const LINE_ENDPOINT_GAP_PX = 2.5;
+    const LINE_DRAFT_SPRING = 0.24;
+    const LINE_DRAFT_DAMPING = 0.66;
     const STORAGE_KEY = "mindmap.v1";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
+    const SVG_NS = "http://www.w3.org/2000/svg";
     const RESERVED_SHARED_SPACE_SLUGS = new Set(["agents", "api"]);
     const SHARED_SPACE_SLUG = getSharedSpaceSlug();
     const SHARED_POLL_MS = 2000;
@@ -495,13 +548,17 @@
     let saveTimer = null;
     let suppressAutosave = false;
     let nextNodeNumber = 1;
+    let nextLineNumber = 1;
     let cameraAnimationFrame = null;
     let nodeLayoutAnimationFrame = null;
+    let lineRenderFrame = null;
+    let lineDraftAnimationFrame = null;
     let contextMenuNode = null;
     let contextMenuSelectionRange = null;
     let pendingLinkSourceNode = null;
     let pendingLinkSelectionRange = null;
     let linkDialogDrag = null;
+    let lineDraft = null;
     let marqueeSession = null;
     let panSession = null;
     let groupTransform = null;
@@ -516,8 +573,12 @@
     let slashCommandSelectedIndex = 0;
     let externalLinkCardPointer = null;
     let loadingProgressValue = 0;
+    let lineConnections = [];
     const nodeHighlightTimeouts = new WeakMap();
     const selectedNodes = new Set();
+    const nodeResizeObserver = "ResizeObserver" in window
+      ? new ResizeObserver(() => requestLineRender())
+      : null;
 
     const camera = {
       x: window.innerWidth / 2,
@@ -947,6 +1008,365 @@
         width: widthPx / scale,
         height: heightPx / scale
       };
+    }
+
+    function updateNextLineNumberFromId(lineId) {
+      const match = /^line-(\d+)$/.exec(lineId);
+      if (!match) return;
+      const value = Number(match[1]);
+      if (!Number.isFinite(value)) return;
+      nextLineNumber = Math.max(nextLineNumber, value + 1);
+    }
+
+    function isLineIdInUse(lineId) {
+      return lineConnections.some((line) => line.id === lineId);
+    }
+
+    function generateLineId() {
+      let candidate = `line-${nextLineNumber}`;
+      while (isLineIdInUse(candidate)) {
+        nextLineNumber += 1;
+        candidate = `line-${nextLineNumber}`;
+      }
+      nextLineNumber += 1;
+      return candidate;
+    }
+
+    function resolveLineId(preferredId) {
+      const requested = typeof preferredId === "string" ? preferredId.trim() : "";
+      if (!requested) return generateLineId();
+      if (!isLineIdInUse(requested)) {
+        updateNextLineNumberFromId(requested);
+        return requested;
+      }
+      let suffix = 2;
+      let candidate = `${requested}-${suffix}`;
+      while (isLineIdInUse(candidate)) {
+        suffix += 1;
+        candidate = `${requested}-${suffix}`;
+      }
+      return candidate;
+    }
+
+    function normalizeLineEndpointId(value) {
+      return typeof value === "string" ? value.trim() : "";
+    }
+
+    function getLineConnectionKey(fromId, toId) {
+      return [fromId, toId].sort().join("\u0000");
+    }
+
+    function hasLineConnection(fromId, toId) {
+      const key = getLineConnectionKey(fromId, toId);
+      return lineConnections.some((line) => getLineConnectionKey(line.from, line.to) === key);
+    }
+
+    function createLineConnection(sourceNode, targetNode) {
+      if (!(sourceNode instanceof HTMLElement) || !(targetNode instanceof HTMLElement)) return false;
+      if (!world.contains(sourceNode) || !world.contains(targetNode) || sourceNode === targetNode) return false;
+
+      const from = normalizeLineEndpointId(sourceNode.dataset.nodeId || "");
+      const to = normalizeLineEndpointId(targetNode.dataset.nodeId || "");
+      if (!from || !to || from === to || hasLineConnection(from, to)) return false;
+
+      lineConnections.push({
+        id: generateLineId(),
+        from,
+        to
+      });
+      renderLineConnections();
+      scheduleAutosave();
+      return true;
+    }
+
+    function serializeLineConnection(line) {
+      return {
+        id: line.id || "",
+        from: line.from || "",
+        to: line.to || ""
+      };
+    }
+
+    function loadLineConnections(entries) {
+      lineConnections = [];
+      nextLineNumber = 1;
+
+      if (!Array.isArray(entries)) {
+        renderLineConnections();
+        return;
+      }
+
+      const seen = new Set();
+      for (const entry of entries) {
+        if (!entry || typeof entry !== "object") continue;
+        const from = normalizeLineEndpointId(entry.from);
+        const to = normalizeLineEndpointId(entry.to);
+        if (!from || !to || from === to || !getNodeById(from) || !getNodeById(to)) continue;
+
+        const key = getLineConnectionKey(from, to);
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        lineConnections.push({
+          id: resolveLineId(entry.id),
+          from,
+          to
+        });
+      }
+
+      renderLineConnections();
+    }
+
+    function removeLineConnectionsForNodes(nodes) {
+      const nodeIds = new Set(
+        nodes
+          .filter((node) => node instanceof HTMLElement)
+          .map((node) => normalizeLineEndpointId(node.dataset.nodeId || ""))
+          .filter(Boolean)
+      );
+      if (nodeIds.size === 0) return false;
+
+      const beforeLength = lineConnections.length;
+      lineConnections = lineConnections.filter((line) => !nodeIds.has(line.from) && !nodeIds.has(line.to));
+      if (lineConnections.length === beforeLength) return false;
+      renderLineConnections();
+      return true;
+    }
+
+    function requestLineRender() {
+      if (lineRenderFrame !== null) return;
+      lineRenderFrame = requestAnimationFrame(() => {
+        lineRenderFrame = null;
+        renderLineConnections();
+      });
+    }
+
+    function observeNodeForLines(node) {
+      if (nodeResizeObserver && node instanceof HTMLElement) nodeResizeObserver.observe(node);
+    }
+
+    function unobserveNodeForLines(node) {
+      if (nodeResizeObserver && node instanceof HTMLElement) nodeResizeObserver.unobserve(node);
+    }
+
+    function getNodeScreenCenter(node) {
+      const rect = node.getBoundingClientRect();
+      return {
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2
+      };
+    }
+
+    function getNodeAnchorPoint(node, towardPoint) {
+      const rect = node.getBoundingClientRect();
+      const center = {
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2
+      };
+      let dx = towardPoint.x - center.x;
+      let dy = towardPoint.y - center.y;
+      let length = Math.hypot(dx, dy);
+      if (length < 0.001) {
+        dx = 1;
+        dy = 0;
+        length = 1;
+      }
+
+      const halfWidth = Math.max(rect.width / 2, 0.5);
+      const halfHeight = Math.max(rect.height / 2, 0.5);
+      const scaleX = Math.abs(dx) > 0.001 ? halfWidth / Math.abs(dx) : Infinity;
+      const scaleY = Math.abs(dy) > 0.001 ? halfHeight / Math.abs(dy) : Infinity;
+      const edgeScale = Math.min(scaleX, scaleY);
+      const normalX = dx / length;
+      const normalY = dy / length;
+
+      return {
+        x: center.x + dx * edgeScale + normalX * LINE_ENDPOINT_GAP_PX,
+        y: center.y + dy * edgeScale + normalY * LINE_ENDPOINT_GAP_PX
+      };
+    }
+
+    function getLineAnchorPair(sourceNode, targetNode) {
+      const sourceCenter = getNodeScreenCenter(sourceNode);
+      const targetCenter = getNodeScreenCenter(targetNode);
+      return {
+        start: getNodeAnchorPoint(sourceNode, targetCenter),
+        end: getNodeAnchorPoint(targetNode, sourceCenter)
+      };
+    }
+
+    function getStableLineSeed(value) {
+      const text = String(value || "");
+      let hash = 2166136261;
+      for (let index = 0; index < text.length; index += 1) {
+        hash ^= text.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+      }
+      return hash >>> 0;
+    }
+
+    function formatLineNumber(value) {
+      return Number.isFinite(value) ? Number(value.toFixed(2)) : 0;
+    }
+
+    function getNaturalLinePath(start, end, seedValue) {
+      const dx = end.x - start.x;
+      const dy = end.y - start.y;
+      const distance = Math.hypot(dx, dy);
+      if (distance < 0.5) {
+        return `M ${formatLineNumber(start.x)} ${formatLineNumber(start.y)} L ${formatLineNumber(end.x)} ${formatLineNumber(end.y)}`;
+      }
+
+      const unitX = dx / distance;
+      const unitY = dy / distance;
+      const seed = getStableLineSeed(seedValue);
+      const direction = seed % 2 === 0 ? 1 : -1;
+      const variation = (((seed >>> 4) % 17) - 8) / 8;
+      const bow = clamp(distance * 0.026, 3.5, 24) * direction + variation;
+      const gravity = clamp(distance * 0.01, 1.2, 12);
+      const bendX = -unitY * bow;
+      const bendY = unitX * bow + gravity;
+      const control1 = {
+        x: start.x + dx * 0.34 + bendX,
+        y: start.y + dy * 0.34 + bendY
+      };
+      const control2 = {
+        x: start.x + dx * 0.66 + bendX,
+        y: start.y + dy * 0.66 + bendY
+      };
+
+      return [
+        "M", formatLineNumber(start.x), formatLineNumber(start.y),
+        "C", formatLineNumber(control1.x), formatLineNumber(control1.y),
+        formatLineNumber(control2.x), formatLineNumber(control2.y),
+        formatLineNumber(end.x), formatLineNumber(end.y)
+      ].join(" ");
+    }
+
+    function appendConnectionPath(pathData, options = {}) {
+      const group = document.createElementNS(SVG_NS, "g");
+      group.setAttribute("class", options.draft ? "connection-line-draft" : "connection-line-persisted");
+      if (options.id) group.dataset.lineId = options.id;
+
+      const shadow = document.createElementNS(SVG_NS, "path");
+      shadow.setAttribute("class", "connection-line connection-line-shadow");
+      shadow.setAttribute("d", pathData);
+
+      const stroke = document.createElementNS(SVG_NS, "path");
+      stroke.setAttribute("class", "connection-line connection-line-stroke");
+      stroke.setAttribute("d", pathData);
+
+      group.append(shadow, stroke);
+      lineLayer.appendChild(group);
+    }
+
+    function renderLineConnections() {
+      if (!lineLayer) return;
+      const width = Math.max(1, viewport.clientWidth);
+      const height = Math.max(1, viewport.clientHeight);
+      lineLayer.setAttribute("viewBox", `0 0 ${width} ${height}`);
+      lineLayer.setAttribute("width", String(width));
+      lineLayer.setAttribute("height", String(height));
+      lineLayer.replaceChildren();
+
+      for (const line of lineConnections) {
+        const sourceNode = getNodeById(line.from);
+        const targetNode = getNodeById(line.to);
+        if (!sourceNode || !targetNode) continue;
+        const points = getLineAnchorPair(sourceNode, targetNode);
+        appendConnectionPath(getNaturalLinePath(points.start, points.end, line.id), { id: line.id });
+      }
+
+      if (!lineDraft || !world.contains(lineDraft.sourceNode)) return;
+      const start = getNodeAnchorPoint(lineDraft.sourceNode, {
+        x: lineDraft.displayX,
+        y: lineDraft.displayY
+      });
+      const end = {
+        x: lineDraft.displayX,
+        y: lineDraft.displayY
+      };
+      appendConnectionPath(getNaturalLinePath(start, end, `draft:${lineDraft.sourceId}`), { draft: true });
+    }
+
+    function requestLineDraftAnimation() {
+      if (lineDraftAnimationFrame !== null) return;
+      lineDraftAnimationFrame = requestAnimationFrame(updateLineDraftAnimation);
+    }
+
+    function updateLineDraftAnimation() {
+      lineDraftAnimationFrame = null;
+      if (!lineDraft) return;
+      if (!world.contains(lineDraft.sourceNode)) {
+        cancelLineDraft();
+        return;
+      }
+
+      lineDraft.velocityX = (lineDraft.velocityX + (lineDraft.cursorX - lineDraft.displayX) * LINE_DRAFT_SPRING) * LINE_DRAFT_DAMPING;
+      lineDraft.velocityY = (lineDraft.velocityY + (lineDraft.cursorY - lineDraft.displayY) * LINE_DRAFT_SPRING) * LINE_DRAFT_DAMPING;
+      lineDraft.displayX += lineDraft.velocityX;
+      lineDraft.displayY += lineDraft.velocityY;
+
+      if (
+        Math.abs(lineDraft.cursorX - lineDraft.displayX) < 0.02 &&
+        Math.abs(lineDraft.cursorY - lineDraft.displayY) < 0.02 &&
+        Math.abs(lineDraft.velocityX) < 0.02 &&
+        Math.abs(lineDraft.velocityY) < 0.02
+      ) {
+        lineDraft.displayX = lineDraft.cursorX;
+        lineDraft.displayY = lineDraft.cursorY;
+        lineDraft.velocityX = 0;
+        lineDraft.velocityY = 0;
+      }
+
+      renderLineConnections();
+      requestLineDraftAnimation();
+    }
+
+    function beginLineDraft(sourceNode, clientX, clientY) {
+      if (!(sourceNode instanceof HTMLElement) || !world.contains(sourceNode)) return;
+      cancelLineDraft();
+      closeLinkNodeDialog();
+
+      const center = getNodeScreenCenter(sourceNode);
+      const startX = Number.isFinite(clientX) ? clientX : center.x;
+      const startY = Number.isFinite(clientY) ? clientY : center.y;
+      lineDraft = {
+        sourceNode,
+        sourceId: normalizeLineEndpointId(sourceNode.dataset.nodeId || ""),
+        cursorX: startX,
+        cursorY: startY,
+        displayX: startX,
+        displayY: startY,
+        velocityX: 0,
+        velocityY: 0
+      };
+      viewport.classList.add("line-drafting");
+      renderLineConnections();
+      requestLineDraftAnimation();
+    }
+
+    function cancelLineDraft() {
+      if (lineDraftAnimationFrame !== null) {
+        cancelAnimationFrame(lineDraftAnimationFrame);
+        lineDraftAnimationFrame = null;
+      }
+      if (!lineDraft) return;
+      lineDraft = null;
+      viewport.classList.remove("line-drafting");
+      renderLineConnections();
+    }
+
+    function updateLineDraftPointer(event) {
+      if (!lineDraft) return;
+      lineDraft.cursorX = event.clientX;
+      lineDraft.cursorY = event.clientY;
+    }
+
+    function completeLineDraft(targetNode) {
+      const sourceNode = lineDraft ? lineDraft.sourceNode : null;
+      if (!sourceNode || targetNode === sourceNode) return false;
+      return createLineConnection(sourceNode, targetNode);
     }
 
     function getSelectedNodeLayoutItems() {
@@ -1829,6 +2249,8 @@
       );
 
       if (!(sourceNode.textContent || "").trim()) {
+        removeLineConnectionsForNodes([sourceNode]);
+        unobserveNodeForLines(sourceNode);
         world.removeChild(sourceNode);
         setNodePosition(commandNode, sourceX, sourceY);
       } else {
@@ -2182,6 +2604,7 @@
       for (const node of world.children) {
         renderNode(node);
       }
+      renderLineConnections();
       renderGroupSelectionBox();
       renderNavigationFitMarkers();
     }
@@ -2198,6 +2621,7 @@
       node.dataset.x = String(x);
       node.dataset.y = String(y);
       renderNode(node);
+      requestLineRender();
       if (!skipSelectionUpdate && selectedNodes.has(node)) {
         refreshSelectionBounds();
       }
@@ -2250,7 +2674,8 @@
           y: camera.y,
           scale: camera.scale
         },
-        nodes: Array.from(world.children).map(serializeNode)
+        nodes: Array.from(world.children).map(serializeNode),
+        lines: lineConnections.map(serializeLineConnection)
       };
     }
 
@@ -2312,11 +2737,13 @@
       const { autosave = true, onProgress = null } = options;
       const nextCamera = state.camera || {};
       const nextNodes = Array.isArray(state.nodes) ? state.nodes : [];
+      const nextLines = Array.isArray(state.lines) ? state.lines : [];
       const reportProgress = typeof onProgress === "function" ? onProgress : null;
 
       suppressAutosave = true;
       cancelCameraAnimation();
       cancelNodeLayoutAnimation();
+      cancelLineDraft();
       closeNodeContextMenu();
       closeLinkNodeDialog();
       closeSlashCommandMenu();
@@ -2329,9 +2756,12 @@
       navigationFitTargetNode = null;
       for (const node of Array.from(world.children)) {
         destroyCommandNodeContent(node);
+        unobserveNodeForLines(node);
       }
       world.innerHTML = "";
       nextNodeNumber = 1;
+      nextLineNumber = 1;
+      lineConnections = [];
 
       camera.x = Number.isFinite(Number(nextCamera.x)) ? Number(nextCamera.x) : window.innerWidth / 2;
       camera.y = Number.isFinite(Number(nextCamera.y)) ? Number(nextCamera.y) : window.innerHeight / 2;
@@ -2360,6 +2790,8 @@
         }
         if (reportProgress) reportProgress((index + 1) / Math.max(1, nextNodes.length));
       });
+
+      loadLineConnections(nextLines);
 
       if (nextNodes.length === 0 && reportProgress) reportProgress(1);
 
@@ -2826,6 +3258,7 @@
       setNodePosition(node, worldX, worldY);
       attachNodeHandlers(node);
       world.appendChild(node);
+      observeNodeForLines(node);
       scheduleAutosave();
       return node;
     }
@@ -2852,6 +3285,7 @@
       renderCommandNodeContent(node);
       attachNodeHandlers(node);
       world.appendChild(node);
+      observeNodeForLines(node);
       scheduleAutosave();
       return node;
     }
@@ -2876,6 +3310,21 @@
         console.error("Copy failed:", error);
         alert("Could not copy node ID.");
       }
+    });
+
+    drawLineBtn.addEventListener("click", (event) => {
+      const sourceNode = contextMenuNode;
+      const menuRect = nodeContextMenu.getBoundingClientRect();
+      const hasPointerLocation =
+        Number.isFinite(event.clientX) &&
+        Number.isFinite(event.clientY) &&
+        event.clientX > 0 &&
+        event.clientY > 0;
+      const startX = hasPointerLocation ? event.clientX : menuRect.left + 12;
+      const startY = hasPointerLocation ? event.clientY : menuRect.top + 12;
+      closeNodeContextMenu();
+      if (!sourceNode) return;
+      beginLineDraft(sourceNode, startX, startY);
     });
 
     linkSelectionBtn.addEventListener("click", (event) => {
@@ -2969,6 +3418,31 @@
     groupSelectionHandle.addEventListener("pointermove", updateGroupTransform);
     groupSelectionHandle.addEventListener("pointerup", endGroupTransform);
     groupSelectionHandle.addEventListener("pointercancel", endGroupTransform);
+
+    window.addEventListener("pointermove", updateLineDraftPointer, { capture: true });
+
+    window.addEventListener("pointerdown", (event) => {
+      if (!lineDraft) return;
+      if (event.button !== 0) return;
+
+      const targetNode = event.target instanceof Element
+        ? event.target.closest(".text-node")
+        : null;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+
+      if (targetNode && world.contains(targetNode) && targetNode !== lineDraft.sourceNode) {
+        completeLineDraft(targetNode);
+      }
+      cancelLineDraft();
+    }, { capture: true });
+
+    window.addEventListener("contextmenu", (event) => {
+      if (!lineDraft) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      cancelLineDraft();
+    }, { capture: true });
 
     window.addEventListener("pointerdown", (event) => {
       deactivateEditingNodeOnOutsidePointerDown(event.target);
@@ -3095,6 +3569,7 @@
 
     window.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
+        cancelLineDraft();
         closeNodeContextMenu();
         closeLinkNodeDialog();
         closeSlashCommandMenu();
@@ -3105,9 +3580,11 @@
         event.preventDefault();
         closeNodeContextMenu();
         cancelNodeLayoutAnimation();
+        removeLineConnectionsForNodes(Array.from(selectedNodes));
         for (const node of Array.from(selectedNodes)) {
           if (world.contains(node)) {
             destroyCommandNodeContent(node);
+            unobserveNodeForLines(node);
             world.removeChild(node);
           }
         }

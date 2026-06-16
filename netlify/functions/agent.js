@@ -9,6 +9,7 @@ const agentAuthMode = (process.env.SKYDIVE_AGENT_AUTH_MODE || "public").trim().t
 const agentAuthRequired = agentAuthMode === "token" || agentAuthMode === "private" || agentAuthMode === "required";
 
 const MAX_NODES = 1200;
+const MAX_LINES = 3000;
 const MAX_OPS = 120;
 const MAX_TEXT_LENGTH = 40000;
 const MAX_HTML_LENGTH = 80000;
@@ -110,7 +111,8 @@ function emptyState() {
   return {
     version: 1,
     camera: { x: 0, y: 0, scale: 1 },
-    nodes: []
+    nodes: [],
+    lines: []
   };
 }
 
@@ -237,15 +239,66 @@ function normalizeNode(entry, seenIds) {
   };
 }
 
+function cleanLineId(value, fallback) {
+  const id = boundedString(value, 128, "line.id", fallback).trim();
+  if (!id || !/^[a-zA-Z0-9_.:-]+$/.test(id)) {
+    throw new HttpError(400, "line.id must contain only letters, numbers, dots, colons, underscores, or hyphens.");
+  }
+  return id;
+}
+
+function getLineConnectionKey(from, to) {
+  return [from, to].sort().join("\u0000");
+}
+
+function normalizeLine(entry, index, nodeIds, seenLineIds, seenConnections) {
+  if (!entry || typeof entry !== "object") {
+    throw new HttpError(400, "Every line must be an object.");
+  }
+
+  const id = cleanLineId(entry.id, `line-${index + 1}`);
+  if (seenLineIds.has(id)) {
+    throw new HttpError(400, `Duplicate line id "${id}".`);
+  }
+  seenLineIds.add(id);
+
+  const from = cleanNodeId(entry.from, `line ${id}.from`);
+  const to = cleanNodeId(entry.to, `line ${id}.to`);
+  if (from === to) {
+    throw new HttpError(400, `Line "${id}" must connect two different nodes.`);
+  }
+  if (!nodeIds.has(from) || !nodeIds.has(to)) {
+    throw new HttpError(400, `Line "${id}" references a missing node.`);
+  }
+
+  const connectionKey = getLineConnectionKey(from, to);
+  if (seenConnections.has(connectionKey)) return null;
+  seenConnections.add(connectionKey);
+
+  return { id, from, to };
+}
+
 function normalizeState(rawState) {
   const source = rawState && typeof rawState === "object" ? rawState : emptyState();
   const rawNodes = Array.isArray(source.nodes) ? source.nodes : [];
+  const rawLines = Array.isArray(source.lines) ? source.lines : [];
   if (rawNodes.length > MAX_NODES) {
     throw new HttpError(400, "State has too many nodes.", { maxNodes: MAX_NODES });
+  }
+  if (rawLines.length > MAX_LINES) {
+    throw new HttpError(400, "State has too many lines.", { maxLines: MAX_LINES });
   }
 
   const camera = source.camera && typeof source.camera === "object" ? source.camera : {};
   const seenIds = new Set();
+  const nodes = rawNodes.map((entry) => normalizeNode(entry, seenIds));
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const seenLineIds = new Set();
+  const seenConnections = new Set();
+  const lines = rawLines
+    .map((entry, index) => normalizeLine(entry, index, nodeIds, seenLineIds, seenConnections))
+    .filter(Boolean);
+
   return {
     version: Number.isFinite(Number(source.version)) ? Number(source.version) : 1,
     camera: {
@@ -253,7 +306,8 @@ function normalizeState(rawState) {
       y: finiteNumber(camera.y, 0, "camera.y"),
       scale: positiveNumber(camera.scale, 1, "camera.scale")
     },
-    nodes: rawNodes.map((entry) => normalizeNode(entry, seenIds))
+    nodes,
+    lines
   };
 }
 
@@ -518,6 +572,7 @@ function applyOps(currentState, ops) {
       const id = cleanNodeId(op.id);
       const beforeLength = state.nodes.length;
       state.nodes = state.nodes.filter((node) => node.id !== id);
+      state.lines = state.lines.filter((line) => line.from !== id && line.to !== id);
       allocatedIds.delete(id);
       if (state.nodes.length === beforeLength) throw new HttpError(404, `Node "${id}" was not found.`);
       continue;
@@ -609,6 +664,13 @@ function buildManifest(event) {
           commandVersion: "optional string",
           commandState: "object"
         }
+      ],
+      lines: [
+        {
+          id: "string",
+          from: "node id",
+          to: "node id"
+        }
       ]
     },
     operations: [
@@ -634,6 +696,7 @@ function buildManifest(event) {
     limits: {
       maxOps: MAX_OPS,
       maxNodes: MAX_NODES,
+      maxLines: MAX_LINES,
       maxTextLength: MAX_TEXT_LENGTH,
       maxHtmlLength: MAX_HTML_LENGTH
     }
