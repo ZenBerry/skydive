@@ -58,31 +58,24 @@
     }
 
     .connection-line {
-      fill: none;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-      vector-effect: non-scaling-stroke;
+      stroke: none;
+      shape-rendering: geometricPrecision;
     }
 
     .connection-line-shadow {
-      stroke: rgba(255, 255, 255, 0.72);
-      stroke-width: 2.15px;
+      fill: rgba(255, 255, 255, 0.74);
     }
 
     .connection-line-stroke {
-      stroke: rgba(54, 59, 68, 0.46);
-      stroke-width: 0.76px;
+      fill: rgba(54, 59, 68, 0.5);
     }
 
     .connection-line-draft .connection-line-shadow {
-      stroke: rgba(255, 255, 255, 0.8);
-      stroke-width: 2.4px;
+      fill: rgba(255, 255, 255, 0.82);
     }
 
     .connection-line-draft .connection-line-stroke {
-      stroke: rgba(46, 52, 62, 0.5);
-      stroke-dasharray: 2.5 5.5;
-      stroke-width: 0.82px;
+      fill: rgba(46, 52, 62, 0.42);
     }
 
     #world {
@@ -535,6 +528,10 @@
     const MARQUEE_DRAG_THRESHOLD_PX = 3;
     const GROUP_SELECTION_PADDING_PX = 8;
     const LINE_ENDPOINT_GAP_PX = 2.5;
+    const LINE_WIDTH_FONT_RATIO = 0.04;
+    const MIN_LINE_WIDTH_PX = 0.82;
+    const MAX_LINE_WIDTH_PX = 3.8;
+    const LINE_SHADOW_EXTRA_WIDTH_PX = 1.35;
     const LINE_DRAFT_SPRING = 0.24;
     const LINE_DRAFT_DAMPING = 0.66;
     const STORAGE_KEY = "mindmap.v1";
@@ -1201,6 +1198,16 @@
       };
     }
 
+    function getNodeLineWidth(node) {
+      if (!(node instanceof HTMLElement)) return MIN_LINE_WIDTH_PX;
+      const computedFontSize = Number.parseFloat(getComputedStyle(node).fontSize);
+      const fallbackFontSize = Math.max(1, Number(node.dataset.baseFontSize) * camera.scale);
+      const fontSize = Number.isFinite(computedFontSize) && computedFontSize > 0
+        ? computedFontSize
+        : fallbackFontSize;
+      return clamp(fontSize * LINE_WIDTH_FONT_RATIO, MIN_LINE_WIDTH_PX, MAX_LINE_WIDTH_PX);
+    }
+
     function getStableLineSeed(value) {
       const text = String(value || "");
       let hash = 2166136261;
@@ -1215,12 +1222,18 @@
       return Number.isFinite(value) ? Number(value.toFixed(2)) : 0;
     }
 
-    function getNaturalLinePath(start, end, seedValue) {
+    function getNaturalLineGeometry(start, end, seedValue) {
       const dx = end.x - start.x;
       const dy = end.y - start.y;
       const distance = Math.hypot(dx, dy);
       if (distance < 0.5) {
-        return `M ${formatLineNumber(start.x)} ${formatLineNumber(start.y)} L ${formatLineNumber(end.x)} ${formatLineNumber(end.y)}`;
+        return {
+          start,
+          control1: start,
+          control2: end,
+          end,
+          distance
+        };
       }
 
       const unitX = dx / distance;
@@ -1241,26 +1254,106 @@
         y: start.y + dy * 0.66 + bendY
       };
 
-      return [
-        "M", formatLineNumber(start.x), formatLineNumber(start.y),
-        "C", formatLineNumber(control1.x), formatLineNumber(control1.y),
-        formatLineNumber(control2.x), formatLineNumber(control2.y),
-        formatLineNumber(end.x), formatLineNumber(end.y)
-      ].join(" ");
+      return {
+        start,
+        control1,
+        control2,
+        end,
+        distance
+      };
     }
 
-    function appendConnectionPath(pathData, options = {}) {
+    function getCubicPoint(geometry, t) {
+      const inverse = 1 - t;
+      const a = inverse * inverse * inverse;
+      const b = 3 * inverse * inverse * t;
+      const c = 3 * inverse * t * t;
+      const d = t * t * t;
+      return {
+        x: geometry.start.x * a + geometry.control1.x * b + geometry.control2.x * c + geometry.end.x * d,
+        y: geometry.start.y * a + geometry.control1.y * b + geometry.control2.y * c + geometry.end.y * d
+      };
+    }
+
+    function getCubicTangent(geometry, t) {
+      const inverse = 1 - t;
+      const a = 3 * inverse * inverse;
+      const b = 6 * inverse * t;
+      const c = 3 * t * t;
+      const tangent = {
+        x:
+          (geometry.control1.x - geometry.start.x) * a +
+          (geometry.control2.x - geometry.control1.x) * b +
+          (geometry.end.x - geometry.control2.x) * c,
+        y:
+          (geometry.control1.y - geometry.start.y) * a +
+          (geometry.control2.y - geometry.control1.y) * b +
+          (geometry.end.y - geometry.control2.y) * c
+      };
+      if (Math.hypot(tangent.x, tangent.y) > 0.001) return tangent;
+      return {
+        x: geometry.end.x - geometry.start.x,
+        y: geometry.end.y - geometry.start.y
+      };
+    }
+
+    function getTaperedLineShapePath(geometry, startWidth, endWidth, extraWidth = 0) {
+      const sampleCount = clamp(Math.round(geometry.distance / 18), 12, 46);
+      const left = [];
+      const right = [];
+
+      for (let index = 0; index <= sampleCount; index += 1) {
+        const t = index / sampleCount;
+        const point = getCubicPoint(geometry, t);
+        const tangent = getCubicTangent(geometry, t);
+        const length = Math.max(0.001, Math.hypot(tangent.x, tangent.y));
+        const normal = {
+          x: -tangent.y / length,
+          y: tangent.x / length
+        };
+        const eased = easeInOutNatural(t);
+        const width = startWidth + (endWidth - startWidth) * eased + extraWidth;
+        const halfWidth = Math.max(0.001, width / 2);
+        left.push({
+          x: point.x + normal.x * halfWidth,
+          y: point.y + normal.y * halfWidth
+        });
+        right.push({
+          x: point.x - normal.x * halfWidth,
+          y: point.y - normal.y * halfWidth
+        });
+      }
+
+      const parts = [
+        "M", formatLineNumber(left[0].x), formatLineNumber(left[0].y)
+      ];
+      for (let index = 1; index < left.length; index += 1) {
+        parts.push("L", formatLineNumber(left[index].x), formatLineNumber(left[index].y));
+      }
+      for (let index = right.length - 1; index >= 0; index -= 1) {
+        parts.push("L", formatLineNumber(right[index].x), formatLineNumber(right[index].y));
+      }
+      parts.push("Z");
+      return parts.join(" ");
+    }
+
+    function appendConnectionPath(geometry, options = {}) {
       const group = document.createElementNS(SVG_NS, "g");
       group.setAttribute("class", options.draft ? "connection-line-draft" : "connection-line-persisted");
       if (options.id) group.dataset.lineId = options.id;
+      const startWidth = Number.isFinite(options.startWidth) ? options.startWidth : MIN_LINE_WIDTH_PX;
+      const endWidth = Number.isFinite(options.endWidth) ? options.endWidth : startWidth;
 
       const shadow = document.createElementNS(SVG_NS, "path");
       shadow.setAttribute("class", "connection-line connection-line-shadow");
-      shadow.setAttribute("d", pathData);
+      shadow.setAttribute(
+        "d",
+        getTaperedLineShapePath(geometry, startWidth, endWidth, LINE_SHADOW_EXTRA_WIDTH_PX)
+      );
 
       const stroke = document.createElementNS(SVG_NS, "path");
       stroke.setAttribute("class", "connection-line connection-line-stroke");
-      stroke.setAttribute("d", pathData);
+      stroke.setAttribute("d", getTaperedLineShapePath(geometry, startWidth, endWidth));
 
       group.append(shadow, stroke);
       lineLayer.appendChild(group);
@@ -1280,7 +1373,11 @@
         const targetNode = getNodeById(line.to);
         if (!sourceNode || !targetNode) continue;
         const points = getLineAnchorPair(sourceNode, targetNode);
-        appendConnectionPath(getNaturalLinePath(points.start, points.end, line.id), { id: line.id });
+        appendConnectionPath(getNaturalLineGeometry(points.start, points.end, line.id), {
+          id: line.id,
+          startWidth: getNodeLineWidth(sourceNode),
+          endWidth: getNodeLineWidth(targetNode)
+        });
       }
 
       if (!lineDraft || !world.contains(lineDraft.sourceNode)) return;
@@ -1292,7 +1389,12 @@
         x: lineDraft.displayX,
         y: lineDraft.displayY
       };
-      appendConnectionPath(getNaturalLinePath(start, end, `draft:${lineDraft.sourceId}`), { draft: true });
+      const draftWidth = getNodeLineWidth(lineDraft.sourceNode);
+      appendConnectionPath(getNaturalLineGeometry(start, end, `draft:${lineDraft.sourceId}`), {
+        draft: true,
+        startWidth: draftWidth,
+        endWidth: draftWidth * 0.78
+      });
     }
 
     function requestLineDraftAnimation() {
