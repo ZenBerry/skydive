@@ -55,6 +55,7 @@
       height: 100%;
       overflow: visible;
       pointer-events: none;
+      transform-origin: 0 0;
     }
 
     #line-hit-layer {
@@ -65,6 +66,7 @@
       height: 100%;
       overflow: visible;
       pointer-events: none;
+      transform-origin: 0 0;
     }
 
     .connection-line {
@@ -94,6 +96,7 @@
       stroke-linecap: round;
       stroke-linejoin: round;
       stroke-width: 14px;
+      vector-effect: non-scaling-stroke;
       pointer-events: stroke;
       cursor: context-menu;
     }
@@ -559,16 +562,16 @@
     const MIN_NAVIGATION_SCALE = 0.08;
     const MARQUEE_DRAG_THRESHOLD_PX = 3;
     const GROUP_SELECTION_PADDING_PX = 8;
-    const LINE_ENDPOINT_GAP_PX = 4.5;
-    const LINE_ANCHOR_ELLIPSE_PADDING_PX = 18;
+    const LINE_ENDPOINT_GAP_WORLD = 4.5;
+    const LINE_ANCHOR_ELLIPSE_PADDING_WORLD = 18;
     const LINE_WIDTH_FONT_RATIO = 0.04;
-    const MIN_LINE_WIDTH_PX = 0.82;
-    const MAX_LINE_WIDTH_PX = 3.8;
-    const LINE_SHADOW_EXTRA_WIDTH_PX = 1.35;
+    const MIN_LINE_WIDTH_WORLD = 0.82;
+    const MAX_LINE_WIDTH_WORLD = 3.8;
+    const LINE_SHADOW_EXTRA_WIDTH_WORLD = 1.35;
     const LINE_DRAFT_THICKNESS_EASE = 0.18;
     const LINE_DRAFT_END_WIDTH_RATIO = 0.78;
-    const LINE_DRAFT_DASH_LENGTH_PX = 8;
-    const LINE_DRAFT_GAP_LENGTH_PX = 7;
+    const LINE_DRAFT_DASH_LENGTH_WORLD = 8;
+    const LINE_DRAFT_GAP_LENGTH_WORLD = 7;
     const LINE_DRAFT_SPRING = 0.24;
     const LINE_DRAFT_DAMPING = 0.66;
     const STORAGE_KEY = "mindmap.v1";
@@ -1220,20 +1223,17 @@
       if (nodeResizeObserver && node instanceof HTMLElement) nodeResizeObserver.unobserve(node);
     }
 
-    function getNodeScreenCenter(node) {
-      const rect = node.getBoundingClientRect();
+    function getNodeWorldCenter(node) {
+      const size = getNodeWorldSize(node);
       return {
-        x: rect.left + rect.width / 2,
-        y: rect.top + rect.height / 2
+        x: Number(node.dataset.x) + size.width / 2,
+        y: Number(node.dataset.y) + size.height / 2
       };
     }
 
     function getNodeAnchorPoint(node, towardPoint) {
-      const rect = node.getBoundingClientRect();
-      const center = {
-        x: rect.left + rect.width / 2,
-        y: rect.top + rect.height / 2
-      };
+      const size = getNodeWorldSize(node);
+      const center = getNodeWorldCenter(node);
       let dx = towardPoint.x - center.x;
       let dy = towardPoint.y - center.y;
       let length = Math.hypot(dx, dy);
@@ -1245,22 +1245,22 @@
 
       const normalX = dx / length;
       const normalY = dy / length;
-      const radiusX = Math.max(rect.width / 2 + LINE_ANCHOR_ELLIPSE_PADDING_PX, 0.5);
-      const radiusY = Math.max(rect.height / 2 + LINE_ANCHOR_ELLIPSE_PADDING_PX, 0.5);
+      const radiusX = Math.max(size.width / 2 + LINE_ANCHOR_ELLIPSE_PADDING_WORLD, 0.5);
+      const radiusY = Math.max(size.height / 2 + LINE_ANCHOR_ELLIPSE_PADDING_WORLD, 0.5);
       const ellipseScale = 1 / Math.max(
         0.001,
         Math.sqrt((dx * dx) / (radiusX * radiusX) + (dy * dy) / (radiusY * radiusY))
       );
 
       return {
-        x: center.x + dx * ellipseScale + normalX * LINE_ENDPOINT_GAP_PX,
-        y: center.y + dy * ellipseScale + normalY * LINE_ENDPOINT_GAP_PX
+        x: center.x + dx * ellipseScale + normalX * LINE_ENDPOINT_GAP_WORLD,
+        y: center.y + dy * ellipseScale + normalY * LINE_ENDPOINT_GAP_WORLD
       };
     }
 
     function getLineAnchorPair(sourceNode, targetNode) {
-      const sourceCenter = getNodeScreenCenter(sourceNode);
-      const targetCenter = getNodeScreenCenter(targetNode);
+      const sourceCenter = getNodeWorldCenter(sourceNode);
+      const targetCenter = getNodeWorldCenter(targetNode);
       return {
         start: getNodeAnchorPoint(sourceNode, targetCenter),
         end: getNodeAnchorPoint(targetNode, sourceCenter)
@@ -1268,13 +1268,10 @@
     }
 
     function getNodeLineWidth(node) {
-      if (!(node instanceof HTMLElement)) return MIN_LINE_WIDTH_PX;
-      const computedFontSize = Number.parseFloat(getComputedStyle(node).fontSize);
-      const fallbackFontSize = Math.max(1, Number(node.dataset.baseFontSize) * camera.scale);
-      const fontSize = Number.isFinite(computedFontSize) && computedFontSize > 0
-        ? computedFontSize
-        : fallbackFontSize;
-      return clamp(fontSize * LINE_WIDTH_FONT_RATIO, MIN_LINE_WIDTH_PX, MAX_LINE_WIDTH_PX);
+      if (!(node instanceof HTMLElement)) return MIN_LINE_WIDTH_WORLD;
+      const baseFontSize = Number(node.dataset.baseFontSize);
+      const fontSize = Number.isFinite(baseFontSize) && baseFontSize > 0 ? baseFontSize : BASE_TEXT_PX;
+      return clamp(fontSize * LINE_WIDTH_FONT_RATIO, MIN_LINE_WIDTH_WORLD, MAX_LINE_WIDTH_WORLD);
     }
 
     function getStableLineSeed(value) {
@@ -1427,8 +1424,8 @@
 
     function appendTaperedLineShape(group, className, geometry, startWidth, endWidth, extraWidth = 0, options = {}) {
       if (options.dashed) {
-        const dashLength = LINE_DRAFT_DASH_LENGTH_PX;
-        const gapLength = LINE_DRAFT_GAP_LENGTH_PX;
+        const dashLength = LINE_DRAFT_DASH_LENGTH_WORLD;
+        const gapLength = LINE_DRAFT_GAP_LENGTH_WORLD;
         const cycleLength = dashLength + gapLength;
         const distance = Math.max(1, geometry.distance);
         let cursor = 0;
@@ -1459,7 +1456,7 @@
       const group = document.createElementNS(SVG_NS, "g");
       group.setAttribute("class", options.draft ? "connection-line-draft" : "connection-line-persisted");
       if (options.id) group.dataset.lineId = options.id;
-      const startWidth = Number.isFinite(options.startWidth) ? options.startWidth : MIN_LINE_WIDTH_PX;
+      const startWidth = Number.isFinite(options.startWidth) ? options.startWidth : MIN_LINE_WIDTH_WORLD;
       const endWidth = Number.isFinite(options.endWidth) ? options.endWidth : startWidth;
 
       appendTaperedLineShape(
@@ -1468,7 +1465,7 @@
         geometry,
         startWidth,
         endWidth,
-        LINE_SHADOW_EXTRA_WIDTH_PX,
+        LINE_SHADOW_EXTRA_WIDTH_WORLD,
         { dashed: options.draft }
       );
       appendTaperedLineShape(
@@ -1498,11 +1495,13 @@
       lineLayer.setAttribute("viewBox", `0 0 ${width} ${height}`);
       lineLayer.setAttribute("width", String(width));
       lineLayer.setAttribute("height", String(height));
+      lineLayer.style.transform = `translate(${camera.x}px, ${camera.y}px) scale(${camera.scale})`;
       lineLayer.replaceChildren();
       if (lineHitLayer) {
         lineHitLayer.setAttribute("viewBox", `0 0 ${width} ${height}`);
         lineHitLayer.setAttribute("width", String(width));
         lineHitLayer.setAttribute("height", String(height));
+        lineHitLayer.style.transform = lineLayer.style.transform;
         lineHitLayer.replaceChildren();
       }
 
@@ -1579,22 +1578,24 @@
       cancelLineDraft();
       closeLinkNodeDialog();
 
-      const center = getNodeScreenCenter(sourceNode);
-      const startX = Number.isFinite(clientX) ? clientX : center.x;
-      const startY = Number.isFinite(clientY) ? clientY : center.y;
+      const center = getNodeWorldCenter(sourceNode);
+      const startPoint = Number.isFinite(clientX) && Number.isFinite(clientY)
+        ? screenToWorld(clientX, clientY)
+        : center;
+      const startWidth = getNodeLineWidth(sourceNode);
       lineDraft = {
         sourceNode,
         sourceId: normalizeLineEndpointId(sourceNode.dataset.nodeId || ""),
-        cursorX: startX,
-        cursorY: startY,
-        displayX: startX,
-        displayY: startY,
+        cursorX: startPoint.x,
+        cursorY: startPoint.y,
+        displayX: startPoint.x,
+        displayY: startPoint.y,
         velocityX: 0,
         velocityY: 0,
         hoverNode: null,
-        baseEndWidth: getNodeLineWidth(sourceNode) * LINE_DRAFT_END_WIDTH_RATIO,
-        displayEndWidth: getNodeLineWidth(sourceNode) * LINE_DRAFT_END_WIDTH_RATIO,
-        targetEndWidth: getNodeLineWidth(sourceNode) * LINE_DRAFT_END_WIDTH_RATIO
+        baseEndWidth: startWidth * LINE_DRAFT_END_WIDTH_RATIO,
+        displayEndWidth: startWidth * LINE_DRAFT_END_WIDTH_RATIO,
+        targetEndWidth: startWidth * LINE_DRAFT_END_WIDTH_RATIO
       };
       viewport.classList.add("line-drafting");
       renderLineConnections();
@@ -1614,21 +1615,33 @@
 
     function getLineDraftHoverNode(clientX, clientY) {
       if (!lineDraft) return null;
-      const elements = typeof document.elementsFromPoint === "function"
-        ? document.elementsFromPoint(clientX, clientY)
-        : [];
-      for (const element of elements) {
-        if (!(element instanceof Element)) continue;
-        const node = element.closest(".text-node");
-        if (node && world.contains(node) && node !== lineDraft.sourceNode) return node;
+      const point = screenToWorld(clientX, clientY);
+      let bestNode = null;
+      let bestScore = Infinity;
+
+      for (const node of world.children) {
+        if (!(node instanceof HTMLElement) || node === lineDraft.sourceNode) continue;
+        const center = getNodeWorldCenter(node);
+        const size = getNodeWorldSize(node);
+        const radiusX = Math.max(size.width / 2 + LINE_ANCHOR_ELLIPSE_PADDING_WORLD, 0.5);
+        const radiusY = Math.max(size.height / 2 + LINE_ANCHOR_ELLIPSE_PADDING_WORLD, 0.5);
+        const dx = point.x - center.x;
+        const dy = point.y - center.y;
+        const score = (dx * dx) / (radiusX * radiusX) + (dy * dy) / (radiusY * radiusY);
+        if (score <= 1 && score < bestScore) {
+          bestScore = score;
+          bestNode = node;
+        }
       }
-      return null;
+
+      return bestNode;
     }
 
     function updateLineDraftPointer(event) {
       if (!lineDraft) return;
-      lineDraft.cursorX = event.clientX;
-      lineDraft.cursorY = event.clientY;
+      const point = screenToWorld(event.clientX, event.clientY);
+      lineDraft.cursorX = point.x;
+      lineDraft.cursorY = point.y;
       lineDraft.hoverNode = getLineDraftHoverNode(event.clientX, event.clientY);
       lineDraft.targetEndWidth = lineDraft.hoverNode
         ? getNodeLineWidth(lineDraft.hoverNode)
@@ -3719,11 +3732,14 @@
       const targetNode = event.target instanceof Element
         ? event.target.closest(".text-node")
         : null;
+      const lineTargetNode = targetNode && world.contains(targetNode)
+        ? targetNode
+        : getLineDraftHoverNode(event.clientX, event.clientY);
       event.preventDefault();
       event.stopImmediatePropagation();
 
-      if (targetNode && world.contains(targetNode) && targetNode !== lineDraft.sourceNode) {
-        completeLineDraft(targetNode);
+      if (lineTargetNode && lineTargetNode !== lineDraft.sourceNode) {
+        completeLineDraft(lineTargetNode);
       }
       cancelLineDraft();
     }, { capture: true });
