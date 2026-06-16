@@ -57,6 +57,16 @@
       pointer-events: none;
     }
 
+    #line-hit-layer {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+      pointer-events: none;
+    }
+
     .connection-line {
       stroke: none;
       shape-rendering: geometricPrecision;
@@ -76,6 +86,16 @@
 
     .connection-line-draft .connection-line-stroke {
       fill: rgba(46, 52, 62, 0.42);
+    }
+
+    .connection-line-hit {
+      fill: none;
+      stroke: rgba(0, 0, 0, 0);
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      stroke-width: 14px;
+      pointer-events: stroke;
+      cursor: context-menu;
     }
 
     #world {
@@ -263,7 +283,8 @@
       }
     }
 
-    #node-context-menu {
+    #node-context-menu,
+    #line-context-menu {
       position: fixed;
       z-index: 1000;
       min-width: 190px;
@@ -276,11 +297,13 @@
       gap: 4px;
     }
 
-    #node-context-menu[hidden] {
+    #node-context-menu[hidden],
+    #line-context-menu[hidden] {
       display: none;
     }
 
-    #node-context-menu button {
+    #node-context-menu button,
+    #line-context-menu button {
       border: 0;
       background: transparent;
       padding: 8px 10px;
@@ -291,11 +314,13 @@
       cursor: pointer;
     }
 
-    #node-context-menu button:hover:not(:disabled) {
+    #node-context-menu button:hover:not(:disabled),
+    #line-context-menu button:hover:not(:disabled) {
       background: #f2f4f7;
     }
 
-    #node-context-menu button:disabled {
+    #node-context-menu button:disabled,
+    #line-context-menu button:disabled {
       color: #999;
       cursor: not-allowed;
     }
@@ -469,6 +494,7 @@
   <div id="viewport">
     <svg id="line-layer" aria-hidden="true"></svg>
     <div id="world"></div>
+    <svg id="line-hit-layer" aria-hidden="true"></svg>
     <div id="marquee-selection" hidden></div>
     <div id="group-selection-box" hidden>
       <div id="group-selection-handle"></div>
@@ -482,6 +508,9 @@
     <button id="copy-node-id-btn" type="button">Copy node ID</button>
     <button id="draw-line-btn" type="button">Line</button>
     <button id="link-selection-btn" type="button">Link selection to node ID...</button>
+  </div>
+  <div id="line-context-menu" hidden>
+    <button id="delete-line-btn" type="button">Delete line</button>
   </div>
   <div id="link-node-dialog" hidden>
     <div id="link-node-dialog-title">Paste target node ID</div>
@@ -500,6 +529,7 @@
   <script>
     const viewport = document.getElementById("viewport");
     const lineLayer = document.getElementById("line-layer");
+    const lineHitLayer = document.getElementById("line-hit-layer");
     const world = document.getElementById("world");
     const loadingScreen = document.getElementById("loading-screen");
     const marqueeSelection = document.getElementById("marquee-selection");
@@ -510,6 +540,8 @@
     const copyNodeIdBtn = document.getElementById("copy-node-id-btn");
     const drawLineBtn = document.getElementById("draw-line-btn");
     const linkSelectionBtn = document.getElementById("link-selection-btn");
+    const lineContextMenu = document.getElementById("line-context-menu");
+    const deleteLineBtn = document.getElementById("delete-line-btn");
     const linkNodeDialog = document.getElementById("link-node-dialog");
     const linkNodeDialogTitle = document.getElementById("link-node-dialog-title");
     const linkNodeDialogInput = document.getElementById("link-node-dialog-input");
@@ -527,11 +559,16 @@
     const MIN_NAVIGATION_SCALE = 0.08;
     const MARQUEE_DRAG_THRESHOLD_PX = 3;
     const GROUP_SELECTION_PADDING_PX = 8;
-    const LINE_ENDPOINT_GAP_PX = 2.5;
+    const LINE_ENDPOINT_GAP_PX = 4.5;
+    const LINE_ANCHOR_ELLIPSE_PADDING_PX = 18;
     const LINE_WIDTH_FONT_RATIO = 0.04;
     const MIN_LINE_WIDTH_PX = 0.82;
     const MAX_LINE_WIDTH_PX = 3.8;
     const LINE_SHADOW_EXTRA_WIDTH_PX = 1.35;
+    const LINE_DRAFT_THICKNESS_EASE = 0.18;
+    const LINE_DRAFT_END_WIDTH_RATIO = 0.78;
+    const LINE_DRAFT_DASH_LENGTH_PX = 8;
+    const LINE_DRAFT_GAP_LENGTH_PX = 7;
     const LINE_DRAFT_SPRING = 0.24;
     const LINE_DRAFT_DAMPING = 0.66;
     const STORAGE_KEY = "mindmap.v1";
@@ -557,6 +594,7 @@
     let lineRenderFrame = null;
     let lineDraftAnimationFrame = null;
     let contextMenuNode = null;
+    let contextMenuLineId = null;
     let contextMenuSelectionRange = null;
     let pendingLinkSourceNode = null;
     let pendingLinkSelectionRange = null;
@@ -891,6 +929,11 @@
       nodeContextMenu.hidden = true;
     }
 
+    function closeLineContextMenu() {
+      contextMenuLineId = null;
+      lineContextMenu.hidden = true;
+    }
+
     function closeLinkNodeDialog() {
       pendingLinkSourceNode = null;
       pendingLinkSelectionRange = null;
@@ -959,6 +1002,7 @@
     }
 
     function openNodeContextMenu(node, clientX, clientY) {
+      closeLineContextMenu();
       closeLinkNodeDialog();
       contextMenuNode = node;
       contextMenuSelectionRange = isCommandNode(node) ? null : getSelectionRangeWithinNode(node);
@@ -970,6 +1014,19 @@
       const clampedY = Math.min(clientY, window.innerHeight - menuRect.height - 8);
       nodeContextMenu.style.left = `${Math.max(8, clampedX)}px`;
       nodeContextMenu.style.top = `${Math.max(8, clampedY)}px`;
+    }
+
+    function openLineContextMenu(lineId, clientX, clientY) {
+      closeNodeContextMenu();
+      closeLinkNodeDialog();
+      contextMenuLineId = lineId;
+      lineContextMenu.hidden = false;
+
+      const menuRect = lineContextMenu.getBoundingClientRect();
+      const clampedX = Math.min(clientX, window.innerWidth - menuRect.width - 8);
+      const clampedY = Math.min(clientY, window.innerHeight - menuRect.height - 8);
+      lineContextMenu.style.left = `${Math.max(8, clampedX)}px`;
+      lineContextMenu.style.top = `${Math.max(8, clampedY)}px`;
     }
 
     function cancelCameraAnimation() {
@@ -1082,6 +1139,17 @@
       return true;
     }
 
+    function removeLineConnection(lineId) {
+      const id = typeof lineId === "string" ? lineId.trim() : "";
+      if (!id) return false;
+      const beforeLength = lineConnections.length;
+      lineConnections = lineConnections.filter((line) => line.id !== id);
+      if (lineConnections.length === beforeLength) return false;
+      renderLineConnections();
+      scheduleAutosave();
+      return true;
+    }
+
     function serializeLineConnection(line) {
       return {
         id: line.id || "",
@@ -1175,17 +1243,18 @@
         length = 1;
       }
 
-      const halfWidth = Math.max(rect.width / 2, 0.5);
-      const halfHeight = Math.max(rect.height / 2, 0.5);
-      const scaleX = Math.abs(dx) > 0.001 ? halfWidth / Math.abs(dx) : Infinity;
-      const scaleY = Math.abs(dy) > 0.001 ? halfHeight / Math.abs(dy) : Infinity;
-      const edgeScale = Math.min(scaleX, scaleY);
       const normalX = dx / length;
       const normalY = dy / length;
+      const radiusX = Math.max(rect.width / 2 + LINE_ANCHOR_ELLIPSE_PADDING_PX, 0.5);
+      const radiusY = Math.max(rect.height / 2 + LINE_ANCHOR_ELLIPSE_PADDING_PX, 0.5);
+      const ellipseScale = 1 / Math.max(
+        0.001,
+        Math.sqrt((dx * dx) / (radiusX * radiusX) + (dy * dy) / (radiusY * radiusY))
+      );
 
       return {
-        x: center.x + dx * edgeScale + normalX * LINE_ENDPOINT_GAP_PX,
-        y: center.y + dy * edgeScale + normalY * LINE_ENDPOINT_GAP_PX
+        x: center.x + dx * ellipseScale + normalX * LINE_ENDPOINT_GAP_PX,
+        y: center.y + dy * ellipseScale + normalY * LINE_ENDPOINT_GAP_PX
       };
     }
 
@@ -1263,6 +1332,15 @@
       };
     }
 
+    function getNaturalLineCenterPath(geometry) {
+      return [
+        "M", formatLineNumber(geometry.start.x), formatLineNumber(geometry.start.y),
+        "C", formatLineNumber(geometry.control1.x), formatLineNumber(geometry.control1.y),
+        formatLineNumber(geometry.control2.x), formatLineNumber(geometry.control2.y),
+        formatLineNumber(geometry.end.x), formatLineNumber(geometry.end.y)
+      ].join(" ");
+    }
+
     function getCubicPoint(geometry, t) {
       const inverse = 1 - t;
       const a = inverse * inverse * inverse;
@@ -1297,13 +1375,23 @@
       };
     }
 
-    function getTaperedLineShapePath(geometry, startWidth, endWidth, extraWidth = 0) {
-      const sampleCount = clamp(Math.round(geometry.distance / 18), 12, 46);
+    function getTaperedLineShapePath(
+      geometry,
+      startWidth,
+      endWidth,
+      extraWidth = 0,
+      startT = 0,
+      endT = 1
+    ) {
+      const t0 = clamp(startT, 0, 1);
+      const t1 = clamp(endT, t0, 1);
+      const segmentDistance = Math.max(0.001, geometry.distance * (t1 - t0));
+      const sampleCount = clamp(Math.round(segmentDistance / 18), 3, 46);
       const left = [];
       const right = [];
 
       for (let index = 0; index <= sampleCount; index += 1) {
-        const t = index / sampleCount;
+        const t = t0 + (t1 - t0) * (index / sampleCount);
         const point = getCubicPoint(geometry, t);
         const tangent = getCubicTangent(geometry, t);
         const length = Math.max(0.001, Math.hypot(tangent.x, tangent.y));
@@ -1337,6 +1425,36 @@
       return parts.join(" ");
     }
 
+    function appendTaperedLineShape(group, className, geometry, startWidth, endWidth, extraWidth = 0, options = {}) {
+      if (options.dashed) {
+        const dashLength = LINE_DRAFT_DASH_LENGTH_PX;
+        const gapLength = LINE_DRAFT_GAP_LENGTH_PX;
+        const cycleLength = dashLength + gapLength;
+        const distance = Math.max(1, geometry.distance);
+        let cursor = 0;
+        while (cursor < distance) {
+          const segmentStart = cursor / distance;
+          const segmentEnd = Math.min(cursor + dashLength, distance) / distance;
+          if (segmentEnd > segmentStart) {
+            const path = document.createElementNS(SVG_NS, "path");
+            path.setAttribute("class", className);
+            path.setAttribute(
+              "d",
+              getTaperedLineShapePath(geometry, startWidth, endWidth, extraWidth, segmentStart, segmentEnd)
+            );
+            group.appendChild(path);
+          }
+          cursor += cycleLength;
+        }
+        return;
+      }
+
+      const path = document.createElementNS(SVG_NS, "path");
+      path.setAttribute("class", className);
+      path.setAttribute("d", getTaperedLineShapePath(geometry, startWidth, endWidth, extraWidth));
+      group.appendChild(path);
+    }
+
     function appendConnectionPath(geometry, options = {}) {
       const group = document.createElementNS(SVG_NS, "g");
       group.setAttribute("class", options.draft ? "connection-line-draft" : "connection-line-persisted");
@@ -1344,19 +1462,33 @@
       const startWidth = Number.isFinite(options.startWidth) ? options.startWidth : MIN_LINE_WIDTH_PX;
       const endWidth = Number.isFinite(options.endWidth) ? options.endWidth : startWidth;
 
-      const shadow = document.createElementNS(SVG_NS, "path");
-      shadow.setAttribute("class", "connection-line connection-line-shadow");
-      shadow.setAttribute(
-        "d",
-        getTaperedLineShapePath(geometry, startWidth, endWidth, LINE_SHADOW_EXTRA_WIDTH_PX)
+      appendTaperedLineShape(
+        group,
+        "connection-line connection-line-shadow",
+        geometry,
+        startWidth,
+        endWidth,
+        LINE_SHADOW_EXTRA_WIDTH_PX,
+        { dashed: options.draft }
       );
-
-      const stroke = document.createElementNS(SVG_NS, "path");
-      stroke.setAttribute("class", "connection-line connection-line-stroke");
-      stroke.setAttribute("d", getTaperedLineShapePath(geometry, startWidth, endWidth));
-
-      group.append(shadow, stroke);
+      appendTaperedLineShape(
+        group,
+        "connection-line connection-line-stroke",
+        geometry,
+        startWidth,
+        endWidth,
+        0,
+        { dashed: options.draft }
+      );
       lineLayer.appendChild(group);
+
+      if (options.id && lineHitLayer) {
+        const hitPath = document.createElementNS(SVG_NS, "path");
+        hitPath.setAttribute("class", "connection-line-hit");
+        hitPath.setAttribute("d", getNaturalLineCenterPath(geometry));
+        hitPath.dataset.lineId = options.id;
+        lineHitLayer.appendChild(hitPath);
+      }
     }
 
     function renderLineConnections() {
@@ -1367,6 +1499,12 @@
       lineLayer.setAttribute("width", String(width));
       lineLayer.setAttribute("height", String(height));
       lineLayer.replaceChildren();
+      if (lineHitLayer) {
+        lineHitLayer.setAttribute("viewBox", `0 0 ${width} ${height}`);
+        lineHitLayer.setAttribute("width", String(width));
+        lineHitLayer.setAttribute("height", String(height));
+        lineHitLayer.replaceChildren();
+      }
 
       for (const line of lineConnections) {
         const sourceNode = getNodeById(line.from);
@@ -1393,7 +1531,7 @@
       appendConnectionPath(getNaturalLineGeometry(start, end, `draft:${lineDraft.sourceId}`), {
         draft: true,
         startWidth: draftWidth,
-        endWidth: draftWidth * 0.78
+        endWidth: lineDraft.displayEndWidth
       });
     }
 
@@ -1427,6 +1565,11 @@
         lineDraft.velocityY = 0;
       }
 
+      lineDraft.displayEndWidth += (lineDraft.targetEndWidth - lineDraft.displayEndWidth) * LINE_DRAFT_THICKNESS_EASE;
+      if (Math.abs(lineDraft.targetEndWidth - lineDraft.displayEndWidth) < 0.002) {
+        lineDraft.displayEndWidth = lineDraft.targetEndWidth;
+      }
+
       renderLineConnections();
       requestLineDraftAnimation();
     }
@@ -1447,7 +1590,11 @@
         displayX: startX,
         displayY: startY,
         velocityX: 0,
-        velocityY: 0
+        velocityY: 0,
+        hoverNode: null,
+        baseEndWidth: getNodeLineWidth(sourceNode) * LINE_DRAFT_END_WIDTH_RATIO,
+        displayEndWidth: getNodeLineWidth(sourceNode) * LINE_DRAFT_END_WIDTH_RATIO,
+        targetEndWidth: getNodeLineWidth(sourceNode) * LINE_DRAFT_END_WIDTH_RATIO
       };
       viewport.classList.add("line-drafting");
       renderLineConnections();
@@ -1465,10 +1612,27 @@
       renderLineConnections();
     }
 
+    function getLineDraftHoverNode(clientX, clientY) {
+      if (!lineDraft) return null;
+      const elements = typeof document.elementsFromPoint === "function"
+        ? document.elementsFromPoint(clientX, clientY)
+        : [];
+      for (const element of elements) {
+        if (!(element instanceof Element)) continue;
+        const node = element.closest(".text-node");
+        if (node && world.contains(node) && node !== lineDraft.sourceNode) return node;
+      }
+      return null;
+    }
+
     function updateLineDraftPointer(event) {
       if (!lineDraft) return;
       lineDraft.cursorX = event.clientX;
       lineDraft.cursorY = event.clientY;
+      lineDraft.hoverNode = getLineDraftHoverNode(event.clientX, event.clientY);
+      lineDraft.targetEndWidth = lineDraft.hoverNode
+        ? getNodeLineWidth(lineDraft.hoverNode)
+        : lineDraft.baseEndWidth;
     }
 
     function completeLineDraft(targetNode) {
@@ -2591,6 +2755,7 @@
       if (event.button !== 0 || !event.shiftKey || isCanvasPanExcludedTarget(event.target)) return;
 
       closeNodeContextMenu();
+      closeLineContextMenu();
       cancelCameraAnimation();
       cancelNodeLayoutAnimation();
 
@@ -2640,6 +2805,7 @@
       if (selectedNodes.size === 0 || !selectionBoundsWorld) return;
 
       closeNodeContextMenu();
+      closeLineContextMenu();
       cancelCameraAnimation();
       cancelNodeLayoutAnimation();
 
@@ -2853,6 +3019,7 @@
       cancelNodeLayoutAnimation();
       cancelLineDraft();
       closeNodeContextMenu();
+      closeLineContextMenu();
       closeLinkNodeDialog();
       closeSlashCommandMenu();
       clearSelection();
@@ -3407,6 +3574,16 @@
       openNodeContextMenu(node, event.clientX, event.clientY);
     });
 
+    lineHitLayer.addEventListener("contextmenu", (event) => {
+      if (!(event.target instanceof Element)) return;
+      const hitPath = event.target.closest(".connection-line-hit");
+      const lineId = hitPath ? hitPath.dataset.lineId || "" : "";
+      if (!lineId) return;
+      event.preventDefault();
+      event.stopPropagation();
+      openLineContextMenu(lineId, event.clientX, event.clientY);
+    });
+
     copyNodeIdBtn.addEventListener("click", async () => {
       const node = contextMenuNode;
       closeNodeContextMenu();
@@ -3418,6 +3595,12 @@
         console.error("Copy failed:", error);
         alert("Could not copy node ID.");
       }
+    });
+
+    deleteLineBtn.addEventListener("click", () => {
+      const lineId = contextMenuLineId;
+      closeLineContextMenu();
+      removeLineConnection(lineId);
     });
 
     drawLineBtn.addEventListener("click", (event) => {
@@ -3558,9 +3741,14 @@
         const editingNode = getActiveEditingNode();
         if (!editingNode || !editingNode.contains(event.target)) closeSlashCommandMenu();
       }
-      if (nodeContextMenu.hidden) return;
-      if (event.target instanceof Node && nodeContextMenu.contains(event.target)) return;
-      closeNodeContextMenu();
+      if (!nodeContextMenu.hidden) {
+        if (event.target instanceof Node && nodeContextMenu.contains(event.target)) return;
+        closeNodeContextMenu();
+      }
+      if (!lineContextMenu.hidden) {
+        if (event.target instanceof Node && lineContextMenu.contains(event.target)) return;
+        closeLineContextMenu();
+      }
     }, { capture: true });
 
     viewport.addEventListener("pointerdown", beginCanvasPan, { capture: true });
@@ -3586,6 +3774,7 @@
     viewport.addEventListener("wheel", (event) => {
       event.preventDefault();
       closeNodeContextMenu();
+      closeLineContextMenu();
       cancelCameraAnimation();
       cancelNodeLayoutAnimation();
 
@@ -3606,6 +3795,7 @@
     viewport.addEventListener("gesturestart", (event) => {
       event.preventDefault();
       closeNodeContextMenu();
+      closeLineContextMenu();
       cancelCameraAnimation();
       cancelNodeLayoutAnimation();
       gestureStartScale = camera.scale;
@@ -3622,6 +3812,7 @@
     viewport.addEventListener("dblclick", (event) => {
       if (event.target !== viewport && event.target !== world) return;
       closeNodeContextMenu();
+      closeLineContextMenu();
       cancelNodeLayoutAnimation();
       clearSelection();
       const point = screenToWorld(event.clientX, event.clientY);
@@ -3654,6 +3845,7 @@
       event.preventDefault();
       event.stopPropagation();
       closeNodeContextMenu();
+      closeLineContextMenu();
       closeLinkNodeDialog();
       closeSlashCommandMenu();
       cancelCameraAnimation();
@@ -3679,6 +3871,7 @@
       if (event.key === "Escape") {
         cancelLineDraft();
         closeNodeContextMenu();
+        closeLineContextMenu();
         closeLinkNodeDialog();
         closeSlashCommandMenu();
       }
@@ -3687,6 +3880,7 @@
         if (isEditableTarget(event.target)) return;
         event.preventDefault();
         closeNodeContextMenu();
+        closeLineContextMenu();
         cancelNodeLayoutAnimation();
         removeLineConnectionsForNodes(Array.from(selectedNodes));
         for (const node of Array.from(selectedNodes)) {
@@ -3711,6 +3905,7 @@
         if (isEditableTarget(event.target)) return;
         event.preventDefault();
         closeNodeContextMenu();
+        closeLineContextMenu();
         closeLinkNodeDialog();
         closeSlashCommandMenu();
         alignSelectedNodesToColumn();
@@ -3741,6 +3936,7 @@
 
     window.addEventListener("resize", () => {
       closeNodeContextMenu();
+      closeLineContextMenu();
       closeLinkNodeDialog();
       closeSlashCommandMenu();
       render();

@@ -202,14 +202,14 @@
         .timer-label {
           overflow: hidden;
           color: #7b6650;
-          font: 500 0.42em/1.1 "Roboto", sans-serif;
+          font: 400 0.42em/1.1 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
           letter-spacing: 0;
           text-overflow: ellipsis;
           white-space: nowrap;
         }
 
         .timer-time {
-          font: 500 1em/1.05 "Roboto", sans-serif;
+          font: 400 1em/1.05 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
           letter-spacing: 0;
           tabular-nums: lining-nums;
           font-variant-numeric: tabular-nums;
@@ -226,7 +226,7 @@
           background: #eee1cf;
           padding: 0.26em 0.42em;
           color: #4b3b2d;
-          font: 500 0.45em/1 "Roboto", sans-serif;
+          font: 400 0.45em/1 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
         }
 
         .timer-button:hover {

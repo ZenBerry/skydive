@@ -131,7 +131,7 @@
 
         .file-uploading {
           color: #7b6650;
-          font: 500 0.52em/1.2 "Roboto", sans-serif;
+          font: 400 0.52em/1.2 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
           letter-spacing: 0;
           white-space: nowrap;
         }
@@ -162,7 +162,7 @@
         .file-name {
           overflow: hidden;
           color: #3f3328;
-          font: 500 0.62em/1.14 "Roboto", sans-serif;
+          font: 400 0.62em/1.14 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
           letter-spacing: 0;
           overflow-wrap: anywhere;
         }
@@ -170,7 +170,7 @@
         .file-meta {
           overflow: hidden;
           color: #7b6650;
-          font: 400 0.42em/1.18 "Roboto", sans-serif;
+          font: 400 0.42em/1.18 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
           letter-spacing: 0;
           text-overflow: ellipsis;
           white-space: nowrap;
@@ -187,7 +187,7 @@
           background: #eee1cf;
           padding: 0.26em 0.42em;
           color: #4b3b2d;
-          font: 500 0.45em/1 "Roboto", sans-serif;
+          font: 400 0.45em/1 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
         }
 
         .file-button:hover {
