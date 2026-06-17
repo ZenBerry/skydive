@@ -95,7 +95,6 @@
       stroke: rgba(0, 0, 0, 0);
       stroke-linecap: round;
       stroke-linejoin: round;
-      stroke-width: 14px;
       vector-effect: non-scaling-stroke;
       pointer-events: stroke;
       cursor: context-menu;
@@ -128,7 +127,7 @@
 
     .text-node {
       position: absolute;
-      min-width: 12px;
+      min-width: 0;
       min-height: 1em;
       line-height: 1.25;
       color: #111;
@@ -570,12 +569,21 @@
     const MIN_LINE_WIDTH_SCREEN_PX = 0.72;
     const MAX_LINE_WIDTH_SCREEN_PX = 4;
     const LINE_SHADOW_EXTRA_WIDTH_SCREEN_PX = 1;
+    const LINE_HIT_STROKE_SCREEN_PX = 14;
+    const MIN_VISIBLE_LINE_LENGTH_SCREEN_PX = 1.2;
+    const MIN_VISIBLE_LINE_WIDTH_SCREEN_PX = 0.12;
+    const LINE_WIDTH_DISTANCE_LIMIT_RATIO = 0.72;
     const LINE_DRAFT_THICKNESS_EASE = 0.18;
     const LINE_DRAFT_END_WIDTH_RATIO = 0.78;
     const LINE_DRAFT_DASH_LENGTH_SCREEN_PX = 8;
     const LINE_DRAFT_GAP_LENGTH_SCREEN_PX = 7;
     const LINE_DRAFT_SPRING = 0.24;
     const LINE_DRAFT_DAMPING = 0.66;
+    const TEXT_NODE_MIN_HIT_WIDTH_SCREEN_PX = 12;
+    const GROUP_SELECTION_HANDLE_SCREEN_PX = 12;
+    const MIN_GROUP_SELECTION_HANDLE_SCREEN_PX = 2;
+    const ZOOM_AFFORDANCE_MIN_FONT_SCREEN_PX = 2;
+    const ZOOM_AFFORDANCE_FULL_FONT_SCREEN_PX = 14;
     const STORAGE_KEY = "mindmap.v1";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
@@ -1241,6 +1249,16 @@
       return value / getCameraScale();
     }
 
+    function getScreenAffordanceScale(fontSize) {
+      const t = clamp(
+        (fontSize - ZOOM_AFFORDANCE_MIN_FONT_SCREEN_PX) /
+          (ZOOM_AFFORDANCE_FULL_FONT_SCREEN_PX - ZOOM_AFFORDANCE_MIN_FONT_SCREEN_PX),
+        0,
+        1
+      );
+      return easeInOutNatural(t);
+    }
+
     function getNodeBaseFontSize(node) {
       if (!(node instanceof HTMLElement)) return BASE_TEXT_PX / getCameraScale();
       const baseFontSize = Number(node.dataset.baseFontSize);
@@ -1255,26 +1273,69 @@
       return getNodeBaseFontSize(node) * getCameraScale();
     }
 
+    function getNodeScreenAffordanceScale(node) {
+      return getScreenAffordanceScale(getNodeRenderedFontSize(node));
+    }
+
+    function getTextNodeMinWidthScreenPx(fontSize) {
+      return TEXT_NODE_MIN_HIT_WIDTH_SCREEN_PX * getScreenAffordanceScale(fontSize);
+    }
+
+    function getSelectedNodesAffordanceScale() {
+      if (selectedNodes.size === 0) return getScreenAffordanceScale(BASE_TEXT_PX * getCameraScale());
+      let scale = 0;
+      for (const node of selectedNodes) {
+        if (node instanceof HTMLElement && world.contains(node)) {
+          scale = Math.max(scale, getNodeScreenAffordanceScale(node));
+        }
+      }
+      return scale;
+    }
+
+    function getGroupSelectionPaddingScreenPx() {
+      return GROUP_SELECTION_PADDING_PX * getSelectedNodesAffordanceScale();
+    }
+
+    function getGroupSelectionHandleScreenPx() {
+      return Math.max(
+        MIN_GROUP_SELECTION_HANDLE_SCREEN_PX,
+        GROUP_SELECTION_HANDLE_SCREEN_PX * getSelectedNodesAffordanceScale()
+      );
+    }
+
     function getNodeAnchorPaddingWorld(node) {
       const fontSize = getNodeRenderedFontSize(node);
+      const affordanceScale = getScreenAffordanceScale(fontSize);
+      const naturalPadding = fontSize * LINE_ANCHOR_ELLIPSE_PADDING_FONT_RATIO;
       const padding = clamp(
-        fontSize * LINE_ANCHOR_ELLIPSE_PADDING_FONT_RATIO,
-        MIN_LINE_ANCHOR_ELLIPSE_PADDING_SCREEN_PX,
-        MAX_LINE_ANCHOR_ELLIPSE_PADDING_SCREEN_PX
+        Math.max(naturalPadding, MIN_LINE_ANCHOR_ELLIPSE_PADDING_SCREEN_PX * affordanceScale),
+        0,
+        Math.max(naturalPadding, MAX_LINE_ANCHOR_ELLIPSE_PADDING_SCREEN_PX * affordanceScale)
       );
       return screenToWorldLength(padding);
     }
 
-    function getLineEndpointGapWorld() {
-      return screenToWorldLength(LINE_ENDPOINT_GAP_SCREEN_PX);
+    function getLineEndpointGapWorld(node) {
+      const fontSize = getNodeRenderedFontSize(node);
+      const gap = Math.max(
+        fontSize * 0.06,
+        LINE_ENDPOINT_GAP_SCREEN_PX * getScreenAffordanceScale(fontSize)
+      );
+      return screenToWorldLength(gap);
     }
 
     function getLineWidthWorldFromScreen(widthPx) {
       return screenToWorldLength(widthPx);
     }
 
-    function getLineShadowExtraWidthWorld() {
-      return screenToWorldLength(LINE_SHADOW_EXTRA_WIDTH_SCREEN_PX);
+    function getLineShadowExtraWidthWorld(startWidth, endWidth) {
+      const maxLineWidthPx = Math.max(startWidth, endWidth) * getCameraScale();
+      const equivalentFontSize = maxLineWidthPx / LINE_WIDTH_FONT_RATIO;
+      const extraWidthPx = Math.min(
+        LINE_SHADOW_EXTRA_WIDTH_SCREEN_PX * getScreenAffordanceScale(equivalentFontSize),
+        maxLineWidthPx * 1.4
+      );
+      return screenToWorldLength(extraWidthPx);
     }
 
     function getDraftDashLengthWorld() {
@@ -1306,7 +1367,7 @@
         0.001,
         Math.sqrt((dx * dx) / (radiusX * radiusX) + (dy * dy) / (radiusY * radiusY))
       );
-      const endpointGap = getLineEndpointGapWorld();
+      const endpointGap = getLineEndpointGapWorld(node);
 
       return {
         x: center.x + dx * ellipseScale + normalX * endpointGap,
@@ -1317,17 +1378,27 @@
     function getLineAnchorPair(sourceNode, targetNode) {
       const sourceCenter = getNodeWorldCenter(sourceNode);
       const targetCenter = getNodeWorldCenter(targetNode);
+      const centerDx = targetCenter.x - sourceCenter.x;
+      const centerDy = targetCenter.y - sourceCenter.y;
+      const centerDistance = Math.hypot(centerDx, centerDy);
+      if (centerDistance * getCameraScale() < MIN_VISIBLE_LINE_LENGTH_SCREEN_PX) return null;
+
+      const start = getNodeAnchorPoint(sourceNode, targetCenter);
+      const end = getNodeAnchorPoint(targetNode, sourceCenter);
+      const projectedDistance = ((end.x - start.x) * centerDx + (end.y - start.y) * centerDy) / centerDistance;
+      if (projectedDistance * getCameraScale() < MIN_VISIBLE_LINE_LENGTH_SCREEN_PX) return null;
+
       return {
-        start: getNodeAnchorPoint(sourceNode, targetCenter),
-        end: getNodeAnchorPoint(targetNode, sourceCenter)
+        start,
+        end
       };
     }
 
     function getNodeLineWidth(node) {
       const fontSize = getNodeRenderedFontSize(node);
-      const width = clamp(
-        fontSize * LINE_WIDTH_FONT_RATIO,
-        MIN_LINE_WIDTH_SCREEN_PX,
+      const naturalWidth = fontSize * LINE_WIDTH_FONT_RATIO;
+      const width = Math.min(
+        Math.max(naturalWidth, MIN_LINE_WIDTH_SCREEN_PX * getScreenAffordanceScale(fontSize)),
         MAX_LINE_WIDTH_SCREEN_PX
       );
       return screenToWorldLength(width);
@@ -1458,7 +1529,8 @@
         };
         const eased = easeInOutNatural(t);
         const width = startWidth + (endWidth - startWidth) * eased + extraWidth;
-        const halfWidth = Math.max(0.001, width / 2);
+        const cappedWidth = Math.min(width, segmentDistance * LINE_WIDTH_DISTANCE_LIMIT_RATIO);
+        const halfWidth = Math.max(0.001, cappedWidth / 2);
         left.push({
           x: point.x + normal.x * halfWidth,
           y: point.y + normal.y * halfWidth
@@ -1512,6 +1584,24 @@
       group.appendChild(path);
     }
 
+    function shouldRenderLineGeometry(geometry, startWidth, endWidth) {
+      const scale = getCameraScale();
+      const screenDistance = geometry.distance * scale;
+      const maxScreenWidth = Math.max(startWidth, endWidth) * scale;
+      return (
+        screenDistance >= Math.max(MIN_VISIBLE_LINE_LENGTH_SCREEN_PX, maxScreenWidth * 0.9) &&
+        maxScreenWidth >= MIN_VISIBLE_LINE_WIDTH_SCREEN_PX
+      );
+    }
+
+    function getLineHitStrokeScreenPx(sourceNode, targetNode) {
+      const affordanceScale = Math.min(
+        getNodeScreenAffordanceScale(sourceNode),
+        getNodeScreenAffordanceScale(targetNode)
+      );
+      return clamp(LINE_HIT_STROKE_SCREEN_PX * affordanceScale, 1, LINE_HIT_STROKE_SCREEN_PX);
+    }
+
     function appendConnectionPath(geometry, options = {}) {
       const group = document.createElementNS(SVG_NS, "g");
       group.setAttribute("class", options.draft ? "connection-line-draft" : "connection-line-persisted");
@@ -1520,6 +1610,7 @@
         ? options.startWidth
         : getLineWidthWorldFromScreen(MIN_LINE_WIDTH_SCREEN_PX);
       const endWidth = Number.isFinite(options.endWidth) ? options.endWidth : startWidth;
+      if (!shouldRenderLineGeometry(geometry, startWidth, endWidth)) return false;
 
       appendTaperedLineShape(
         group,
@@ -1527,7 +1618,7 @@
         geometry,
         startWidth,
         endWidth,
-        getLineShadowExtraWidthWorld(),
+        getLineShadowExtraWidthWorld(startWidth, endWidth),
         { dashed: options.draft }
       );
       appendTaperedLineShape(
@@ -1546,8 +1637,12 @@
         hitPath.setAttribute("class", "connection-line-hit");
         hitPath.setAttribute("d", getNaturalLineCenterPath(geometry));
         hitPath.dataset.lineId = options.id;
+        if (Number.isFinite(options.hitStrokeWidth)) {
+          hitPath.style.strokeWidth = `${options.hitStrokeWidth}px`;
+        }
         lineHitLayer.appendChild(hitPath);
       }
+      return true;
     }
 
     function renderLineConnections() {
@@ -1572,10 +1667,12 @@
         const targetNode = getNodeById(line.to);
         if (!sourceNode || !targetNode) continue;
         const points = getLineAnchorPair(sourceNode, targetNode);
+        if (!points) continue;
         appendConnectionPath(getNaturalLineGeometry(points.start, points.end, line.id), {
           id: line.id,
           startWidth: getNodeLineWidth(sourceNode),
-          endWidth: getNodeLineWidth(targetNode)
+          endWidth: getNodeLineWidth(targetNode),
+          hitStrokeWidth: getLineHitStrokeScreenPx(sourceNode, targetNode)
         });
       }
 
@@ -2689,16 +2786,23 @@
         return;
       }
 
-      const left = camera.x + selectionBoundsWorld.minX * camera.scale - GROUP_SELECTION_PADDING_PX;
-      const top = camera.y + selectionBoundsWorld.minY * camera.scale - GROUP_SELECTION_PADDING_PX;
-      const width = selectionBoundsWorld.width * camera.scale + GROUP_SELECTION_PADDING_PX * 2;
-      const height = selectionBoundsWorld.height * camera.scale + GROUP_SELECTION_PADDING_PX * 2;
+      const padding = getGroupSelectionPaddingScreenPx();
+      const handleSize = getGroupSelectionHandleScreenPx();
+      const handleOffset = -(handleSize / 2 + 1);
+      const left = camera.x + selectionBoundsWorld.minX * camera.scale - padding;
+      const top = camera.y + selectionBoundsWorld.minY * camera.scale - padding;
+      const width = selectionBoundsWorld.width * camera.scale + padding * 2;
+      const height = selectionBoundsWorld.height * camera.scale + padding * 2;
 
       groupSelectionBox.hidden = false;
       groupSelectionBox.style.left = `${left}px`;
       groupSelectionBox.style.top = `${top}px`;
       groupSelectionBox.style.width = `${width}px`;
       groupSelectionBox.style.height = `${height}px`;
+      groupSelectionHandle.style.width = `${handleSize}px`;
+      groupSelectionHandle.style.height = `${handleSize}px`;
+      groupSelectionHandle.style.right = `${handleOffset}px`;
+      groupSelectionHandle.style.bottom = `${handleOffset}px`;
     }
 
     function refreshSelectionBounds() {
@@ -2987,9 +3091,11 @@
       const worldX = Number(node.dataset.x);
       const worldY = Number(node.dataset.y);
       const baseFontSize = Number(node.dataset.baseFontSize);
+      const renderedFontSize = baseFontSize * camera.scale;
       node.style.left = `${camera.x + worldX * camera.scale}px`;
       node.style.top = `${camera.y + worldY * camera.scale}px`;
-      node.style.fontSize = `${baseFontSize * camera.scale}px`;
+      node.style.fontSize = `${renderedFontSize}px`;
+      node.style.minWidth = isCommandNode(node) ? "0px" : `${getTextNodeMinWidthScreenPx(renderedFontSize)}px`;
     }
 
     function zoomTo(newScale, clientX, clientY) {
