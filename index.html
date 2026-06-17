@@ -591,6 +591,8 @@
     const RESERVED_SHARED_SPACE_SLUGS = new Set(["agents", "api"]);
     const SHARED_SPACE_SLUG = getSharedSpaceSlug();
     const SHARED_POLL_MS = 2000;
+    const HISTORY_LIMIT = 100;
+    const HISTORY_COMMIT_DELAY_MS = 120;
     const ALIGN_ANIMATION_DURATION_MS = 620;
     const FILE_TYPES = [{
       description: "Mind Map JSON",
@@ -599,7 +601,12 @@
 
     let fileHandle = null;
     let saveTimer = null;
+    let historyTimer = null;
     let suppressAutosave = false;
+    let applyingHistoryState = false;
+    let undoStack = [];
+    let redoStack = [];
+    let currentHistorySnapshot = "";
     let nextNodeNumber = 1;
     let nextLineNumber = 1;
     let cameraAnimationFrame = null;
@@ -2427,6 +2434,24 @@
       return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
     }
 
+    function shouldUseGlobalHistoryShortcut(target) {
+      if (!(target instanceof HTMLElement)) return true;
+      const tag = target.tagName;
+      return tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT";
+    }
+
+    function getHistoryShortcutAction(event) {
+      const hasPrimaryModifier = event.metaKey || event.ctrlKey;
+      if (!hasPrimaryModifier || event.altKey) return "";
+
+      const key = event.key.toLowerCase();
+      const isZ = key === "z" || event.code === "KeyZ";
+      const isY = key === "y" || event.code === "KeyY";
+      if (isZ && !event.shiftKey) return "undo";
+      if ((isY && !event.shiftKey) || (isZ && event.shiftKey)) return "redo";
+      return "";
+    }
+
     function isCommandNode(node) {
       return node instanceof HTMLElement && node.dataset.kind === "command";
     }
@@ -3181,8 +3206,97 @@
       localStorage.setItem(getStorageKey(), JSON.stringify(state));
     }
 
+    function getHistorySnapshot() {
+      return JSON.stringify(serializeState());
+    }
+
+    function resetHistoryToCurrentState() {
+      clearTimeout(historyTimer);
+      historyTimer = null;
+      currentHistorySnapshot = getHistorySnapshot();
+      undoStack = [currentHistorySnapshot];
+      redoStack = [];
+    }
+
+    function commitHistorySnapshot(options = {}) {
+      if (suppressAutosave || applyingSharedState || applyingHistoryState) return false;
+
+      const { clearRedo = true } = options;
+      const snapshot = getHistorySnapshot();
+      if (snapshot === currentHistorySnapshot) return false;
+
+      undoStack.push(snapshot);
+      currentHistorySnapshot = snapshot;
+      if (undoStack.length > HISTORY_LIMIT) {
+        undoStack.splice(0, undoStack.length - HISTORY_LIMIT);
+      }
+      if (clearRedo) redoStack = [];
+      return true;
+    }
+
+    function scheduleHistoryCommit() {
+      if (suppressAutosave || applyingSharedState || applyingHistoryState) return;
+      clearTimeout(historyTimer);
+      historyTimer = setTimeout(() => {
+        historyTimer = null;
+        commitHistorySnapshot();
+      }, HISTORY_COMMIT_DELAY_MS);
+    }
+
+    function flushHistoryCommit() {
+      if (historyTimer !== null) {
+        clearTimeout(historyTimer);
+        historyTimer = null;
+      }
+      commitHistorySnapshot();
+    }
+
+    function restoreHistorySnapshot(snapshot) {
+      if (!snapshot) return false;
+
+      try {
+        applyingHistoryState = true;
+        loadState(JSON.parse(snapshot), { autosave: false });
+      } catch (error) {
+        console.error("History restore failed:", error);
+        return false;
+      } finally {
+        applyingHistoryState = false;
+      }
+
+      currentHistorySnapshot = snapshot;
+      scheduleAutosave();
+      return true;
+    }
+
+    function undoHistory() {
+      flushHistoryCommit();
+      if (undoStack.length <= 1) return false;
+
+      const currentSnapshot = undoStack[undoStack.length - 1];
+      const previousSnapshot = undoStack[undoStack.length - 2];
+      if (!restoreHistorySnapshot(previousSnapshot)) return false;
+
+      undoStack.pop();
+      redoStack.push(currentSnapshot);
+      return true;
+    }
+
+    function redoHistory() {
+      flushHistoryCommit();
+      if (redoStack.length === 0) return false;
+
+      const nextSnapshot = redoStack[redoStack.length - 1];
+      if (!restoreHistorySnapshot(nextSnapshot)) return false;
+
+      redoStack.pop();
+      undoStack.push(nextSnapshot);
+      return true;
+    }
+
     function scheduleAutosave() {
       if (suppressAutosave || applyingSharedState) return;
+      scheduleHistoryCommit();
       clearTimeout(saveTimer);
       saveTimer = setTimeout(() => {
         void saveCurrentState().catch((error) => {
@@ -4067,6 +4181,18 @@
         closeSlashCommandMenu();
       }
 
+      const historyAction = getHistoryShortcutAction(event);
+      if (historyAction && shouldUseGlobalHistoryShortcut(event.target)) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (historyAction === "undo") {
+          undoHistory();
+        } else {
+          redoHistory();
+        }
+        return;
+      }
+
       if ((event.key === "Backspace" || event.key === "Delete") && selectedNodes.size > 0) {
         if (isEditableTarget(event.target)) return;
         event.preventDefault();
@@ -4162,6 +4288,7 @@
         applyingSharedState = true;
         latestSharedUpdatedAt = updatedAt;
         loadState(data.state, { autosave: false, onProgress: options.onProgress });
+        resetHistoryToCurrentState();
         return true;
       } catch (error) {
         console.error("Shared space restore failed:", error);
@@ -4222,6 +4349,7 @@
           render();
         }
       } finally {
+        resetHistoryToCurrentState();
         hideLoadingScreen();
       }
     }
