@@ -103,7 +103,7 @@ function requireAuth(event) {
 
 function getSlug(value) {
   const slug = typeof value === "string" ? value.trim() : "";
-  if (!slug || slug.length > 160 || slug.includes("/")) return "";
+  if (!slug || slug.length > 500 || slug.startsWith("/") || slug.endsWith("/") || slug.includes("//")) return "";
   return slug;
 }
 
@@ -143,6 +143,17 @@ function finiteNumber(value, fallback, fieldName) {
     throw new HttpError(400, `${fieldName} must be a finite number.`);
   }
   return number;
+}
+
+function optionalTimestamp(value, fieldName) {
+  if (value === undefined || value === null || value === "") return null;
+  const timestamp = typeof value === "string" && !/^\d+(?:\.\d+)?$/.test(value.trim())
+    ? Date.parse(value)
+    : Number(value);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    throw new HttpError(400, `${fieldName} must be a positive timestamp.`);
+  }
+  return Math.round(timestamp);
 }
 
 function positiveNumber(value, fallback, fieldName) {
@@ -212,6 +223,10 @@ function normalizeNode(entry, seenIds) {
     y: finiteNumber(entry.y, 0, `node ${id}.y`),
     baseFontSize: positiveNumber(entry.baseFontSize, 28, `node ${id}.baseFontSize`)
   };
+  const createdAt = optionalTimestamp(entry.createdAt, `node ${id}.createdAt`);
+  const deletedAt = optionalTimestamp(entry.deletedAt, `node ${id}.deletedAt`);
+  if (createdAt) base.createdAt = createdAt;
+  if (deletedAt) base.deletedAt = deletedAt;
 
   if (entry.kind === "command") {
     return {
@@ -271,11 +286,27 @@ function normalizeLine(entry, index, nodeIds, seenLineIds, seenConnections) {
     throw new HttpError(400, `Line "${id}" references a missing node.`);
   }
 
-  const connectionKey = getLineConnectionKey(from, to);
-  if (seenConnections.has(connectionKey)) return null;
-  seenConnections.add(connectionKey);
+  const line = { id, from, to };
+  const createdAt = optionalTimestamp(entry.createdAt, `line ${id}.createdAt`);
+  const deletedAt = optionalTimestamp(entry.deletedAt, `line ${id}.deletedAt`);
+  if (createdAt) line.createdAt = createdAt;
+  if (deletedAt) line.deletedAt = deletedAt;
 
-  return { id, from, to };
+  const connectionKey = getLineConnectionKey(from, to);
+  if (!deletedAt) {
+    if (seenConnections.has(connectionKey)) return null;
+    seenConnections.add(connectionKey);
+  }
+  return line;
+}
+
+function normalizeMeta(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const meta = cloneJson(value, {});
+  if (JSON.stringify(meta).length > MAX_COMMAND_STATE_LENGTH) {
+    throw new HttpError(400, "meta is too large.", { maxLength: MAX_COMMAND_STATE_LENGTH });
+  }
+  return meta;
 }
 
 function normalizeState(rawState) {
@@ -299,7 +330,7 @@ function normalizeState(rawState) {
     .map((entry, index) => normalizeLine(entry, index, nodeIds, seenLineIds, seenConnections))
     .filter(Boolean);
 
-  return {
+  const normalized = {
     version: Number.isFinite(Number(source.version)) ? Number(source.version) : 1,
     camera: {
       x: finiteNumber(camera.x, 0, "camera.x"),
@@ -309,6 +340,9 @@ function normalizeState(rawState) {
     nodes,
     lines
   };
+  const meta = normalizeMeta(source.meta);
+  if (Object.keys(meta).length > 0) normalized.meta = meta;
+  return normalized;
 }
 
 function getNodeMap(state) {
@@ -526,6 +560,7 @@ function applyOps(currentState, ops) {
         x: finiteNumber(op.x, 0, "x"),
         y: finiteNumber(op.y, 0, "y"),
         baseFontSize: positiveNumber(op.baseFontSize, 28, "baseFontSize"),
+        createdAt: Date.now(),
         text: op.text === undefined ? htmlToPlainText(html) : text,
         html
       });
@@ -540,6 +575,7 @@ function applyOps(currentState, ops) {
         x: finiteNumber(op.x, 0, "x"),
         y: finiteNumber(op.y, 0, "y"),
         baseFontSize: positiveNumber(op.baseFontSize, 28, "baseFontSize"),
+        createdAt: Date.now(),
         commandId: boundedString(op.commandId, 128, "commandId").trim(),
         ...(commandVersion ? { commandVersion } : {}),
         commandState: normalizeCommandState(op.commandState)
@@ -570,11 +606,14 @@ function applyOps(currentState, ops) {
 
     if (opName === "delete_node") {
       const id = cleanNodeId(op.id);
-      const beforeLength = state.nodes.length;
-      state.nodes = state.nodes.filter((node) => node.id !== id);
-      state.lines = state.lines.filter((line) => line.from !== id && line.to !== id);
-      allocatedIds.delete(id);
-      if (state.nodes.length === beforeLength) throw new HttpError(404, `Node "${id}" was not found.`);
+      const node = state.nodes.find((entry) => entry.id === id);
+      const deletedAt = Date.now();
+      if (node) node.deletedAt = deletedAt;
+      state.lines.forEach((line) => {
+        if (line.deletedAt || (line.from !== id && line.to !== id)) return;
+        line.deletedAt = deletedAt;
+      });
+      if (!node) throw new HttpError(404, `Node "${id}" was not found.`);
       continue;
     }
 
@@ -651,6 +690,8 @@ function buildManifest(event) {
           x: "number",
           y: "number",
           baseFontSize: "number",
+          createdAt: "optional number",
+          deletedAt: "optional number",
           text: "string",
           html: "string"
         },
@@ -660,6 +701,8 @@ function buildManifest(event) {
           x: "number",
           y: "number",
           baseFontSize: "number",
+          createdAt: "optional number",
+          deletedAt: "optional number",
           commandId: "string",
           commandVersion: "optional string",
           commandState: "object"
@@ -669,9 +712,12 @@ function buildManifest(event) {
         {
           id: "string",
           from: "node id",
-          to: "node id"
+          to: "node id",
+          createdAt: "optional number",
+          deletedAt: "optional number"
         }
-      ]
+      ],
+      meta: "optional object"
     },
     operations: [
       "create_text_node",

@@ -39,7 +39,7 @@ function getSlug(event) {
     ? decodeURIComponent(event.queryStringParameters.slug).trim()
     : "";
 
-  if (!slug || slug.includes("/")) {
+  if (!slug || slug.length > 500 || slug.startsWith("/") || slug.endsWith("/") || slug.includes("//")) {
     return "";
   }
 

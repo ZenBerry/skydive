@@ -154,6 +154,10 @@
       cursor: text;
     }
 
+    .text-node[data-deleted-at] {
+      display: none !important;
+    }
+
     .command-node {
       min-width: 0;
       min-height: 0;
@@ -528,6 +532,7 @@
   <script src="/commands/stw.js"></script>
   <script src="/commands/timer.js"></script>
   <script src="/commands/file.js"></script>
+  <script src="/commands/delorean.js"></script>
   <script>
     const viewport = document.getElementById("viewport");
     const lineLayer = document.getElementById("line-layer");
@@ -587,9 +592,13 @@
     const STORAGE_KEY = "mindmap.v1";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
+    const DELOREAN_COMMAND_ID = "delorean";
+    const DELOREAN_SPACE_PREFIX = "delorean";
     const SVG_NS = "http://www.w3.org/2000/svg";
     const RESERVED_SHARED_SPACE_SLUGS = new Set(["agents", "api"]);
+    const SHARED_SPACE_PARTS = getSharedSpacePathParts();
     const SHARED_SPACE_SLUG = getSharedSpaceSlug();
+    const DELOREAN_SPACE_INFO = getDeloreanSpaceInfo();
     const SHARED_POLL_MS = 2000;
     const HISTORY_LIMIT = 100;
     const HISTORY_COMMIT_DELAY_MS = 120;
@@ -635,6 +644,8 @@
     let externalLinkCardPointer = null;
     let loadingProgressValue = 0;
     let lineConnections = [];
+    let spaceMeta = {};
+    let deloreanModified = false;
     const nodeHighlightTimeouts = new WeakMap();
     const selectedNodes = new Set();
     const nodeResizeObserver = "ResizeObserver" in window
@@ -647,21 +658,127 @@
       scale: 1
     };
 
-    function getSharedSpaceSlug() {
-      const parts = window.location.pathname.split("/").filter(Boolean);
-      if (parts.length !== 1 || parts[0] === "index.html") return "";
-
-      let slug = "";
+    function decodePathPart(part) {
       try {
-        slug = decodeURIComponent(parts[0]).trim();
+        return decodeURIComponent(part).trim();
       } catch (error) {
-        slug = parts[0].trim();
+        return String(part || "").trim();
       }
-      return RESERVED_SHARED_SPACE_SLUGS.has(slug) ? "" : slug;
+    }
+
+    function getSharedSpacePathParts() {
+      const parts = window.location.pathname.split("/").filter(Boolean);
+      if (parts.length === 0 || (parts.length === 1 && parts[0] === "index.html")) return [];
+      const decoded = parts.map(decodePathPart).filter(Boolean);
+      if (decoded.length === 0 || RESERVED_SHARED_SPACE_SLUGS.has(decoded[0])) return [];
+      return decoded;
+    }
+
+    function getSharedSpaceSlug() {
+      return SHARED_SPACE_PARTS.join("/");
+    }
+
+    function getDeloreanSpaceInfo() {
+      if (
+        SHARED_SPACE_PARTS.length < 3 ||
+        SHARED_SPACE_PARTS[0].toLowerCase() !== DELOREAN_SPACE_PREFIX
+      ) {
+        return { active: false, originalSlug: "", dateSlug: "" };
+      }
+
+      return {
+        active: true,
+        originalSlug: SHARED_SPACE_PARTS.slice(1, -1).join("/"),
+        dateSlug: SHARED_SPACE_PARTS[SHARED_SPACE_PARTS.length - 1]
+      };
     }
 
     function getStorageKey() {
       return SHARED_SPACE_SLUG ? `${STORAGE_KEY}.${SHARED_SPACE_SLUG}` : STORAGE_KEY;
+    }
+
+    function getBaseDocumentTitle() {
+      if (!SHARED_SPACE_SLUG) return "Skydive";
+      if (DELOREAN_SPACE_INFO.active) {
+        return `Skydive - ${DELOREAN_SPACE_INFO.originalSlug} @ ${DELOREAN_SPACE_INFO.dateSlug}`;
+      }
+      return `Skydive - ${SHARED_SPACE_SLUG}`;
+    }
+
+    function updateDocumentTitle() {
+      document.title = `${DELOREAN_SPACE_INFO.active && deloreanModified ? "*" : ""}${getBaseDocumentTitle()}`;
+    }
+
+    function cloneJson(value, fallback) {
+      try {
+        const cloned = JSON.parse(JSON.stringify(value));
+        return cloned === undefined ? fallback : cloned;
+      } catch (error) {
+        return fallback;
+      }
+    }
+
+    function normalizeTimestamp(value) {
+      if (value === undefined || value === null || value === "") return null;
+      const timestamp = typeof value === "string" && !/^\d+(?:\.\d+)?$/.test(value.trim())
+        ? Date.parse(value)
+        : Number(value);
+      return Number.isFinite(timestamp) && timestamp > 0 ? Math.round(timestamp) : null;
+    }
+
+    function isDeletedAtAfterCutoff(value, cutoff) {
+      const deletedAt = normalizeTimestamp(value);
+      return deletedAt !== null && deletedAt <= cutoff;
+    }
+
+    function wasCreatedAfterCutoff(value, cutoff) {
+      const createdAt = normalizeTimestamp(value);
+      return createdAt !== null && createdAt > cutoff;
+    }
+
+    function isItemLiveAt(item, cutoff) {
+      if (!item || typeof item !== "object") return false;
+      if (wasCreatedAfterCutoff(item.createdAt, cutoff)) return false;
+      if (isDeletedAtAfterCutoff(item.deletedAt, cutoff)) return false;
+      return true;
+    }
+
+    function isNodeDeleted(node) {
+      return node instanceof HTMLElement && Boolean(node.dataset.deletedAt);
+    }
+
+    function setNodeTimestamps(node, options = {}) {
+      const createdAt = normalizeTimestamp(options.createdAt);
+      const deletedAt = normalizeTimestamp(options.deletedAt);
+      if (createdAt) {
+        node.dataset.createdAt = String(createdAt);
+      } else if (!options.preserveTimestamps) {
+        node.dataset.createdAt = String(Date.now());
+      }
+      if (deletedAt) {
+        node.dataset.deletedAt = String(deletedAt);
+        node.setAttribute("aria-hidden", "true");
+        unobserveNodeForLines(node);
+        if (isCommandNode(node)) destroyCommandNodeContent(node);
+      } else {
+        delete node.dataset.deletedAt;
+        node.removeAttribute("aria-hidden");
+      }
+    }
+
+    function markDeloreanModified() {
+      if (!DELOREAN_SPACE_INFO.active || deloreanModified || applyingSharedState || applyingHistoryState || suppressAutosave) {
+        return;
+      }
+
+      deloreanModified = true;
+      spaceMeta = cloneJson(spaceMeta, {});
+      const delorean = spaceMeta.delorean && typeof spaceMeta.delorean === "object"
+        ? cloneJson(spaceMeta.delorean, {})
+        : {};
+      delorean.modifiedAt = Date.now();
+      spaceMeta.delorean = delorean;
+      updateDocumentTitle();
     }
 
     function setLoadingProgress(percent) {
@@ -677,10 +794,11 @@
       if (loadingScreen) loadingScreen.hidden = true;
     }
 
-    function getNodeById(nodeId) {
+    function getNodeById(nodeId, options = {}) {
       const id = typeof nodeId === "string" ? nodeId.trim() : "";
       if (!id) return null;
       for (const node of world.children) {
+        if (!options.includeDeleted && isNodeDeleted(node)) continue;
         if (node.dataset.nodeId === id) return node;
       }
       return null;
@@ -695,7 +813,7 @@
     }
 
     function isNodeIdInUse(nodeId) {
-      return Boolean(getNodeById(nodeId));
+      return Boolean(getNodeById(nodeId, { includeDeleted: true }));
     }
 
     function generateNodeId() {
@@ -1138,11 +1256,12 @@
 
     function hasLineConnection(fromId, toId) {
       const key = getLineConnectionKey(fromId, toId);
-      return lineConnections.some((line) => getLineConnectionKey(line.from, line.to) === key);
+      return lineConnections.some((line) => !line.deletedAt && getLineConnectionKey(line.from, line.to) === key);
     }
 
     function createLineConnection(sourceNode, targetNode) {
       if (!(sourceNode instanceof HTMLElement) || !(targetNode instanceof HTMLElement)) return false;
+      if (isNodeDeleted(sourceNode) || isNodeDeleted(targetNode)) return false;
       if (!world.contains(sourceNode) || !world.contains(targetNode) || sourceNode === targetNode) return false;
 
       const from = normalizeLineEndpointId(sourceNode.dataset.nodeId || "");
@@ -1152,7 +1271,8 @@
       lineConnections.push({
         id: generateLineId(),
         from,
-        to
+        to,
+        createdAt: Date.now()
       });
       renderLineConnections();
       scheduleAutosave();
@@ -1162,20 +1282,25 @@
     function removeLineConnection(lineId) {
       const id = typeof lineId === "string" ? lineId.trim() : "";
       if (!id) return false;
-      const beforeLength = lineConnections.length;
-      lineConnections = lineConnections.filter((line) => line.id !== id);
-      if (lineConnections.length === beforeLength) return false;
+      const line = lineConnections.find((entry) => entry.id === id && !entry.deletedAt);
+      if (!line) return false;
+      line.deletedAt = Date.now();
       renderLineConnections();
       scheduleAutosave();
       return true;
     }
 
     function serializeLineConnection(line) {
-      return {
+      const serialized = {
         id: line.id || "",
         from: line.from || "",
         to: line.to || ""
       };
+      const createdAt = normalizeTimestamp(line.createdAt);
+      const deletedAt = normalizeTimestamp(line.deletedAt);
+      if (createdAt) serialized.createdAt = createdAt;
+      if (deletedAt) serialized.deletedAt = deletedAt;
+      return serialized;
     }
 
     function loadLineConnections(entries) {
@@ -1192,23 +1317,37 @@
         if (!entry || typeof entry !== "object") continue;
         const from = normalizeLineEndpointId(entry.from);
         const to = normalizeLineEndpointId(entry.to);
-        if (!from || !to || from === to || !getNodeById(from) || !getNodeById(to)) continue;
+        if (
+          !from ||
+          !to ||
+          from === to ||
+          !getNodeById(from, { includeDeleted: true }) ||
+          !getNodeById(to, { includeDeleted: true })
+        ) {
+          continue;
+        }
 
         const key = getLineConnectionKey(from, to);
-        if (seen.has(key)) continue;
-        seen.add(key);
+        const createdAt = normalizeTimestamp(entry.createdAt);
+        const deletedAt = normalizeTimestamp(entry.deletedAt);
+        if (!deletedAt) {
+          if (seen.has(key)) continue;
+          seen.add(key);
+        }
 
         lineConnections.push({
           id: resolveLineId(entry.id),
           from,
-          to
+          to,
+          ...(createdAt ? { createdAt } : {}),
+          ...(deletedAt ? { deletedAt } : {})
         });
       }
 
       renderLineConnections();
     }
 
-    function removeLineConnectionsForNodes(nodes) {
+    function removeLineConnectionsForNodes(nodes, deletedAt = Date.now()) {
       const nodeIds = new Set(
         nodes
           .filter((node) => node instanceof HTMLElement)
@@ -1217,10 +1356,35 @@
       );
       if (nodeIds.size === 0) return false;
 
-      const beforeLength = lineConnections.length;
-      lineConnections = lineConnections.filter((line) => !nodeIds.has(line.from) && !nodeIds.has(line.to));
-      if (lineConnections.length === beforeLength) return false;
+      let changed = false;
+      lineConnections.forEach((line) => {
+        if (line.deletedAt || (!nodeIds.has(line.from) && !nodeIds.has(line.to))) return;
+        line.deletedAt = deletedAt;
+        changed = true;
+      });
+      if (!changed) return false;
       renderLineConnections();
+      return true;
+    }
+
+    function softDeleteNodes(nodes, deletedAt = Date.now()) {
+      const targets = nodes.filter((node) => node instanceof HTMLElement && world.contains(node) && !isNodeDeleted(node));
+      if (targets.length === 0) return false;
+
+      removeLineConnectionsForNodes(targets, deletedAt);
+      for (const node of targets) {
+        if (selectedNodes.has(node)) selectedNodes.delete(node);
+        if (node.classList.contains("editing")) stopEditing(node);
+        destroyCommandNodeContent(node);
+        unobserveNodeForLines(node);
+        node.dataset.deletedAt = String(deletedAt);
+        node.setAttribute("aria-hidden", "true");
+        node.classList.remove("selected", "editing", "navigation-target-highlight");
+      }
+
+      refreshSelectionBounds();
+      renderLineConnections();
+      scheduleAutosave();
       return true;
     }
 
@@ -1670,6 +1834,7 @@
       }
 
       for (const line of lineConnections) {
+        if (line.deletedAt) continue;
         const sourceNode = getNodeById(line.from);
         const targetNode = getNodeById(line.to);
         if (!sourceNode || !targetNode) continue;
@@ -1746,6 +1911,7 @@
 
     function beginLineDraft(sourceNode, clientX, clientY) {
       if (!(sourceNode instanceof HTMLElement) || !world.contains(sourceNode)) return;
+      if (isNodeDeleted(sourceNode)) return;
       cancelLineDraft();
       closeLinkNodeDialog();
 
@@ -1791,7 +1957,7 @@
       let bestScore = Infinity;
 
       for (const node of world.children) {
-        if (!(node instanceof HTMLElement) || node === lineDraft.sourceNode) continue;
+        if (!(node instanceof HTMLElement) || node === lineDraft.sourceNode || isNodeDeleted(node)) continue;
         const center = getNodeWorldCenter(node);
         const size = getNodeWorldSize(node);
         const padding = getNodeAnchorPaddingWorld(node);
@@ -2499,6 +2665,127 @@
       }
     }
 
+    function getSourceTimelineSlug() {
+      return DELOREAN_SPACE_INFO.active ? DELOREAN_SPACE_INFO.originalSlug : SHARED_SPACE_SLUG;
+    }
+
+    function getDeloreanDateSlug(targetAt) {
+      return new Date(targetAt).toISOString().replace(/\./g, "-").replace(/:/g, "-");
+    }
+
+    function getDeloreanSpaceSlug(sourceSlug, targetAt) {
+      return [
+        DELOREAN_SPACE_PREFIX,
+        sourceSlug,
+        getDeloreanDateSlug(targetAt)
+      ].filter(Boolean).join("/");
+    }
+
+    function getSpacePathFromSlug(slug) {
+      return `/${String(slug || "").split("/").map(encodeURIComponent).join("/")}`;
+    }
+
+    function getAbsoluteSpaceUrl(slug) {
+      return new URL(getSpacePathFromSlug(slug), window.location.origin).href;
+    }
+
+    async function loadSharedSpaceState(slug) {
+      const data = await requestSharedSpace({ slug });
+      return data && data.state ? data.state : { version: 1, camera: { x: 0, y: 0, scale: 1 }, nodes: [], lines: [] };
+    }
+
+    async function saveSharedSpaceState(slug, state) {
+      const data = await requestSharedSpace({
+        slug,
+        method: "PUT",
+        body: JSON.stringify({ state })
+      });
+      return data;
+    }
+
+    function stripTimelineFields(item) {
+      const copy = cloneJson(item, {});
+      delete copy.deletedAt;
+      return copy;
+    }
+
+    function getDeloreanStateAt(sourceState, sourceSlug, targetAt) {
+      const state = sourceState && typeof sourceState === "object" ? sourceState : {};
+      const nodes = Array.isArray(state.nodes) ? state.nodes : [];
+      const lines = Array.isArray(state.lines) ? state.lines : [];
+      const includedNodeIds = new Set();
+      const nextNodes = [];
+
+      nodes.forEach((node) => {
+        if (!isItemLiveAt(node, targetAt)) return;
+        if (node.kind === "command" && node.commandId === DELOREAN_COMMAND_ID) return;
+        const copy = stripTimelineFields(node);
+        if (!copy.id) return;
+        includedNodeIds.add(copy.id);
+        nextNodes.push(copy);
+      });
+
+      const nextLines = lines
+        .filter((line) => isItemLiveAt(line, targetAt))
+        .filter((line) => includedNodeIds.has(line.from) && includedNodeIds.has(line.to))
+        .map(stripTimelineFields);
+
+      return {
+        version: Number.isFinite(Number(state.version)) ? Number(state.version) : 1,
+        meta: {
+          delorean: {
+            originalSlug: sourceSlug,
+            targetAt,
+            createdAt: Date.now(),
+            modifiedAt: null
+          }
+        },
+        camera: state.camera && typeof state.camera === "object"
+          ? cloneJson(state.camera, { x: 0, y: 0, scale: 1 })
+          : { x: 0, y: 0, scale: 1 },
+        nodes: nextNodes,
+        lines: nextLines
+      };
+    }
+
+    async function createDeloreanSpace(durationMs) {
+      const sourceSlug = getSourceTimelineSlug();
+      if (!sourceSlug) {
+        throw new Error("Delorean needs a named shared space first.");
+      }
+
+      const duration = Number(durationMs);
+      if (!Number.isFinite(duration) || duration < 0) {
+        throw new Error("Choose a valid time to travel back to.");
+      }
+
+      const targetAt = Date.now() - duration;
+      const sourceState = DELOREAN_SPACE_INFO.active
+        ? await loadSharedSpaceState(sourceSlug)
+        : serializeState();
+      const targetState = getDeloreanStateAt(sourceState, sourceSlug, targetAt);
+      const targetSlug = getDeloreanSpaceSlug(sourceSlug, targetAt);
+      await saveSharedSpaceState(targetSlug, targetState);
+
+      return {
+        sourceSlug,
+        targetAt,
+        targetSlug,
+        targetUrl: getAbsoluteSpaceUrl(targetSlug)
+      };
+    }
+
+    function getCommandRenderContext(node) {
+      return {
+        currentSpaceSlug: SHARED_SPACE_SLUG,
+        delorean: cloneJson(DELOREAN_SPACE_INFO, {}),
+        createDeloreanSpace,
+        openSpace(slug) {
+          window.location.assign(getSpacePathFromSlug(slug));
+        }
+      };
+    }
+
     function renderCommandNodeContent(node) {
       const command = getCommand(node.dataset.commandId || "");
       destroyCommandNodeContent(node);
@@ -2521,7 +2808,7 @@
         renderCommandNodeContent(node);
         refreshSelectionBounds();
         scheduleAutosave();
-      });
+      }, getCommandRenderContext(node));
     }
 
     function updateCommandNodeState(node, nextState, options = {}) {
@@ -2539,6 +2826,10 @@
         y: Number(node.dataset.y),
         baseFontSize: Number(node.dataset.baseFontSize)
       };
+      const createdAt = normalizeTimestamp(node.dataset.createdAt);
+      const deletedAt = normalizeTimestamp(node.dataset.deletedAt);
+      if (createdAt) base.createdAt = createdAt;
+      if (deletedAt) base.deletedAt = deletedAt;
 
       if (isCommandNode(node)) {
         return {
@@ -2725,9 +3016,7 @@
       );
 
       if (!(sourceNode.textContent || "").trim()) {
-        removeLineConnectionsForNodes([sourceNode]);
-        unobserveNodeForLines(sourceNode);
-        world.removeChild(sourceNode);
+        softDeleteNodes([sourceNode]);
         setNodePosition(commandNode, sourceX, sourceY);
       } else {
         sourceNode.blur();
@@ -2787,6 +3076,7 @@
       const matches = [];
       for (const node of world.children) {
         if (!(node instanceof HTMLElement)) continue;
+        if (isNodeDeleted(node)) continue;
         const nodeRect = node.getBoundingClientRect();
         const intersects =
           nodeRect.right >= rect.left &&
@@ -2801,6 +3091,7 @@
     function applySelectionNodeClasses() {
       for (const node of world.children) {
         if (!(node instanceof HTMLElement)) continue;
+        if (isNodeDeleted(node)) continue;
         node.classList.toggle("selected", selectedNodes.has(node));
       }
     }
@@ -2843,7 +3134,7 @@
       let maxY = -Infinity;
 
       for (const node of selectedNodes) {
-        if (!world.contains(node)) continue;
+        if (!world.contains(node) || isNodeDeleted(node)) continue;
         const x = Number(node.dataset.x);
         const y = Number(node.dataset.y);
         const size = getNodeWorldSize(node);
@@ -2875,7 +3166,7 @@
     function setSelectedNodes(nodes) {
       const next = new Set();
       for (const node of nodes) {
-        if (node instanceof HTMLElement && world.contains(node)) {
+        if (node instanceof HTMLElement && world.contains(node) && !isNodeDeleted(node)) {
           next.add(node);
         }
       }
@@ -3154,7 +3445,7 @@
     }
 
     function serializeState() {
-      return {
+      const state = {
         version: 1,
         camera: {
           x: camera.x,
@@ -3164,20 +3455,25 @@
         nodes: Array.from(world.children).map(serializeNode),
         lines: lineConnections.map(serializeLineConnection)
       };
+      if (spaceMeta && typeof spaceMeta === "object" && Object.keys(spaceMeta).length > 0) {
+        state.meta = cloneJson(spaceMeta, {});
+      }
+      return state;
     }
 
-    function getSharedSpaceUrl() {
-      const params = new URLSearchParams({ slug: SHARED_SPACE_SLUG });
+    function getSharedSpaceUrl(slug = SHARED_SPACE_SLUG) {
+      const params = new URLSearchParams({ slug });
       return `/.netlify/functions/spaces?${params.toString()}`;
     }
 
     async function requestSharedSpace(options = {}) {
-      const response = await fetch(getSharedSpaceUrl(), {
+      const { slug = SHARED_SPACE_SLUG, ...fetchOptions } = options;
+      const response = await fetch(getSharedSpaceUrl(slug), {
         headers: {
           "Accept": "application/json",
-          ...(options.body ? { "Content-Type": "application/json" } : {})
+          ...(fetchOptions.body ? { "Content-Type": "application/json" } : {})
         },
-        ...options
+        ...fetchOptions
       });
 
       if (!response.ok) {
@@ -3188,6 +3484,7 @@
     }
 
     async function saveCurrentState() {
+      markDeloreanModified();
       const state = serializeState();
       if (SHARED_SPACE_SLUG) {
         savingSharedState = true;
@@ -3296,6 +3593,7 @@
 
     function scheduleAutosave() {
       if (suppressAutosave || applyingSharedState) return;
+      markDeloreanModified();
       scheduleHistoryCommit();
       clearTimeout(saveTimer);
       saveTimer = setTimeout(() => {
@@ -3314,6 +3612,7 @@
       const nextCamera = state.camera || {};
       const nextNodes = Array.isArray(state.nodes) ? state.nodes : [];
       const nextLines = Array.isArray(state.lines) ? state.lines : [];
+      const nextMeta = state.meta && typeof state.meta === "object" ? cloneJson(state.meta, {}) : {};
       const reportProgress = typeof onProgress === "function" ? onProgress : null;
 
       suppressAutosave = true;
@@ -3339,6 +3638,14 @@
       nextNodeNumber = 1;
       nextLineNumber = 1;
       lineConnections = [];
+      spaceMeta = nextMeta;
+      deloreanModified = Boolean(
+        DELOREAN_SPACE_INFO.active &&
+        spaceMeta.delorean &&
+        typeof spaceMeta.delorean === "object" &&
+        spaceMeta.delorean.modifiedAt
+      );
+      updateDocumentTitle();
 
       camera.x = Number.isFinite(Number(nextCamera.x)) ? Number(nextCamera.x) : window.innerWidth / 2;
       camera.y = Number.isFinite(Number(nextCamera.y)) ? Number(nextCamera.y) : window.innerHeight / 2;
@@ -3361,9 +3668,17 @@
           const commandState = entry.commandState && typeof entry.commandState === "object"
             ? entry.commandState
             : {};
-          createCommandNode(x, y, commandId, commandState, baseFontSize, id, commandVersion);
+          createCommandNode(x, y, commandId, commandState, baseFontSize, id, commandVersion, {
+            createdAt: entry.createdAt,
+            deletedAt: entry.deletedAt,
+            preserveTimestamps: true
+          });
         } else {
-          createTextNode(x, y, text, baseFontSize, id, html);
+          createTextNode(x, y, text, baseFontSize, id, html, {
+            createdAt: entry.createdAt,
+            deletedAt: entry.deletedAt,
+            preserveTimestamps: true
+          });
         }
         if (reportProgress) reportProgress((index + 1) / Math.max(1, nextNodes.length));
       });
@@ -3817,7 +4132,8 @@
       initialText = "",
       baseFontSize = BASE_TEXT_PX / camera.scale,
       preferredId = "",
-      initialHtml = null
+      initialHtml = null,
+      options = {}
     ) {
       const node = document.createElement("div");
       node.className = "text-node";
@@ -3832,10 +4148,11 @@
 
       // Keeps newly-created text visually consistent regardless of current zoom.
       node.dataset.baseFontSize = String(baseFontSize);
+      setNodeTimestamps(node, options);
       setNodePosition(node, worldX, worldY);
       attachNodeHandlers(node);
       world.appendChild(node);
-      observeNodeForLines(node);
+      if (!isNodeDeleted(node)) observeNodeForLines(node);
       scheduleAutosave();
       return node;
     }
@@ -3847,7 +4164,8 @@
       commandState = {},
       baseFontSize = BASE_TEXT_PX / camera.scale,
       preferredId = "",
-      commandVersion = ""
+      commandVersion = "",
+      options = {}
     ) {
       const node = document.createElement("div");
       node.className = "text-node command-node";
@@ -3858,11 +4176,12 @@
       writeCommandState(node, commandState);
       node.contentEditable = "false";
       node.dataset.baseFontSize = String(baseFontSize);
+      setNodeTimestamps(node, options);
       setNodePosition(node, worldX, worldY);
-      renderCommandNodeContent(node);
+      if (!isNodeDeleted(node)) renderCommandNodeContent(node);
       attachNodeHandlers(node);
       world.appendChild(node);
-      observeNodeForLines(node);
+      if (!isNodeDeleted(node)) observeNodeForLines(node);
       scheduleAutosave();
       return node;
     }
@@ -4199,16 +4518,8 @@
         closeNodeContextMenu();
         closeLineContextMenu();
         cancelNodeLayoutAnimation();
-        removeLineConnectionsForNodes(Array.from(selectedNodes));
-        for (const node of Array.from(selectedNodes)) {
-          if (world.contains(node)) {
-            destroyCommandNodeContent(node);
-            unobserveNodeForLines(node);
-            world.removeChild(node);
-          }
-        }
+        softDeleteNodes(Array.from(selectedNodes));
         clearSelection();
-        scheduleAutosave();
         return;
       }
 
@@ -4321,6 +4632,7 @@
     }
 
     async function boot() {
+      updateDocumentTitle();
       setLoadingProgress(10);
       void requestPersistentStorage();
       try {

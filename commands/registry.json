@@ -68,6 +68,31 @@
           "error": { "type": "string" }
         }
       }
+    },
+    {
+      "id": "delorean",
+      "version": "1.0.0",
+      "title": "Delorean",
+      "description": "Open this space as it looked earlier.",
+      "aliases": ["time", "timetravel", "restore"],
+      "acceptsArgs": true,
+      "source": "static",
+      "dynamicExecutable": false,
+      "stateSchema": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string" },
+          "input": { "type": "string" },
+          "durationMs": { "type": "number" },
+          "label": { "type": "string" },
+          "createdAt": { "type": "number" },
+          "targetAt": { "type": ["number", "null"] },
+          "targetSlug": { "type": "string" },
+          "targetUrl": { "type": "string" },
+          "sourceSlug": { "type": "string" },
+          "error": { "type": "string" }
+        }
+      }
     }
   ]
 }
