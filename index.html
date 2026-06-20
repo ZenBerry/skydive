@@ -54,16 +54,7 @@
       width: 100%;
       height: 100%;
       overflow: visible;
-      pointer-events: none;
-    }
-
-    #line-hit-layer {
-      position: absolute;
-      inset: 0;
-      z-index: 2;
-      width: 100%;
-      height: 100%;
-      overflow: visible;
+      background: #fff;
       pointer-events: none;
     }
 
@@ -105,6 +96,7 @@
       width: 100%;
       height: 100%;
       z-index: 1;
+      pointer-events: none;
     }
 
     #loading-screen {
@@ -137,6 +129,7 @@
       user-select: none;
       cursor: grab;
       outline: none;
+      pointer-events: auto;
       text-rendering: geometricPrecision;
       -webkit-font-smoothing: antialiased;
       isolation: isolate;
@@ -498,7 +491,6 @@
   <div id="viewport">
     <svg id="line-layer" aria-hidden="true"></svg>
     <div id="world"></div>
-    <svg id="line-hit-layer" aria-hidden="true"></svg>
     <div id="marquee-selection" hidden></div>
     <div id="group-selection-box" hidden>
       <div id="group-selection-handle"></div>
@@ -534,7 +526,6 @@
   <script>
     const viewport = document.getElementById("viewport");
     const lineLayer = document.getElementById("line-layer");
-    const lineHitLayer = document.getElementById("line-hit-layer");
     const world = document.getElementById("world");
     const loadingScreen = document.getElementById("loading-screen");
     const marqueeSelection = document.getElementById("marquee-selection");
@@ -1801,7 +1792,7 @@
       );
       lineLayer.appendChild(group);
 
-      if (options.id && lineHitLayer) {
+      if (options.id) {
         const hitPath = document.createElementNS(SVG_NS, "path");
         hitPath.setAttribute("class", "connection-line-hit");
         hitPath.setAttribute("d", getNaturalLineCenterPath(geometry));
@@ -1809,7 +1800,7 @@
         if (Number.isFinite(options.hitStrokeWidth)) {
           hitPath.style.strokeWidth = `${options.hitStrokeWidth}px`;
         }
-        lineHitLayer.appendChild(hitPath);
+        lineLayer.appendChild(hitPath);
       }
       return true;
     }
@@ -1830,13 +1821,6 @@
       lineLayer.setAttribute("height", String(height));
       lineLayer.style.transform = "";
       lineLayer.replaceChildren();
-      if (lineHitLayer) {
-        lineHitLayer.setAttribute("viewBox", viewBox);
-        lineHitLayer.setAttribute("width", String(width));
-        lineHitLayer.setAttribute("height", String(height));
-        lineHitLayer.style.transform = "";
-        lineHitLayer.replaceChildren();
-      }
 
       for (const line of lineConnections) {
         if (line.deletedAt) continue;
@@ -4200,7 +4184,7 @@
       openNodeContextMenu(node, event.clientX, event.clientY);
     });
 
-    lineHitLayer.addEventListener("contextmenu", (event) => {
+    lineLayer.addEventListener("contextmenu", (event) => {
       if (!(event.target instanceof Element)) return;
       const hitPath = event.target.closest(".connection-line-hit");
       const lineId = hitPath ? hitPath.dataset.lineId || "" : "";
