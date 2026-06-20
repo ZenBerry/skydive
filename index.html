@@ -519,9 +519,11 @@
   <div id="slash-command-menu" hidden></div>
   <input id="open-file-input" type="file" accept=".mind.json,.json,application/json" hidden>
 
+  <script src="https://unpkg.com/wavesurfer.js@7.7.3/dist/wavesurfer.min.js"></script>
   <script src="/commands/stw.js"></script>
   <script src="/commands/timer.js"></script>
   <script src="/commands/file.js"></script>
+  <script src="/commands/rec.js"></script>
   <script src="/commands/delorean.js"></script>
   <script>
     const viewport = document.getElementById("viewport");
@@ -581,6 +583,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
+    const AUDIO_WIDGET_COMMAND_ID = "rec";
     const DELOREAN_COMMAND_ID = "delorean";
     const DELOREAN_SPACE_PREFIX = "delorean";
     const SVG_NS = "http://www.w3.org/2000/svg";
@@ -2769,6 +2772,8 @@
         currentSpaceSlug: SHARED_SPACE_SLUG,
         delorean: cloneJson(DELOREAN_SPACE_INFO, {}),
         createDeloreanSpace,
+        uploadFile: uploadFileToCloudinary,
+        createUploadedFileState,
         openSpace(slug) {
           window.location.assign(getSpacePathFromSlug(slug));
         }
@@ -3013,7 +3018,6 @@
 
       closeSlashCommandMenu();
       clearSelection();
-      setSelectedNodes([commandNode]);
       scheduleAutosave();
     }
 
@@ -3908,6 +3912,27 @@
       );
     }
 
+    function isAudioFile(file) {
+      const mimeType = file && typeof file.type === "string" ? file.type.toLowerCase() : "";
+      if (mimeType.startsWith("audio/")) return true;
+      const extension = getFileExtension(file && file.name);
+      return new Set(["aac", "aif", "aiff", "flac", "m4a", "mp3", "oga", "ogg", "opus", "wav", "webm"]).has(extension);
+    }
+
+    function createAudioUploadNode(file, worldX, worldY) {
+      return createCommandNode(
+        worldX,
+        worldY,
+        AUDIO_WIDGET_COMMAND_ID,
+        {
+          ...createUploadingFileState(file),
+          showSpeedControl: false,
+          source: "drop"
+        },
+        BASE_TEXT_PX / camera.scale
+      );
+    }
+
     async function uploadFileForNode(file, node) {
       try {
         const upload = await uploadFileToCloudinary(file, (progress) => {
@@ -3923,6 +3948,34 @@
       } catch (error) {
         console.error("File upload failed:", error);
         updateCommandNodeState(node, createFailedFileState(file, error));
+      }
+    }
+
+    async function uploadAudioForNode(file, node) {
+      try {
+        const upload = await uploadFileToCloudinary(file, (progress) => {
+          const state = readCommandState(node);
+          updateCommandNodeState(node, {
+            ...state,
+            status: "uploading",
+            progress,
+            showSpeedControl: false,
+            source: "drop"
+          });
+        });
+
+        updateCommandNodeState(node, {
+          ...createUploadedFileState(file, upload),
+          showSpeedControl: false,
+          source: "drop"
+        });
+      } catch (error) {
+        console.error("Audio upload failed:", error);
+        updateCommandNodeState(node, {
+          ...createFailedFileState(file, error),
+          showSpeedControl: false,
+          source: "drop"
+        });
       }
     }
 
@@ -3943,14 +3996,17 @@
 
       const point = screenToWorld(clientX, clientY);
       const offset = 18 / camera.scale;
-      const nodes = files.map((file, index) => {
-        const node = createFileUploadNode(file, point.x + index * offset, point.y + index * offset);
+      files.forEach((file, index) => {
+        const x = point.x + index * offset;
+        const y = point.y + index * offset;
+        if (isAudioFile(file)) {
+          const node = createAudioUploadNode(file, x, y);
+          void uploadAudioForNode(file, node);
+          return;
+        }
+        const node = createFileUploadNode(file, x, y);
         void uploadFileForNode(file, node);
-        return node;
       });
-
-      clearSelection();
-      setSelectedNodes(nodes);
     }
 
     function attachNodeHandlers(node) {

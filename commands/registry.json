@@ -70,6 +70,35 @@
       }
     },
     {
+      "id": "rec",
+      "version": "1.0.0",
+      "title": "Recorder",
+      "description": "Record a voice note and play its waveform.",
+      "aliases": ["record", "audio", "voice", "voice-note"],
+      "source": "static",
+      "dynamicExecutable": false,
+      "stateSchema": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string" },
+          "progress": { "type": "number" },
+          "fileName": { "type": "string" },
+          "extension": { "type": "string" },
+          "mimeType": { "type": "string" },
+          "bytes": { "type": "number" },
+          "url": { "type": "string" },
+          "downloadUrl": { "type": "string" },
+          "resourceType": { "type": "string" },
+          "publicId": { "type": "string" },
+          "showSpeedControl": { "type": "boolean" },
+          "source": { "type": "string" },
+          "uploadedAt": { "type": "number" },
+          "failedAt": { "type": "number" },
+          "error": { "type": "string" }
+        }
+      }
+    },
+    {
       "id": "delorean",
       "version": "1.0.0",
       "title": "Delorean",
