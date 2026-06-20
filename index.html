@@ -520,6 +520,7 @@
   <input id="open-file-input" type="file" accept=".mind.json,.json,application/json" hidden>
 
   <script src="https://unpkg.com/wavesurfer.js@7.7.3/dist/wavesurfer.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js"></script>
   <script src="/commands/stw.js"></script>
   <script src="/commands/timer.js"></script>
   <script src="/commands/file.js"></script>
@@ -1192,6 +1193,12 @@
     function getNodeWorldSize(node) {
       const scale = camera.scale > 0 ? camera.scale : 1;
       const rect = node.getBoundingClientRect();
+      if (isCommandNode(node)) {
+        return {
+          width: Math.max(rect.width / scale, 1),
+          height: Math.max(rect.height / scale, 1)
+        };
+      }
       const widthPx = Math.max(rect.width, node.scrollWidth, node.offsetWidth, 1);
       const heightPx = Math.max(rect.height, node.scrollHeight, node.offsetHeight, 1);
       return {
@@ -1429,6 +1436,9 @@
     }
 
     function getNodeRenderedFontSize(node) {
+      if (isCommandNode(node)) {
+        return getNodeBaseFontSize(node) * getCameraScale();
+      }
       if (node instanceof HTMLElement) {
         const computedFontSize = Number.parseFloat(window.getComputedStyle(node).fontSize);
         if (Number.isFinite(computedFontSize) && computedFontSize > 0) return computedFontSize;
@@ -2107,6 +2117,8 @@
       probe.style.width = "max-content";
       probe.style.maxWidth = "none";
       probe.style.fontSize = `${Math.max(0.001, fontSizePx)}px`;
+      probe.style.transform = "none";
+      probe.style.transformOrigin = "top left";
 
       document.body.appendChild(probe);
       const rect = probe.getBoundingClientRect();
@@ -3403,8 +3415,17 @@
       const renderedFontSize = baseFontSize * camera.scale;
       node.style.left = `${camera.x + worldX * camera.scale}px`;
       node.style.top = `${camera.y + worldY * camera.scale}px`;
-      node.style.fontSize = `${renderedFontSize}px`;
-      node.style.minWidth = isCommandNode(node) ? "0px" : `${getTextNodeMinWidthScreenPx(renderedFontSize)}px`;
+      if (isCommandNode(node)) {
+        node.style.fontSize = `${baseFontSize}px`;
+        node.style.minWidth = "0px";
+        node.style.transform = `scale(${camera.scale})`;
+        node.style.transformOrigin = "top left";
+      } else {
+        node.style.fontSize = `${renderedFontSize}px`;
+        node.style.minWidth = `${getTextNodeMinWidthScreenPx(renderedFontSize)}px`;
+        node.style.transform = "none";
+        node.style.transformOrigin = "";
+      }
     }
 
     function zoomTo(newScale, clientX, clientY) {
@@ -3926,6 +3947,7 @@
         AUDIO_WIDGET_COMMAND_ID,
         {
           ...createUploadingFileState(file),
+          label: file.name || "Audio",
           showSpeedControl: false,
           source: "drop"
         },
@@ -3959,6 +3981,7 @@
             ...state,
             status: "uploading",
             progress,
+            label: state.label || file.name || "Audio",
             showSpeedControl: false,
             source: "drop"
           });
@@ -3966,6 +3989,7 @@
 
         updateCommandNodeState(node, {
           ...createUploadedFileState(file, upload),
+          label: file.name || "Audio",
           showSpeedControl: false,
           source: "drop"
         });
@@ -3973,6 +3997,7 @@
         console.error("Audio upload failed:", error);
         updateCommandNodeState(node, {
           ...createFailedFileState(file, error),
+          label: file.name || "Audio",
           showSpeedControl: false,
           source: "drop"
         });

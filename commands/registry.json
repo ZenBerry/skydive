@@ -83,6 +83,7 @@
           "status": { "type": "string" },
           "progress": { "type": "number" },
           "fileName": { "type": "string" },
+          "label": { "type": "string" },
           "extension": { "type": "string" },
           "mimeType": { "type": "string" },
           "bytes": { "type": "number" },

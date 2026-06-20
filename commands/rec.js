@@ -55,13 +55,66 @@
     return "webm";
   }
 
-  function createRecordingFile(blob, mimeType) {
-    const extension = getExtension(mimeType);
+  function createMp3File(blob) {
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    return new File([blob], `recording-${stamp}.${extension}`, {
-      type: mimeType || blob.type || "audio/webm",
+    return new File([blob], `audio-${stamp}.mp3`, {
+      type: "audio/mpeg",
       lastModified: Date.now()
     });
+  }
+
+  function floatToInt16(samples) {
+    const output = new Int16Array(samples.length);
+    for (let index = 0; index < samples.length; index += 1) {
+      const sample = Math.max(-1, Math.min(1, samples[index]));
+      output[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+    }
+    return output;
+  }
+
+  async function encodeMp3(blob, onProgress, shouldCancel) {
+    if (!window.lamejs || typeof window.lamejs.Mp3Encoder !== "function") {
+      throw new Error("The MP3 encoder could not be loaded.");
+    }
+
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) throw new Error("MP3 encoding is not supported here.");
+
+    const audioContext = new AudioContextClass();
+    try {
+      const buffer = await audioContext.decodeAudioData(await blob.arrayBuffer());
+      const channelCount = buffer.numberOfChannels > 1 ? 2 : 1;
+      const left = buffer.getChannelData(0);
+      const right = channelCount === 2 ? buffer.getChannelData(1) : null;
+      const encoder = new window.lamejs.Mp3Encoder(channelCount, buffer.sampleRate, 128);
+      const mp3Chunks = [];
+      const blockSize = 1152;
+
+      for (let offset = 0; offset < buffer.length; offset += blockSize) {
+        if (shouldCancel()) throw new DOMException("Encoding canceled.", "AbortError");
+        const leftBlock = floatToInt16(left.subarray(offset, offset + blockSize));
+        const encoded = right
+          ? encoder.encodeBuffer(leftBlock, floatToInt16(right.subarray(offset, offset + blockSize)))
+          : encoder.encodeBuffer(leftBlock);
+        if (encoded.length > 0) mp3Chunks.push(new Uint8Array(encoded));
+
+        if ((offset / blockSize) % 64 === 0) {
+          onProgress(Math.min(99, Math.round((offset / Math.max(1, buffer.length)) * 100)));
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+        }
+      }
+
+      const finalChunk = encoder.flush();
+      if (finalChunk.length > 0) mp3Chunks.push(new Uint8Array(finalChunk));
+      onProgress(100);
+      return new Blob(mp3Chunks, { type: "audio/mpeg" });
+    } finally {
+      try {
+        await audioContext.close();
+      } catch (error) {
+        // Some browsers close decoding contexts automatically.
+      }
+    }
   }
 
   function downloadUrl(url, fileName) {
@@ -89,10 +142,87 @@
     for (const track of stream.getTracks()) track.stop();
   }
 
-  function buildUploadedState(file, upload, context, showSpeedControl) {
+  function stopLiveWaveform(elements, runtime) {
+    if (runtime.liveFrame !== null) cancelAnimationFrame(runtime.liveFrame);
+    runtime.liveFrame = null;
+    if (runtime.mediaSource) runtime.mediaSource.disconnect();
+    runtime.mediaSource = null;
+    runtime.analyser = null;
+    if (runtime.audioContext) {
+      void runtime.audioContext.close().catch(() => {});
+      runtime.audioContext = null;
+    }
+    if (elements && elements.wave) elements.wave.dataset.mode = "empty";
+  }
+
+  function startLiveWaveform(stream, elements, runtime) {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+
+    const audioContext = new AudioContextClass();
+    const analyser = audioContext.createAnalyser();
+    const mediaSource = audioContext.createMediaStreamSource(stream);
+    analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0.72;
+    mediaSource.connect(analyser);
+
+    runtime.audioContext = audioContext;
+    runtime.analyser = analyser;
+    runtime.mediaSource = mediaSource;
+    elements.wave.dataset.mode = "recording";
+
+    const values = new Uint8Array(analyser.fftSize);
+    const canvas = elements.liveWave;
+    const context = canvas.getContext("2d");
+
+    const draw = () => {
+      if (runtime.discard || !runtime.analyser || !containerIsLive(elements.card)) return;
+      const width = Math.max(1, canvas.clientWidth);
+      const height = Math.max(1, canvas.clientHeight);
+      const pixelRatio = Math.max(1, window.devicePixelRatio || 1);
+      const targetWidth = Math.round(width * pixelRatio);
+      const targetHeight = Math.round(height * pixelRatio);
+      if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+      }
+
+      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+      context.clearRect(0, 0, width, height);
+      analyser.getByteTimeDomainData(values);
+      let peak = 0;
+      for (let index = 0; index < values.length; index += 1) {
+        peak = Math.max(peak, Math.abs((values[index] - 128) / 128));
+      }
+      const gain = peak > 0.02 ? Math.min(4, 0.82 / peak) : 1;
+      context.beginPath();
+      context.strokeStyle = "#df654e";
+      context.lineWidth = 1.4;
+      context.lineJoin = "round";
+      context.lineCap = "round";
+      for (let index = 0; index < values.length; index += 1) {
+        const x = (index / (values.length - 1)) * width;
+        const amplitude = ((values[index] - 128) / 128) * gain;
+        const y = height / 2 + amplitude * height * 0.5;
+        if (index === 0) context.moveTo(x, y);
+        else context.lineTo(x, y);
+      }
+      context.stroke();
+      runtime.liveFrame = requestAnimationFrame(draw);
+    };
+
+    runtime.liveFrame = requestAnimationFrame(draw);
+  }
+
+  function containerIsLive(card) {
+    return Boolean(card && card.isConnected);
+  }
+
+  function buildUploadedState(file, upload, context, showSpeedControl, label) {
     if (context && typeof context.createUploadedFileState === "function") {
       return {
         ...context.createUploadedFileState(file, upload),
+        label,
         showSpeedControl,
         source: "recording"
       };
@@ -104,6 +234,7 @@
       status: "uploaded",
       progress: 100,
       fileName: file.name,
+      label,
       extension: getExtension(file.type),
       mimeType: file.type,
       bytes: Number(upload.bytes) || file.size,
@@ -220,7 +351,8 @@
       return {
         status: "empty",
         progress: 0,
-        fileName: "Recording",
+        fileName: "Audio",
+        label: "Audio",
         extension: "",
         mimeType: "",
         bytes: 0,
@@ -239,16 +371,21 @@
       const showSpeedControl = state.showSpeedControl !== false;
       const fileName = typeof state.fileName === "string" && state.fileName.trim()
         ? state.fileName.trim()
-        : "Recording";
+        : "Audio";
+      const label = typeof state.label === "string" && state.label.trim()
+        ? state.label.trim()
+        : state.source === "drop"
+          ? fileName
+          : "Audio";
 
       container.innerHTML = `
         <div class="rec-card">
           <div class="rec-heading">
-            <span class="rec-title"></span>
+            <span class="rec-title" data-command-interactive title="Double-click to rename"></span>
             <span class="rec-status" aria-live="polite"></span>
           </div>
           <div class="rec-wave" data-command-interactive>
-            <div class="rec-empty-wave" aria-hidden="true"></div>
+            <canvas class="rec-live-wave" aria-hidden="true"></canvas>
           </div>
           <div class="rec-time"></div>
           <div class="rec-playback-actions" hidden>
@@ -282,10 +419,24 @@
         .rec-card[data-status="error"] { border-color: #e9b9ac; }
         .rec-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6em; }
         .rec-title {
+          flex: 1 1 auto;
+          min-width: 0;
           overflow: hidden;
           font: 500 0.54em/1.1 "Myriad Pro", "Roboto", sans-serif;
           text-overflow: ellipsis;
           white-space: nowrap;
+          cursor: text;
+        }
+        .rec-title-input {
+          flex: 1 1 auto;
+          min-width: 0;
+          width: 100%;
+          border: 0;
+          border-bottom: 0.04em solid #a79887;
+          outline: 0;
+          background: transparent;
+          color: #332a23;
+          font: 500 0.54em/1.1 "Myriad Pro", "Roboto", sans-serif;
         }
         .rec-status, .rec-time {
           color: #817467;
@@ -300,18 +451,24 @@
           border-radius: 0.42em;
           background: rgba(98, 78, 60, 0.08);
         }
-        .rec-empty-wave {
+        .rec-wave::after {
+          content: "";
           position: absolute;
-          inset: 20% 0.45em;
-          opacity: 0.52;
-          background: repeating-linear-gradient(90deg, #9b8d7d 0 0.07em, transparent 0.07em 0.2em);
-          clip-path: polygon(0 48%, 4% 38%, 8% 57%, 12% 24%, 16% 62%, 20% 43%, 24% 68%, 28% 28%, 32% 54%, 36% 18%, 40% 72%, 44% 34%, 48% 59%, 52% 25%, 56% 66%, 60% 40%, 64% 76%, 68% 23%, 72% 62%, 76% 35%, 80% 70%, 84% 29%, 88% 57%, 92% 40%, 96% 63%, 100% 48%, 100% 52%, 0 52%);
+          left: 0.45em;
+          right: 0.45em;
+          top: 50%;
+          height: 1px;
+          background: #9b8d7d;
+          opacity: 0.55;
         }
-        .rec-card[data-recording="true"] .rec-empty-wave {
-          background-color: #df654e;
-          animation: rec-breathe 0.75s ease-in-out infinite alternate;
+        .rec-wave[data-mode="recording"]::after,
+        .rec-wave[data-mode="playback"]::after { display: none; }
+        .rec-live-wave {
+          display: none;
+          width: 100%;
+          height: 100%;
         }
-        .rec-wave[data-fallback="true"] .rec-empty-wave { display: block; }
+        .rec-wave[data-mode="recording"] .rec-live-wave { display: block; }
         .rec-playback-actions, .rec-record-actions { display: flex; gap: 0.22em; }
         .rec-playback-actions[hidden], .rec-record-actions[hidden] { display: none; }
         .rec-card button {
@@ -328,7 +485,6 @@
         .rec-card button:disabled { cursor: default; opacity: 0.38; }
         .rec-card [data-action="record"] { background: #e36e54; color: white; }
         .rec-card [data-action="record"]:hover:not(:disabled) { background: #d85e45; }
-        @keyframes rec-breathe { from { opacity: 0.38; transform: scaleY(0.55); } to { opacity: 0.92; transform: scaleY(1); } }
       `;
       container.appendChild(style);
 
@@ -337,6 +493,7 @@
         title: container.querySelector(".rec-title"),
         status: container.querySelector(".rec-status"),
         wave: container.querySelector(".rec-wave"),
+        liveWave: container.querySelector(".rec-live-wave"),
         time: container.querySelector(".rec-time"),
         playbackActions: container.querySelector(".rec-playback-actions"),
         recordActions: container.querySelector(".rec-record-actions"),
@@ -350,7 +507,8 @@
       };
 
       elements.card.dataset.status = status;
-      elements.title.textContent = fileName;
+      elements.wave.dataset.mode = "empty";
+      elements.title.textContent = label;
       elements.speed.hidden = !showSpeedControl;
 
       const runtime = {
@@ -358,14 +516,60 @@
         stream: null,
         wavesurfer: null,
         audio: null,
+        audioContext: null,
+        analyser: null,
+        mediaSource: null,
+        liveFrame: null,
         animationFrame: null,
+        uploading: false,
         discard: false
       };
       runtimes.set(container, runtime);
 
+      elements.title.addEventListener("dblclick", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (runtime.uploading || (runtime.recorder && runtime.recorder.state !== "inactive")) return;
+
+        const input = document.createElement("input");
+        input.className = "rec-title-input";
+        input.type = "text";
+        input.value = label;
+        input.maxLength = 120;
+        input.setAttribute("data-command-interactive", "");
+        elements.title.replaceWith(input);
+        input.focus();
+        input.select();
+
+        let finished = false;
+        const cancel = () => {
+          if (finished) return;
+          finished = true;
+          input.replaceWith(elements.title);
+        };
+        const commit = () => {
+          if (finished) return;
+          finished = true;
+          const nextLabel = input.value.trim() || "Audio";
+          onState({ ...state, label: nextLabel });
+        };
+
+        input.addEventListener("blur", commit);
+        input.addEventListener("keydown", (inputEvent) => {
+          if (inputEvent.key === "Enter") {
+            inputEvent.preventDefault();
+            input.blur();
+          } else if (inputEvent.key === "Escape") {
+            inputEvent.preventDefault();
+            cancel();
+          }
+        });
+      });
+
       if (hasAudio) {
         elements.status.textContent = "Ready";
         elements.playbackActions.hidden = false;
+        elements.wave.dataset.mode = "playback";
         elements.wave.replaceChildren();
         elements.start.disabled = true;
         elements.pause.disabled = true;
@@ -376,7 +580,8 @@
           runtime.animationFrame = null;
           if (runtime.discard || !container.isConnected) return;
           if (!createWaveSurfer(container, audioUrl, elements, runtime)) {
-            elements.wave.innerHTML = '<div class="rec-empty-wave" aria-hidden="true"></div>';
+            elements.wave.dataset.mode = "empty";
+            elements.wave.replaceChildren();
             createNativeFallback(audioUrl, elements, runtime);
           }
         };
@@ -462,6 +667,7 @@
           recorder.addEventListener("stop", async () => {
             stopStream(runtime.stream);
             runtime.stream = null;
+            stopLiveWaveform(elements, runtime);
             if (runtime.discard) return;
 
             const recordingType = recorder.mimeType || mimeType || "audio/webm";
@@ -472,29 +678,41 @@
               return;
             }
 
-            const file = createRecordingFile(blob, recordingType);
+            runtime.uploading = true;
             elements.card.dataset.recording = "false";
             elements.record.disabled = true;
             elements.recordStop.disabled = true;
-            elements.status.textContent = "Uploading 0%";
+            elements.status.textContent = "Preparing MP3 0%";
 
+            let file = null;
             try {
+              const mp3Blob = await encodeMp3(
+                blob,
+                (progress) => {
+                  if (!runtime.discard) elements.status.textContent = `Preparing MP3 ${progress}%`;
+                },
+                () => runtime.discard
+              );
+              if (runtime.discard) return;
+              file = createMp3File(mp3Blob);
               if (typeof context.uploadFile !== "function") throw new Error("Audio upload is unavailable.");
+              elements.status.textContent = "Uploading 0%";
               const upload = await context.uploadFile(file, (progress) => {
                 if (!container.isConnected || runtime.discard) return;
                 elements.status.textContent = `Uploading ${Math.round(progress)}%`;
               });
               if (!container.isConnected || runtime.discard) return;
-              onState(buildUploadedState(file, upload, context, true));
+              onState(buildUploadedState(file, upload, context, true, label));
             } catch (error) {
               if (!container.isConnected || runtime.discard) return;
               onState({
                 status: "error",
                 progress: 0,
-                fileName: file.name,
-                extension: getExtension(file.type),
-                mimeType: file.type,
-                bytes: file.size,
+                fileName: file ? file.name : "audio.mp3",
+                label,
+                extension: "mp3",
+                mimeType: "audio/mpeg",
+                bytes: file ? file.size : 0,
                 url: "",
                 downloadUrl: "",
                 resourceType: "",
@@ -507,6 +725,11 @@
           });
 
           recorder.start(250);
+          try {
+            startLiveWaveform(stream, elements, runtime);
+          } catch (error) {
+            elements.wave.dataset.mode = "empty";
+          }
           setRecordingUi(elements, true);
           elements.status.textContent = "Recording...";
         } catch (error) {
@@ -534,6 +757,7 @@
       if (runtime.animationFrame !== null) cancelAnimationFrame(runtime.animationFrame);
       if (runtime.recorder && runtime.recorder.state !== "inactive") runtime.recorder.stop();
       stopStream(runtime.stream);
+      stopLiveWaveform(null, runtime);
       if (runtime.wavesurfer) runtime.wavesurfer.destroy();
       if (runtime.audio) {
         runtime.audio.pause();
