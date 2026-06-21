@@ -219,7 +219,7 @@
           gap: 0.25em;
         }
 
-        .timer-button {
+        .timer-card .timer-button {
           border: 0;
           border-radius: 0.38em;
           background: #eee1cf;
@@ -228,7 +228,7 @@
           font: 400 0.45em/1 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
         }
 
-        .timer-button:hover {
+        .timer-card .timer-button:hover {
           background: #e7d6bf;
         }
       `;

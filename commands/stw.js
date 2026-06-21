@@ -87,7 +87,7 @@
           gap: 0.25em;
         }
 
-        .stw-button {
+        .stw-card .stw-button {
           border: 0;
           border-radius: 0.38em;
           background: #eee1cf;
@@ -96,7 +96,7 @@
           font: 400 0.45em/1 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
         }
 
-        .stw-button:hover {
+        .stw-card .stw-button:hover {
           background: #e7d6bf;
         }
       `;
