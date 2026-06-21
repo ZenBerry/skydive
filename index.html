@@ -22,6 +22,15 @@
       overflow: hidden;
       background: #fff;
       font-family: "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+
+    body * {
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-user-drag: none;
     }
 
     #viewport {
@@ -141,8 +150,27 @@
     }
 
     .text-node.editing {
+      -webkit-user-select: text;
       user-select: text;
       cursor: text;
+    }
+
+    .text-node.editing * {
+      -webkit-user-select: text;
+      user-select: text;
+    }
+
+    .text-node.editing .external-link-card,
+    .text-node.editing .external-link-card * {
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    input,
+    textarea,
+    .text-node.editing .external-link-card input {
+      -webkit-user-select: text;
+      user-select: text;
     }
 
     .text-node[data-deleted-at] {
@@ -285,7 +313,8 @@
     }
 
     #node-context-menu,
-    #line-context-menu {
+    #line-context-menu,
+    #canvas-context-menu {
       position: fixed;
       z-index: 1000;
       min-width: 190px;
@@ -299,12 +328,14 @@
     }
 
     #node-context-menu[hidden],
-    #line-context-menu[hidden] {
+    #line-context-menu[hidden],
+    #canvas-context-menu[hidden] {
       display: none;
     }
 
     #node-context-menu button,
-    #line-context-menu button {
+    #line-context-menu button,
+    #canvas-context-menu button {
       border: 0;
       background: transparent;
       padding: 8px 10px;
@@ -316,12 +347,14 @@
     }
 
     #node-context-menu button:hover:not(:disabled),
-    #line-context-menu button:hover:not(:disabled) {
+    #line-context-menu button:hover:not(:disabled),
+    #canvas-context-menu button:hover:not(:disabled) {
       background: #f2f4f7;
     }
 
     #node-context-menu button:disabled,
-    #line-context-menu button:disabled {
+    #line-context-menu button:disabled,
+    #canvas-context-menu button:disabled {
       color: #999;
       cursor: not-allowed;
     }
@@ -660,6 +693,9 @@
   <div id="line-context-menu" hidden>
     <button id="delete-line-btn" type="button">Delete line</button>
   </div>
+  <div id="canvas-context-menu" hidden>
+    <button id="birds-eye-view-btn" type="button">Bird's eye view</button>
+  </div>
   <div id="link-node-dialog" hidden>
     <div id="link-node-dialog-title">Paste target node ID</div>
     <input id="link-node-dialog-input" type="text" autocomplete="off" spellcheck="false">
@@ -694,6 +730,8 @@
     const widgetColorPicker = document.getElementById("widget-color-picker");
     const lineContextMenu = document.getElementById("line-context-menu");
     const deleteLineBtn = document.getElementById("delete-line-btn");
+    const canvasContextMenu = document.getElementById("canvas-context-menu");
+    const birdsEyeViewBtn = document.getElementById("birds-eye-view-btn");
     const linkNodeDialog = document.getElementById("link-node-dialog");
     const linkNodeDialogTitle = document.getElementById("link-node-dialog-title");
     const linkNodeDialogInput = document.getElementById("link-node-dialog-input");
@@ -1282,6 +1320,10 @@
       lineContextMenu.hidden = true;
     }
 
+    function closeCanvasContextMenu() {
+      canvasContextMenu.hidden = true;
+    }
+
     function closeLinkNodeDialog() {
       pendingLinkSourceNode = null;
       pendingLinkSelectionRange = null;
@@ -1351,6 +1393,7 @@
 
     function openNodeContextMenu(node, clientX, clientY) {
       closeLineContextMenu();
+      closeCanvasContextMenu();
       closeLinkNodeDialog();
       contextMenuNode = node;
       contextMenuSelectionRange = isCommandNode(node) ? null : getSelectionRangeWithinNode(node);
@@ -1368,6 +1411,7 @@
 
     function openLineContextMenu(lineId, clientX, clientY) {
       closeNodeContextMenu();
+      closeCanvasContextMenu();
       closeLinkNodeDialog();
       contextMenuLineId = lineId;
       lineContextMenu.hidden = false;
@@ -1377,6 +1421,19 @@
       const clampedY = Math.min(clientY, window.innerHeight - menuRect.height - 8);
       lineContextMenu.style.left = `${Math.max(8, clampedX)}px`;
       lineContextMenu.style.top = `${Math.max(8, clampedY)}px`;
+    }
+
+    function openCanvasContextMenu(clientX, clientY) {
+      closeNodeContextMenu();
+      closeLineContextMenu();
+      closeLinkNodeDialog();
+      canvasContextMenu.hidden = false;
+
+      const menuRect = canvasContextMenu.getBoundingClientRect();
+      const clampedX = Math.min(clientX, window.innerWidth - menuRect.width - 8);
+      const clampedY = Math.min(clientY, window.innerHeight - menuRect.height - 8);
+      canvasContextMenu.style.left = `${Math.max(8, clampedX)}px`;
+      canvasContextMenu.style.top = `${Math.max(8, clampedY)}px`;
     }
 
     function cancelCameraAnimation() {
@@ -2490,6 +2547,62 @@
       animateCameraTo(targetX, targetY, targetScale, duration);
     }
 
+    function getPageContentBounds() {
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+
+      for (const node of world.children) {
+        if (!(node instanceof HTMLElement) || isNodeDeleted(node)) continue;
+        const x = Number(node.dataset.x);
+        const y = Number(node.dataset.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+        const size = getNodeWorldSize(node);
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x + size.width);
+        maxY = Math.max(maxY, y + size.height);
+      }
+
+      if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+        return null;
+      }
+
+      return {
+        minX,
+        minY,
+        maxX,
+        maxY,
+        width: Math.max(0.001, maxX - minX),
+        height: Math.max(0.001, maxY - minY)
+      };
+    }
+
+    function focusPageContentFullScreen() {
+      const bounds = getPageContentBounds();
+      if (!bounds) return false;
+
+      const viewWidth = Math.max(1, viewport.clientWidth);
+      const viewHeight = Math.max(1, viewport.clientHeight);
+      const targetScale = Math.max(
+        0.0001,
+        Math.min(
+          (viewWidth * NAVIGATION_VIEWPORT_FILL) / bounds.width,
+          (viewHeight * NAVIGATION_VIEWPORT_FILL) / bounds.height
+        )
+      );
+      const centerX = bounds.minX + bounds.width / 2;
+      const centerY = bounds.minY + bounds.height / 2;
+      const targetX = viewWidth / 2 - centerX * targetScale;
+      const targetY = viewHeight / 2 - centerY * targetScale;
+      const duration = getNavigationDuration(targetX, targetY, targetScale);
+
+      navigationFitTargetNode = null;
+      animateCameraTo(targetX, targetY, targetScale, duration);
+      return true;
+    }
+
     function linkSelectionToTarget(node, selectionRange, targetNodeId) {
       if (!selectionRange) {
         throw new Error("Select a word first.");
@@ -2821,6 +2934,19 @@
       if (target.isContentEditable) return true;
       const tag = target.tagName;
       return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+    }
+
+    function isNativeTextInteractionTarget(target) {
+      const element = target instanceof Element
+        ? target
+        : target instanceof Node
+          ? target.parentElement
+          : null;
+      if (!element) return false;
+      if (element.closest("input, textarea")) return true;
+      const editingNode = element.closest(".text-node.editing");
+      if (!editingNode || !world.contains(editingNode)) return false;
+      return !element.closest("button, select, .external-link-card, [contenteditable=\"false\"]");
     }
 
     function shouldUseGlobalHistoryShortcut(target) {
@@ -3542,6 +3668,7 @@
 
       closeNodeContextMenu();
       closeLineContextMenu();
+      closeCanvasContextMenu();
       cancelCameraAnimation();
       cancelNodeLayoutAnimation();
 
@@ -3629,6 +3756,7 @@
       if (activationTarget.kind !== "canvas") return;
       closeNodeContextMenu();
       closeLineContextMenu();
+      closeCanvasContextMenu();
       cancelNodeLayoutAnimation();
       clearSelection();
       const point = screenToWorld(clientX, clientY);
@@ -3877,6 +4005,7 @@
 
       closeNodeContextMenu();
       closeLineContextMenu();
+      closeCanvasContextMenu();
       cancelCameraAnimation();
       cancelNodeLayoutAnimation();
 
@@ -4082,7 +4211,9 @@
     }
 
     function getHistorySnapshot() {
-      return JSON.stringify(serializeState());
+      const state = serializeState();
+      delete state.camera;
+      return JSON.stringify(state);
     }
 
     function resetHistoryToCurrentState() {
@@ -4137,7 +4268,9 @@
 
       try {
         applyingHistoryState = true;
-        loadState(JSON.parse(snapshot), { autosave: false });
+        const state = JSON.parse(snapshot);
+        state.camera = { ...camera };
+        loadState(state, { autosave: false });
       } catch (error) {
         console.error("History restore failed:", error);
         return false;
@@ -4209,6 +4342,7 @@
       cancelLineDraft();
       closeNodeContextMenu();
       closeLineContextMenu();
+      closeCanvasContextMenu();
       closeLinkNodeDialog();
       closeSlashCommandMenu();
       clearSelection();
@@ -4852,6 +4986,13 @@
       openLineContextMenu(lineId, event.clientX, event.clientY);
     });
 
+    viewport.addEventListener("contextmenu", (event) => {
+      if (event.target !== viewport && event.target !== world) return;
+      event.preventDefault();
+      event.stopPropagation();
+      openCanvasContextMenu(event.clientX, event.clientY);
+    });
+
     copyNodeIdBtn.addEventListener("click", async () => {
       const node = contextMenuNode;
       closeNodeContextMenu();
@@ -4879,6 +5020,11 @@
       const lineId = contextMenuLineId;
       closeLineContextMenu();
       removeLineConnection(lineId);
+    });
+
+    birdsEyeViewBtn.addEventListener("click", () => {
+      closeCanvasContextMenu();
+      focusPageContentFullScreen();
     });
 
     drawLineBtn.addEventListener("click", (event) => {
@@ -5030,6 +5176,10 @@
         if (event.target instanceof Node && lineContextMenu.contains(event.target)) return;
         closeLineContextMenu();
       }
+      if (!canvasContextMenu.hidden) {
+        if (event.target instanceof Node && canvasContextMenu.contains(event.target)) return;
+        closeCanvasContextMenu();
+      }
     }, { capture: true });
 
     viewport.addEventListener("pointerdown", beginCanvasPan, { capture: true });
@@ -5056,6 +5206,7 @@
       event.preventDefault();
       closeNodeContextMenu();
       closeLineContextMenu();
+      closeCanvasContextMenu();
       cancelCameraAnimation();
       cancelNodeLayoutAnimation();
 
@@ -5077,6 +5228,7 @@
       event.preventDefault();
       closeNodeContextMenu();
       closeLineContextMenu();
+      closeCanvasContextMenu();
       cancelCameraAnimation();
       cancelNodeLayoutAnimation();
       gestureStartScale = camera.scale;
@@ -5094,6 +5246,7 @@
       if (event.target !== viewport && event.target !== world) return;
       closeNodeContextMenu();
       closeLineContextMenu();
+      closeCanvasContextMenu();
       cancelNodeLayoutAnimation();
       clearSelection();
       const point = screenToWorld(event.clientX, event.clientY);
@@ -5107,6 +5260,16 @@
       scheduleAutosave();
       startEditing(node);
     });
+
+    window.addEventListener("selectstart", (event) => {
+      if (isNativeTextInteractionTarget(event.target)) return;
+      event.preventDefault();
+    }, { capture: true });
+
+    window.addEventListener("dragstart", (event) => {
+      if (isNativeTextInteractionTarget(event.target)) return;
+      event.preventDefault();
+    }, { capture: true });
 
     window.addEventListener("dragenter", (event) => {
       if (!isFileDragEvent(event)) return;
@@ -5127,6 +5290,7 @@
       event.stopPropagation();
       closeNodeContextMenu();
       closeLineContextMenu();
+      closeCanvasContextMenu();
       closeLinkNodeDialog();
       closeSlashCommandMenu();
       cancelCameraAnimation();
@@ -5153,6 +5317,7 @@
         cancelLineDraft();
         closeNodeContextMenu();
         closeLineContextMenu();
+        closeCanvasContextMenu();
         closeLinkNodeDialog();
         closeSlashCommandMenu();
       }
@@ -5174,6 +5339,7 @@
         event.preventDefault();
         closeNodeContextMenu();
         closeLineContextMenu();
+        closeCanvasContextMenu();
         cancelNodeLayoutAnimation();
         softDeleteNodes(Array.from(selectedNodes));
         clearSelection();
@@ -5191,6 +5357,7 @@
         event.preventDefault();
         closeNodeContextMenu();
         closeLineContextMenu();
+        closeCanvasContextMenu();
         closeLinkNodeDialog();
         closeSlashCommandMenu();
         alignSelectedNodesToColumn();
@@ -5222,6 +5389,7 @@
     window.addEventListener("resize", () => {
       closeNodeContextMenu();
       closeLineContextMenu();
+      closeCanvasContextMenu();
       closeLinkNodeDialog();
       closeSlashCommandMenu();
       render();
