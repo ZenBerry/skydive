@@ -178,6 +178,7 @@
     }
 
     .command-node {
+      --widget-color: #ffffff;
       min-width: 0;
       min-height: 0;
       white-space: normal;
@@ -186,14 +187,38 @@
 
     .command-node button {
       font: inherit;
+      background: color-mix(in srgb, var(--widget-color) 84%, #000) !important;
+    }
+
+    .command-node button:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--widget-color) 76%, #000) !important;
     }
 
     .command-node [data-command-interactive] {
       cursor: pointer;
     }
 
-    .command-node[data-widget-color] > :first-child {
+    .command-node > :first-child {
       background: var(--widget-color) !important;
+    }
+
+    #version-counter {
+      position: fixed;
+      top: calc(10px + env(safe-area-inset-top, 0px));
+      left: calc(10px + env(safe-area-inset-left, 0px));
+      z-index: 1000;
+      padding: 4px 7px;
+      border: 1px solid rgba(17, 24, 39, 0.12);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.9);
+      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+      color: #6b7280;
+      font: 500 12px/1 "Roboto", "Helvetica Neue", Arial, sans-serif;
+      pointer-events: none;
+    }
+
+    #version-counter[hidden] {
+      display: none;
     }
 
     .internal-link {
@@ -650,6 +675,7 @@
 </head>
 <body>
   <div id="loading-screen" role="status" aria-live="polite">Loading... 0% done</div>
+  <div id="version-counter" aria-label="Application version" hidden></div>
   <div id="viewport">
     <svg id="line-layer" aria-hidden="true"></svg>
     <div id="world"></div>
@@ -719,6 +745,7 @@
     const lineLayer = document.getElementById("line-layer");
     const world = document.getElementById("world");
     const loadingScreen = document.getElementById("loading-screen");
+    const versionCounter = document.getElementById("version-counter");
     const marqueeSelection = document.getElementById("marquee-selection");
     const groupSelectionBox = document.getElementById("group-selection-box");
     const groupSelectionHandle = document.getElementById("group-selection-handle");
@@ -778,6 +805,8 @@
     const ZOOM_AFFORDANCE_MIN_FONT_SCREEN_PX = 2;
     const ZOOM_AFFORDANCE_FULL_FONT_SCREEN_PX = 14;
     const STORAGE_KEY = "mindmap.v1";
+    const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
+    const APP_VERSION = 53; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -806,6 +835,7 @@
 
     let fileHandle = null;
     let saveTimer = null;
+    let viewportSaveTimer = null;
     let historyTimer = null;
     let suppressAutosave = false;
     let applyingHistoryState = false;
@@ -860,6 +890,8 @@
       y: window.innerHeight / 2,
       scale: 1
     };
+
+    versionCounter.textContent = `v${APP_VERSION}`;
 
     function detectMobileDevice() {
       const userAgent = navigator.userAgent || "";
@@ -942,6 +974,12 @@
 
     function getStorageKey() {
       return SHARED_SPACE_SLUG ? `${STORAGE_KEY}.${SHARED_SPACE_SLUG}` : STORAGE_KEY;
+    }
+
+    function getViewportStorageKey() {
+      return SHARED_SPACE_SLUG
+        ? `${VIEWPORT_STORAGE_KEY}.${SHARED_SPACE_SLUG}`
+        : VIEWPORT_STORAGE_KEY;
     }
 
     function getBaseDocumentTitle() {
@@ -2516,7 +2554,7 @@
           cameraAnimationFrame = requestAnimationFrame(tick);
         } else {
           cameraAnimationFrame = null;
-          scheduleAutosave();
+          scheduleViewportSave();
           if (typeof onComplete === "function") onComplete();
         }
       }
@@ -3089,7 +3127,7 @@
 
     async function loadSharedSpaceState(slug) {
       const data = await requestSharedSpace({ slug });
-      return data && data.state ? data.state : { version: 1, camera: { x: 0, y: 0, scale: 1 }, nodes: [], lines: [] };
+      return data && data.state ? data.state : { version: 1, nodes: [], lines: [] };
     }
 
     async function saveSharedSpaceState(slug, state) {
@@ -3138,9 +3176,6 @@
             modifiedAt: null
           }
         },
-        camera: state.camera && typeof state.camera === "object"
-          ? cloneJson(state.camera, { x: 0, y: 0, scale: 1 })
-          : { x: 0, y: 0, scale: 1 },
         nodes: nextNodes,
         lines: nextLines
       };
@@ -3708,7 +3743,7 @@
       }
       panSession = null;
       viewport.classList.remove("panning");
-      if (didMove) scheduleAutosave();
+      if (didMove) scheduleViewportSave();
       event.preventDefault();
       event.stopPropagation();
     }
@@ -4128,6 +4163,7 @@
       camera.x = clientX - worldPoint.x * camera.scale;
       camera.y = clientY - worldPoint.y * camera.scale;
       render();
+      scheduleViewportSave();
     }
 
     function selectAllText(node) {
@@ -4154,11 +4190,6 @@
     function serializeState() {
       const state = {
         version: 1,
-        camera: {
-          x: camera.x,
-          y: camera.y,
-          scale: camera.scale
-        },
         nodes: Array.from(world.children).map(serializeNode),
         lines: lineConnections.map(serializeLineConnection)
       };
@@ -4211,9 +4242,7 @@
     }
 
     function getHistorySnapshot() {
-      const state = serializeState();
-      delete state.camera;
-      return JSON.stringify(state);
+      return JSON.stringify(serializeState());
     }
 
     function resetHistoryToCurrentState() {
@@ -4269,7 +4298,6 @@
       try {
         applyingHistoryState = true;
         const state = JSON.parse(snapshot);
-        state.camera = { ...camera };
         loadState(state, { autosave: false });
       } catch (error) {
         console.error("History restore failed:", error);
@@ -4324,13 +4352,87 @@
       }, 120);
     }
 
+    function saveViewportToSession() {
+      try {
+        sessionStorage.setItem(getViewportStorageKey(), JSON.stringify({
+          x: camera.x,
+          y: camera.y,
+          scale: camera.scale
+        }));
+        return true;
+      } catch (error) {
+        console.error("Viewport save failed:", error);
+        return false;
+      }
+    }
+
+    function scheduleViewportSave() {
+      clearTimeout(viewportSaveTimer);
+      viewportSaveTimer = setTimeout(() => {
+        viewportSaveTimer = null;
+        saveViewportToSession();
+      }, 80);
+    }
+
+    function flushViewportSave() {
+      if (viewportSaveTimer !== null) {
+        clearTimeout(viewportSaveTimer);
+        viewportSaveTimer = null;
+      }
+      saveViewportToSession();
+    }
+
+    function loadViewportFromSession() {
+      let raw = "";
+      try {
+        raw = sessionStorage.getItem(getViewportStorageKey()) || "";
+      } catch (error) {
+        console.error("Viewport restore failed:", error);
+        return false;
+      }
+      if (!raw) return false;
+
+      try {
+        const nextCamera = JSON.parse(raw);
+        const x = Number(nextCamera.x);
+        const y = Number(nextCamera.y);
+        const scale = Number(nextCamera.scale);
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(scale) || scale <= 0) {
+          throw new Error("Invalid viewport state.");
+        }
+        camera.x = x;
+        camera.y = y;
+        camera.scale = scale;
+        return true;
+      } catch (error) {
+        console.error("Viewport restore failed:", error);
+        try {
+          sessionStorage.removeItem(getViewportStorageKey());
+        } catch (storageError) {
+          console.error("Viewport cleanup failed:", storageError);
+        }
+        return false;
+      }
+    }
+
+    function initializeSessionViewport() {
+      if (loadViewportFromSession()) {
+        render();
+        return;
+      }
+
+      render();
+      if (!focusPageContentFullScreen()) {
+        saveViewportToSession();
+      }
+    }
+
     function loadState(state, options = {}) {
       if (!state || typeof state !== "object") {
         throw new Error("Invalid state file.");
       }
 
       const { autosave = true, onProgress = null } = options;
-      const nextCamera = state.camera || {};
       const nextNodes = Array.isArray(state.nodes) ? state.nodes : [];
       const nextLines = Array.isArray(state.lines) ? state.lines : [];
       const nextMeta = state.meta && typeof state.meta === "object" ? cloneJson(state.meta, {}) : {};
@@ -4368,12 +4470,6 @@
         spaceMeta.delorean.modifiedAt
       );
       updateDocumentTitle();
-
-      camera.x = Number.isFinite(Number(nextCamera.x)) ? Number(nextCamera.x) : window.innerWidth / 2;
-      camera.y = Number.isFinite(Number(nextCamera.y)) ? Number(nextCamera.y) : window.innerHeight / 2;
-      camera.scale = Number.isFinite(Number(nextCamera.scale)) && Number(nextCamera.scale) > 0
-        ? Number(nextCamera.scale)
-        : 1;
 
       nextNodes.forEach((entry, index) => {
         const x = Number.isFinite(Number(entry.x)) ? Number(entry.x) : 0;
@@ -5187,6 +5283,11 @@
     viewport.addEventListener("pointerdown", (event) => {
       if (event.button !== 0) return;
       if (event.target !== viewport && event.target !== world) return;
+      if (
+        IS_MOBILE_DEVICE &&
+        event.pointerType === "touch" &&
+        (mobileInteractionMode !== "select" || event.isPrimary === false)
+      ) return;
       closeNodeContextMenu();
       cancelCameraAnimation();
       cancelNodeLayoutAnimation();
@@ -5219,8 +5320,8 @@
         camera.x -= event.deltaX;
         camera.y -= event.deltaY;
         render();
+        scheduleViewportSave();
       }
-      scheduleAutosave();
     }, { passive: false });
 
     let gestureStartScale = camera.scale;
@@ -5239,7 +5340,6 @@
       const centerX = event.clientX || window.innerWidth / 2;
       const centerY = event.clientY || window.innerHeight / 2;
       zoomTo(gestureStartScale * event.scale, centerX, centerY);
-      scheduleAutosave();
     });
 
     viewport.addEventListener("dblclick", (event) => {
@@ -5334,7 +5434,24 @@
         return;
       }
 
-      if ((event.key === "Backspace" || event.key === "Delete") && selectedNodes.size > 0) {
+      const isVersionToggle =
+        event.key === "Tab" &&
+        !event.altKey &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.shiftKey &&
+        !slashCommandSession &&
+        !isEditableTarget(event.target);
+      if (isVersionToggle) {
+        event.preventDefault();
+        versionCounter.hidden = !versionCounter.hidden;
+        return;
+      }
+
+      const isSafeDeleteKey =
+        event.key === "Delete" ||
+        (event.key === "Backspace" && event.shiftKey);
+      if (isSafeDeleteKey && selectedNodes.size > 0) {
         if (isEditableTarget(event.target)) return;
         event.preventDefault();
         closeNodeContextMenu();
@@ -5394,6 +5511,8 @@
       closeSlashCommandMenu();
       render();
     });
+
+    window.addEventListener("pagehide", flushViewportSave);
 
     document.addEventListener("selectionchange", () => {
       const editingNode = getActiveEditingNode();
@@ -5486,6 +5605,7 @@
           render();
         }
       } finally {
+        initializeSessionViewport();
         resetHistoryToCurrentState();
         hideLoadingScreen();
       }

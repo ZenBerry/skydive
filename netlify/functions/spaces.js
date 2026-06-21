@@ -46,6 +46,12 @@ function getSlug(event) {
   return slug;
 }
 
+function stripViewportState(state) {
+  const nextState = { ...state };
+  delete nextState.camera;
+  return nextState;
+}
+
 exports.handler = async (event) => {
   const slug = getSlug(event);
   if (!slug) {
@@ -61,6 +67,10 @@ exports.handler = async (event) => {
         { slug },
         { $setOnInsert: { slug, state: null, revision: 0, createdAt: now, updatedAt: now } },
         { upsert: true }
+      );
+      await collection.updateOne(
+        { slug, "state.camera": { $exists: true } },
+        { $unset: { "state.camera": "" } }
       );
 
       const space = await collection.findOne(
@@ -78,10 +88,11 @@ exports.handler = async (event) => {
       }
 
       const now = Date.now();
+      const state = stripViewportState(payload.state);
       await collection.updateOne(
         { slug },
         {
-          $set: { slug, state: payload.state, updatedAt: now },
+          $set: { slug, state, updatedAt: now },
           $inc: { revision: 1 },
           $setOnInsert: { createdAt: now }
         },

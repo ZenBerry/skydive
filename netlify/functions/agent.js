@@ -110,7 +110,6 @@ function getSlug(value) {
 function emptyState() {
   return {
     version: 1,
-    camera: { x: 0, y: 0, scale: 1 },
     nodes: [],
     lines: []
   };
@@ -320,7 +319,6 @@ function normalizeState(rawState) {
     throw new HttpError(400, "State has too many lines.", { maxLines: MAX_LINES });
   }
 
-  const camera = source.camera && typeof source.camera === "object" ? source.camera : {};
   const seenIds = new Set();
   const nodes = rawNodes.map((entry) => normalizeNode(entry, seenIds));
   const nodeIds = new Set(nodes.map((node) => node.id));
@@ -332,11 +330,6 @@ function normalizeState(rawState) {
 
   const normalized = {
     version: Number.isFinite(Number(source.version)) ? Number(source.version) : 1,
-    camera: {
-      x: finiteNumber(camera.x, 0, "camera.x"),
-      y: finiteNumber(camera.y, 0, "camera.y"),
-      scale: positiveNumber(camera.scale, 1, "camera.scale")
-    },
     nodes,
     lines
   };
@@ -632,15 +625,6 @@ function applyOps(currentState, ops) {
       continue;
     }
 
-    if (opName === "set_camera") {
-      state.camera = {
-        x: finiteNumber(op.x, state.camera.x, "camera.x"),
-        y: finiteNumber(op.y, state.camera.y, "camera.y"),
-        scale: positiveNumber(op.scale, state.camera.scale, "camera.scale")
-      };
-      continue;
-    }
-
     throw new HttpError(400, `Unknown op "${opName}".`);
   }
 
@@ -653,6 +637,10 @@ async function ensureSpace(collection, slug) {
     { slug },
     { $setOnInsert: { slug, state: null, revision: 0, createdAt: now, updatedAt: now } },
     { upsert: true }
+  );
+  await collection.updateOne(
+    { slug, "state.camera": { $exists: true } },
+    { $unset: { "state.camera": "" } }
   );
   return collection.findOne(
     { slug },
@@ -682,7 +670,6 @@ function buildManifest(event) {
     },
     stateShape: {
       version: "number",
-      camera: { x: "number", y: "number", scale: "number" },
       nodes: [
         {
           kind: "text",
@@ -729,7 +716,6 @@ function buildManifest(event) {
       "align_nodes",
       "distribute_nodes",
       "link_text",
-      "set_camera",
       "replace_state"
     ],
     commands: {
