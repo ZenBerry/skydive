@@ -178,7 +178,10 @@
     }
 
     .command-node {
-      --widget-color: #ffffff;
+      --widget-color: #f3dfaa;
+      --widget-button-color: #e8c976;
+      --widget-button-hover-color: #edd58d;
+      --widget-border-color: #d6b85e;
       min-width: 0;
       min-height: 0;
       white-space: normal;
@@ -187,11 +190,11 @@
 
     .command-node button {
       font: inherit;
-      background: color-mix(in srgb, var(--widget-color) 84%, #000) !important;
+      background: var(--widget-button-color) !important;
     }
 
     .command-node button:hover:not(:disabled) {
-      background: color-mix(in srgb, var(--widget-color) 76%, #000) !important;
+      background: var(--widget-button-hover-color) !important;
     }
 
     .command-node [data-command-interactive] {
@@ -200,6 +203,7 @@
 
     .command-node > :first-child {
       background: var(--widget-color) !important;
+      border-color: var(--widget-border-color) !important;
     }
 
     #version-counter {
@@ -407,11 +411,11 @@
       background: var(--swatch-color);
       box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.48);
       cursor: pointer;
-      transition: transform 110ms ease, box-shadow 110ms ease;
+      transition: background-color 110ms ease, transform 110ms ease, box-shadow 110ms ease;
     }
 
-    #node-context-menu .widget-color-swatch:hover {
-      background: var(--swatch-color);
+    #node-context-menu button.widget-color-swatch:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--swatch-color) 72%, #fff);
       transform: scale(1.08);
     }
 
@@ -420,19 +424,6 @@
         0 0 0 2px #fff,
         0 0 0 3.5px rgba(74, 68, 62, 0.62),
         inset 0 0 0 0.5px rgba(255, 255, 255, 0.48);
-    }
-
-    #node-context-menu .widget-color-swatch[data-widget-color=""] {
-      border-color: #99938c;
-      background: #fff;
-      box-shadow: inset 0 0 0 2px #fff;
-    }
-
-    #node-context-menu .widget-color-swatch[data-widget-color=""][aria-checked="true"] {
-      box-shadow:
-        0 0 0 2px #fff,
-        0 0 0 3.5px rgba(74, 68, 62, 0.62),
-        inset 0 0 0 2px #fff;
     }
 
     #node-context-menu .widget-color-swatch:focus-visible {
@@ -707,7 +698,7 @@
     <button id="draw-line-btn" type="button">Line</button>
     <button id="link-selection-btn" type="button">Link selection to node ID...</button>
     <div id="widget-color-picker" role="radiogroup" aria-label="Widget color" hidden>
-      <button class="widget-color-swatch" type="button" role="radio" aria-label="Default color" data-widget-color="" style="--swatch-color: #ffffff"></button>
+      <button class="widget-color-swatch" type="button" role="radio" aria-label="White" data-widget-color="#ffffff" style="--swatch-color: #ffffff"></button>
       <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft peach" data-widget-color="#f4cbb9" style="--swatch-color: #f4cbb9"></button>
       <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft yellow" data-widget-color="#f3dfaa" style="--swatch-color: #f3dfaa"></button>
       <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft green" data-widget-color="#c9e1ce" style="--swatch-color: #c9e1ce"></button>
@@ -806,12 +797,13 @@
     const ZOOM_AFFORDANCE_FULL_FONT_SCREEN_PX = 14;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 53; // Increment once for each commit.
+    const APP_VERSION = 54; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
     const WIDGET_COLOR_STATE_KEY = "_widgetColor";
-    const WIDGET_COLORS = new Set(["#f4cbb9", "#f3dfaa", "#c9e1ce", "#c8def1", "#ddcfed", "#dfddd9"]);
+    const DEFAULT_WIDGET_COLOR = "#f3dfaa";
+    const WIDGET_COLORS = new Set(["#ffffff", "#f4cbb9", "#f3dfaa", "#c9e1ce", "#c8def1", "#ddcfed", "#dfddd9"]);
     const DELOREAN_COMMAND_ID = "delorean";
     const DELOREAN_SPACE_PREFIX = "delorean";
     const SVG_NS = "http://www.w3.org/2000/svg";
@@ -879,6 +871,7 @@
     let suppressMobileClickUntil = 0;
     let mobileSuppressedClickTarget = null;
     const mobileLongPressPointerIds = new Set();
+    const mobileTouchPoints = new Map();
     const nodeHighlightTimeouts = new WeakMap();
     const selectedNodes = new Set();
     const nodeResizeObserver = "ResizeObserver" in window
@@ -3049,27 +3042,50 @@
       return WIDGET_COLORS.has(color) ? color : "";
     }
 
+    function adjustWidgetColorLightness(color, delta) {
+      const match = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(color);
+      if (!match) return color;
+
+      const red = parseInt(match[1], 16) / 255;
+      const green = parseInt(match[2], 16) / 255;
+      const blue = parseInt(match[3], 16) / 255;
+      const max = Math.max(red, green, blue);
+      const min = Math.min(red, green, blue);
+      const lightness = (max + min) / 2;
+      const chroma = max - min;
+      let hue = 0;
+      let saturation = 0;
+
+      if (chroma > 0) {
+        saturation = chroma / (1 - Math.abs(2 * lightness - 1));
+        if (max === red) hue = ((green - blue) / chroma) % 6;
+        else if (max === green) hue = (blue - red) / chroma + 2;
+        else hue = (red - green) / chroma + 4;
+        hue = (hue * 60 + 360) % 360;
+      }
+
+      return `hsl(${hue.toFixed(1)} ${Math.round(saturation * 100)}% ${clamp(lightness * 100 + delta, 0, 100).toFixed(1)}%)`;
+    }
+
     function getWidgetColor(node) {
-      if (!isCommandNode(node)) return "";
-      return normalizeWidgetColor(readCommandState(node)[WIDGET_COLOR_STATE_KEY]);
+      if (!isCommandNode(node)) return DEFAULT_WIDGET_COLOR;
+      return normalizeWidgetColor(readCommandState(node)[WIDGET_COLOR_STATE_KEY]) || DEFAULT_WIDGET_COLOR;
     }
 
     function applyWidgetColor(node) {
       if (!isCommandNode(node)) return;
       const color = getWidgetColor(node);
-      if (color) {
-        node.dataset.widgetColor = color;
-        node.style.setProperty("--widget-color", color);
-      } else {
-        delete node.dataset.widgetColor;
-        node.style.removeProperty("--widget-color");
-      }
+      node.dataset.widgetColor = color;
+      node.style.setProperty("--widget-color", color);
+      node.style.setProperty("--widget-button-color", adjustWidgetColorLightness(color, -9));
+      node.style.setProperty("--widget-button-hover-color", adjustWidgetColorLightness(color, -6));
+      node.style.setProperty("--widget-border-color", adjustWidgetColorLightness(color, -16));
     }
 
     function preserveWidgetColor(node, nextState) {
       const state = cloneCommandState(nextState);
       const color = getWidgetColor(node);
-      if (color) state[WIDGET_COLOR_STATE_KEY] = color;
+      if (color !== DEFAULT_WIDGET_COLOR) state[WIDGET_COLOR_STATE_KEY] = color;
       else delete state[WIDGET_COLOR_STATE_KEY];
       return state;
     }
@@ -3085,8 +3101,8 @@
     function setWidgetColor(node, value) {
       if (!isCommandNode(node)) return;
       const state = readCommandState(node);
-      const color = normalizeWidgetColor(value);
-      if (color) state[WIDGET_COLOR_STATE_KEY] = color;
+      const color = normalizeWidgetColor(value) || DEFAULT_WIDGET_COLOR;
+      if (color !== DEFAULT_WIDGET_COLOR) state[WIDGET_COLOR_STATE_KEY] = color;
       else delete state[WIDGET_COLOR_STATE_KEY];
       writeCommandState(node, state);
       applyWidgetColor(node);
@@ -3854,6 +3870,64 @@
       }
     }
 
+    function recordMobileTouchPoint(event) {
+      if (
+        event.pointerType !== "touch" ||
+        !(event.target instanceof Node) ||
+        !viewport.contains(event.target)
+      ) return;
+      mobileTouchPoints.set(event.pointerId, {
+        clientX: event.clientX,
+        clientY: event.clientY
+      });
+    }
+
+    function updateMobileTouchPoint(event) {
+      if (event.pointerType !== "touch" || !mobileTouchPoints.has(event.pointerId)) return;
+      mobileTouchPoints.set(event.pointerId, {
+        clientX: event.clientX,
+        clientY: event.clientY
+      });
+    }
+
+    function removeMobileTouchPoint(event) {
+      if (event.pointerType !== "touch") return;
+      mobileTouchPoints.delete(event.pointerId);
+    }
+
+    function cancelMobileSessionsForPinch() {
+      const pointerIds = new Set([
+        panSession ? panSession.pointerId : null,
+        marqueeSession ? marqueeSession.pointerId : null
+      ]);
+      pointerIds.delete(null);
+      for (const pointerId of pointerIds) {
+        cancelMobileCanvasSessions(pointerId);
+      }
+    }
+
+    function getGestureZoomCenter(event) {
+      if (IS_MOBILE_DEVICE) {
+        const touches = event.touches && event.touches.length >= 2
+          ? Array.from(event.touches).slice(0, 2).map((touch) => ({
+              clientX: touch.clientX,
+              clientY: touch.clientY
+            }))
+          : Array.from(mobileTouchPoints.values()).slice(0, 2);
+        if (touches.length === 2) {
+          return {
+            clientX: (touches[0].clientX + touches[1].clientX) / 2,
+            clientY: (touches[0].clientY + touches[1].clientY) / 2
+          };
+        }
+      }
+
+      return {
+        clientX: event.clientX || window.innerWidth / 2,
+        clientY: event.clientY || window.innerHeight / 2
+      };
+    }
+
     function cancelMobileTargetPointer(session) {
       if (!(session.target instanceof Element)) return;
       const node = session.target.closest(".text-node");
@@ -4026,6 +4100,10 @@
       mobileUndoBtn.addEventListener("click", () => undoHistory());
       mobileRedoBtn.addEventListener("click", () => redoHistory());
 
+      window.addEventListener("pointerdown", recordMobileTouchPoint, { capture: true });
+      window.addEventListener("pointermove", updateMobileTouchPoint, { capture: true });
+      window.addEventListener("pointerup", removeMobileTouchPoint, { capture: true });
+      window.addEventListener("pointercancel", removeMobileTouchPoint, { capture: true });
       window.addEventListener("pointerdown", beginMobilePointerTracking, { capture: true });
       window.addEventListener("pointermove", updateMobilePointerTracking, { capture: true });
       window.addEventListener("pointerup", (event) => endMobilePointerTracking(event), { capture: true });
@@ -5332,14 +5410,14 @@
       closeCanvasContextMenu();
       cancelCameraAnimation();
       cancelNodeLayoutAnimation();
+      if (IS_MOBILE_DEVICE) cancelMobileSessionsForPinch();
       gestureStartScale = camera.scale;
     });
 
     viewport.addEventListener("gesturechange", (event) => {
       event.preventDefault();
-      const centerX = event.clientX || window.innerWidth / 2;
-      const centerY = event.clientY || window.innerHeight / 2;
-      zoomTo(gestureStartScale * event.scale, centerX, centerY);
+      const center = getGestureZoomCenter(event);
+      zoomTo(gestureStartScale * event.scale, center.clientX, center.clientY);
     });
 
     viewport.addEventListener("dblclick", (event) => {
