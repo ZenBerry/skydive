@@ -196,7 +196,7 @@
       }
       const gain = peak > 0.02 ? Math.min(4, 0.82 / peak) : 1;
       context.beginPath();
-      context.strokeStyle = "#df654e";
+      context.strokeStyle = "#332a23";
       context.lineWidth = 1.4;
       context.lineJoin = "round";
       context.lineCap = "round";
@@ -255,9 +255,9 @@
     try {
       wavesurfer = window.WaveSurfer.create({
         container: elements.wave,
-        waveColor: "#9b8d7d",
+        waveColor: "#332a23",
         progressColor: "#332a23",
-        cursorColor: "#e36e54",
+        cursorColor: "#332a23",
         cursorWidth: 1,
         height: "auto",
         normalize: true,
@@ -412,7 +412,6 @@
           border: 0.04em solid #dfd3c3;
           border-radius: 0.68em;
           background: linear-gradient(145deg, #fffaf1, #f5eadc);
-          box-shadow: 0 0.3em 1.1em rgba(70, 53, 38, 0.12);
           color: #332a23;
           user-select: none;
         }

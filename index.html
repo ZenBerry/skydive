@@ -73,7 +73,7 @@
     }
 
     .connection-line-shadow {
-      fill: rgba(255, 255, 255, 0.74);
+      display: none;
     }
 
     .connection-line-stroke {
@@ -81,7 +81,7 @@
     }
 
     .connection-line-draft .connection-line-shadow {
-      fill: rgba(255, 255, 255, 0.82);
+      display: none;
     }
 
     .connection-line-draft .connection-line-stroke {
@@ -178,10 +178,10 @@
     }
 
     .command-node {
-      --widget-color: #f3dfaa;
-      --widget-button-color: #e8c976;
-      --widget-button-hover-color: #edd58d;
-      --widget-border-color: #d6b85e;
+      --widget-color: #ffffff;
+      --widget-button-color: #e8e8e8;
+      --widget-button-hover-color: #f0f0f0;
+      --widget-border-color: #d6d6d6;
       min-width: 0;
       min-height: 0;
       white-space: normal;
@@ -204,6 +204,7 @@
     .command-node > :first-child {
       background: var(--widget-color) !important;
       border-color: var(--widget-border-color) !important;
+      box-shadow: none !important;
     }
 
     #version-counter {
@@ -243,8 +244,8 @@
       padding: 0.45em 0.52em 0.42em;
       border: 0.04em solid #e4d7c5;
       border-radius: 0.55em;
-      background: #fff8ed;
-      box-shadow: 0 0.22em 0.8em rgba(82, 59, 36, 0.07);
+      background: #fff;
+      box-shadow: none;
       color: #3f3328;
       cursor: grab;
       vertical-align: middle;
@@ -700,7 +701,7 @@
     <div id="widget-color-picker" role="radiogroup" aria-label="Widget color" hidden>
       <button class="widget-color-swatch" type="button" role="radio" aria-label="White" data-widget-color="#ffffff" style="--swatch-color: #ffffff"></button>
       <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft peach" data-widget-color="#f4cbb9" style="--swatch-color: #f4cbb9"></button>
-      <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft yellow" data-widget-color="#f3dfaa" style="--swatch-color: #f3dfaa"></button>
+      <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft beige" data-widget-color="#fff8ed" style="--swatch-color: #fff8ed"></button>
       <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft green" data-widget-color="#c9e1ce" style="--swatch-color: #c9e1ce"></button>
       <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft blue" data-widget-color="#c8def1" style="--swatch-color: #c8def1"></button>
       <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft purple" data-widget-color="#ddcfed" style="--swatch-color: #ddcfed"></button>
@@ -797,13 +798,13 @@
     const ZOOM_AFFORDANCE_FULL_FONT_SCREEN_PX = 14;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 54; // Increment once for each commit.
+    const APP_VERSION = 55; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
     const WIDGET_COLOR_STATE_KEY = "_widgetColor";
-    const DEFAULT_WIDGET_COLOR = "#f3dfaa";
-    const WIDGET_COLORS = new Set(["#ffffff", "#f4cbb9", "#f3dfaa", "#c9e1ce", "#c8def1", "#ddcfed", "#dfddd9"]);
+    const DEFAULT_WIDGET_COLOR = "#ffffff";
+    const WIDGET_COLORS = new Set(["#ffffff", "#f4cbb9", "#fff8ed", "#c9e1ce", "#c8def1", "#ddcfed", "#dfddd9"]);
     const DELOREAN_COMMAND_ID = "delorean";
     const DELOREAN_SPACE_PREFIX = "delorean";
     const SVG_NS = "http://www.w3.org/2000/svg";

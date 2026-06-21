@@ -135,7 +135,6 @@
           border: 0.04em solid #ccd7dc;
           border-radius: 0.55em;
           background: #f7fbfb;
-          box-shadow: 0 0.25em 0.9em rgba(34, 64, 73, 0.08);
           color: #233238;
         }
 

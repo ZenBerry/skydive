@@ -190,7 +190,6 @@
           border: 0.04em solid #e4d7c5;
           border-radius: 0.55em;
           background: #fff8ed;
-          box-shadow: 0 0.25em 0.9em rgba(82, 59, 36, 0.08);
           color: #3f3328;
         }
 
