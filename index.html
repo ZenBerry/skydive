@@ -544,6 +544,75 @@
     .fit-marker.target {
       background: #facc15;
     }
+
+    #mobile-toolbar {
+      display: none;
+    }
+
+    body.mobile-device #viewport {
+      -webkit-touch-callout: none;
+    }
+
+    body.mobile-device #mobile-toolbar {
+      position: fixed;
+      left: 50%;
+      bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+      z-index: 900;
+      display: flex;
+      gap: 6px;
+      padding: 6px;
+      border: 1px solid rgba(17, 24, 39, 0.12);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.94);
+      box-shadow: 0 5px 20px rgba(15, 23, 42, 0.14);
+      transform: translateX(-50%);
+      -webkit-backdrop-filter: blur(10px);
+      backdrop-filter: blur(10px);
+    }
+
+    body.mobile-device #mobile-toolbar[hidden],
+    body.mobile-device #mobile-redo-btn[hidden] {
+      display: none;
+    }
+
+    .mobile-tool-btn {
+      display: grid;
+      width: 38px;
+      height: 38px;
+      box-sizing: border-box;
+      place-items: center;
+      padding: 7px;
+      border: 1px solid rgba(17, 24, 39, 0.15);
+      border-radius: 6px;
+      background: #fff;
+      color: #111827;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .mobile-tool-btn[aria-pressed="true"] {
+      border-color: rgba(37, 99, 235, 0.62);
+      background: #eaf0ff;
+      box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.12);
+    }
+
+    .mobile-tool-btn:disabled {
+      opacity: 0.32;
+    }
+
+    .mobile-tool-btn img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      pointer-events: none;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+
+    #mobile-redo-btn img {
+      transform: scaleX(-1);
+    }
   </style>
 </head>
 <body>
@@ -555,6 +624,20 @@
     <div id="group-selection-box" hidden>
       <div id="group-selection-handle"></div>
     </div>
+  </div>
+  <div id="mobile-toolbar" role="toolbar" aria-label="Canvas tools" hidden>
+    <button id="mobile-pan-btn" class="mobile-tool-btn" type="button" aria-label="Pan canvas" aria-pressed="true" title="Pan canvas">
+      <img src="/assets/mobile/palm.png" alt="" draggable="false">
+    </button>
+    <button id="mobile-select-btn" class="mobile-tool-btn" type="button" aria-label="Multiselect" aria-pressed="false" title="Multiselect">
+      <img src="/assets/mobile/cursor.png" alt="" draggable="false">
+    </button>
+    <button id="mobile-undo-btn" class="mobile-tool-btn" type="button" aria-label="Undo" title="Undo" disabled>
+      <img src="/assets/mobile/undo.png" alt="" draggable="false">
+    </button>
+    <button id="mobile-redo-btn" class="mobile-tool-btn" type="button" aria-label="Redo" title="Redo" hidden>
+      <img src="/assets/mobile/undo.png" alt="" draggable="false">
+    </button>
   </div>
   <div id="fit-guide-left" class="fit-marker guide" aria-hidden="true" hidden></div>
   <div id="fit-guide-right" class="fit-marker guide" aria-hidden="true" hidden></div>
@@ -621,6 +704,11 @@
     const fitGuideRight = document.getElementById("fit-guide-right");
     const fitTargetLeft = document.getElementById("fit-target-left");
     const fitTargetRight = document.getElementById("fit-target-right");
+    const mobileToolbar = document.getElementById("mobile-toolbar");
+    const mobilePanBtn = document.getElementById("mobile-pan-btn");
+    const mobileSelectBtn = document.getElementById("mobile-select-btn");
+    const mobileUndoBtn = document.getElementById("mobile-undo-btn");
+    const mobileRedoBtn = document.getElementById("mobile-redo-btn");
 
     const BASE_TEXT_PX = 28;
     const ZOOM_SENSITIVITY = 0.012;
@@ -667,11 +755,16 @@
     const SHARED_POLL_MS = 2000;
     const HISTORY_LIMIT = 100;
     const HISTORY_COMMIT_DELAY_MS = 120;
+    const MOBILE_LONG_PRESS_MS = 550;
+    const MOBILE_GESTURE_MOVE_TOLERANCE_PX = 10;
+    const MOBILE_DOUBLE_TAP_MS = 350;
+    const MOBILE_DOUBLE_TAP_DISTANCE_PX = 28;
     const ALIGN_ANIMATION_DURATION_MS = 620;
     const FILE_TYPES = [{
       description: "Mind Map JSON",
       accept: { "application/json": [".mind.json", ".json"] }
     }];
+    const IS_MOBILE_DEVICE = detectMobileDevice();
 
     let fileHandle = null;
     let saveTimer = null;
@@ -711,6 +804,13 @@
     let lineConnections = [];
     let spaceMeta = {};
     let deloreanModified = false;
+    let mobileInteractionMode = "pan";
+    let mobilePointerSession = null;
+    let lastMobileTap = null;
+    let suppressMobileNativeDblClickUntil = 0;
+    let suppressMobileClickUntil = 0;
+    let mobileSuppressedClickTarget = null;
+    const mobileLongPressPointerIds = new Set();
     const nodeHighlightTimeouts = new WeakMap();
     const selectedNodes = new Set();
     const nodeResizeObserver = "ResizeObserver" in window
@@ -722,6 +822,50 @@
       y: window.innerHeight / 2,
       scale: 1
     };
+
+    function detectMobileDevice() {
+      const userAgent = navigator.userAgent || "";
+      const reportsMobile = Boolean(
+        navigator.userAgentData && navigator.userAgentData.mobile
+      );
+      const hasMobileUserAgent = /Android|iPhone|iPad|iPod|IEMobile|Opera Mini|Mobile/i.test(userAgent);
+      const isIPadDesktopMode =
+        navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
+      const isTouchOnlySmallScreen =
+        navigator.maxTouchPoints > 0 &&
+        window.matchMedia("(pointer: coarse)").matches &&
+        window.matchMedia("(hover: none)").matches &&
+        Math.min(window.screen.width, window.screen.height) <= 1024;
+
+      return reportsMobile || hasMobileUserAgent || isIPadDesktopMode || isTouchOnlySmallScreen;
+    }
+
+    function updateMobileInteractionControls() {
+      if (!IS_MOBILE_DEVICE) return;
+      const isPanMode = mobileInteractionMode === "pan";
+      mobilePanBtn.setAttribute("aria-pressed", String(isPanMode));
+      mobileSelectBtn.setAttribute("aria-pressed", String(!isPanMode));
+      viewport.dataset.mobileInteractionMode = mobileInteractionMode;
+    }
+
+    function setMobileInteractionMode(mode) {
+      if (!IS_MOBILE_DEVICE || (mode !== "pan" && mode !== "select")) return;
+      mobileInteractionMode = mode;
+      updateMobileInteractionControls();
+    }
+
+    function updateMobileHistoryControls() {
+      if (!IS_MOBILE_DEVICE) return;
+      mobileUndoBtn.disabled = undoStack.length <= 1 && historyTimer === null;
+      mobileRedoBtn.hidden = redoStack.length === 0 || historyTimer !== null;
+      mobileRedoBtn.disabled = mobileRedoBtn.hidden;
+    }
+
+    function clearPendingHistoryCommit() {
+      if (historyTimer === null) return;
+      clearTimeout(historyTimer);
+      historyTimer = null;
+    }
 
     function decodePathPart(part) {
       try {
@@ -3385,7 +3529,16 @@
     }
 
     function beginCanvasPan(event) {
-      if (event.button !== 0 || !event.shiftKey || isCanvasPanExcludedTarget(event.target)) return;
+      const isMobileTouchPan =
+        IS_MOBILE_DEVICE &&
+        mobileInteractionMode === "pan" &&
+        event.pointerType === "touch" &&
+        event.isPrimary !== false;
+      if (
+        event.button !== 0 ||
+        (!event.shiftKey && !isMobileTouchPan) ||
+        isCanvasPanExcludedTarget(event.target)
+      ) return;
 
       closeNodeContextMenu();
       closeLineContextMenu();
@@ -3431,6 +3584,291 @@
       if (didMove) scheduleAutosave();
       event.preventDefault();
       event.stopPropagation();
+    }
+
+    function getMobileActivationTarget(target) {
+      if (!(target instanceof Element)) return null;
+      if (
+        target.closest(
+          "#mobile-toolbar, #node-context-menu, #line-context-menu, #link-node-dialog, #slash-command-menu, button, input, textarea, select, [data-command-interactive]"
+        )
+      ) return null;
+
+      const node = target.closest(".text-node");
+      if (node && world.contains(node) && !isCommandNode(node) && !node.classList.contains("editing")) {
+        return { kind: "node", element: node };
+      }
+
+      if (target === viewport || target === world) {
+        return { kind: "canvas", element: viewport };
+      }
+
+      return null;
+    }
+
+    function isSameMobileActivationTarget(first, second) {
+      return Boolean(
+        first &&
+        second &&
+        first.kind === second.kind &&
+        first.element === second.element
+      );
+    }
+
+    function performMobileDoubleTap(activationTarget, clientX, clientY) {
+      if (!IS_MOBILE_DEVICE || !activationTarget) return;
+
+      if (activationTarget.kind === "node") {
+        const node = activationTarget.element;
+        if (!world.contains(node) || isCommandNode(node) || node.classList.contains("editing")) return;
+        clearSelection();
+        startEditing(node);
+        return;
+      }
+
+      if (activationTarget.kind !== "canvas") return;
+      closeNodeContextMenu();
+      closeLineContextMenu();
+      cancelNodeLayoutAnimation();
+      clearSelection();
+      const point = screenToWorld(clientX, clientY);
+      const node = createTextNode(point.x, point.y);
+      const nodeWorldSize = getNodeWorldSize(node);
+      setNodePosition(
+        node,
+        point.x - nodeWorldSize.width / 2,
+        point.y - nodeWorldSize.height / 2
+      );
+      scheduleAutosave();
+      startEditing(node);
+    }
+
+    function registerMobileTap(target, clientX, clientY) {
+      const activationTarget = getMobileActivationTarget(target);
+      if (!activationTarget) {
+        lastMobileTap = null;
+        return;
+      }
+
+      const now = Date.now();
+      const isDoubleTap =
+        lastMobileTap &&
+        now - lastMobileTap.time <= MOBILE_DOUBLE_TAP_MS &&
+        Math.hypot(clientX - lastMobileTap.clientX, clientY - lastMobileTap.clientY) <= MOBILE_DOUBLE_TAP_DISTANCE_PX &&
+        isSameMobileActivationTarget(lastMobileTap.activationTarget, activationTarget);
+
+      if (!isDoubleTap) {
+        lastMobileTap = { activationTarget, clientX, clientY, time: now };
+        return;
+      }
+
+      lastMobileTap = null;
+      suppressMobileNativeDblClickUntil = now + 700;
+      queueMicrotask(() => performMobileDoubleTap(activationTarget, clientX, clientY));
+    }
+
+    function cancelMobileCanvasSessions(pointerId, options = {}) {
+      const { restorePanPosition = false } = options;
+      if (panSession && panSession.pointerId === pointerId) {
+        if (restorePanPosition) {
+          camera.x = panSession.startCameraX;
+          camera.y = panSession.startCameraY;
+          render();
+        }
+        if (viewport.hasPointerCapture(pointerId)) {
+          viewport.releasePointerCapture(pointerId);
+        }
+        panSession = null;
+        viewport.classList.remove("panning");
+      }
+
+      if (marqueeSession && marqueeSession.pointerId === pointerId) {
+        if (viewport.hasPointerCapture(pointerId)) {
+          viewport.releasePointerCapture(pointerId);
+        }
+        marqueeSession = null;
+        hideMarqueeRect();
+      }
+    }
+
+    function cancelMobileTargetPointer(session) {
+      if (!(session.target instanceof Element)) return;
+      const node = session.target.closest(".text-node");
+      if (!node || !world.contains(node) || typeof PointerEvent !== "function") return;
+
+      session.target.dispatchEvent(new PointerEvent("pointercancel", {
+        bubbles: true,
+        cancelable: false,
+        pointerId: session.pointerId,
+        pointerType: "touch",
+        clientX: session.clientX,
+        clientY: session.clientY
+      }));
+    }
+
+    function triggerMobileLongPress(session) {
+      if (!session || session.moved || mobilePointerSession !== session) return;
+      session.longPressed = true;
+      lastMobileTap = null;
+      mobileLongPressPointerIds.add(session.pointerId);
+      suppressMobileClickUntil = Date.now() + 3000;
+      mobileSuppressedClickTarget = session.target;
+      cancelMobileCanvasSessions(session.pointerId, { restorePanPosition: true });
+      setSelectedNodes(session.selectedNodes);
+      if (
+        session.node &&
+        world.contains(session.node) &&
+        Number.isFinite(session.nodeX) &&
+        Number.isFinite(session.nodeY)
+      ) {
+        setNodePosition(session.node, session.nodeX, session.nodeY);
+      }
+      cancelMobileTargetPointer(session);
+
+      if (!(session.target instanceof Element) || !document.contains(session.target)) return;
+      session.target.dispatchEvent(new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        button: 2,
+        buttons: 0,
+        clientX: session.clientX,
+        clientY: session.clientY
+      }));
+    }
+
+    function beginMobilePointerTracking(event) {
+      if (
+        event.pointerType !== "touch" ||
+        event.button !== 0 ||
+        event.isPrimary === false ||
+        !(event.target instanceof Node) ||
+        !viewport.contains(event.target)
+      ) return;
+
+      if (mobilePointerSession && mobilePointerSession.longPressTimer !== null) {
+        clearTimeout(mobilePointerSession.longPressTimer);
+      }
+
+      const node = event.target instanceof Element
+        ? event.target.closest(".text-node")
+        : null;
+      const session = {
+        pointerId: event.pointerId,
+        target: event.target,
+        node: node && world.contains(node) ? node : null,
+        nodeX: node && world.contains(node) ? Number(node.dataset.x) : NaN,
+        nodeY: node && world.contains(node) ? Number(node.dataset.y) : NaN,
+        selectedNodes: Array.from(selectedNodes),
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        moved: false,
+        longPressed: false,
+        longPressTimer: null
+      };
+      session.longPressTimer = setTimeout(
+        () => triggerMobileLongPress(session),
+        MOBILE_LONG_PRESS_MS
+      );
+      mobilePointerSession = session;
+    }
+
+    function updateMobilePointerTracking(event) {
+      const session = mobilePointerSession;
+      if (!session || event.pointerId !== session.pointerId) return;
+      session.clientX = event.clientX;
+      session.clientY = event.clientY;
+      if (
+        Math.hypot(
+          session.clientX - session.startClientX,
+          session.clientY - session.startClientY
+        ) > MOBILE_GESTURE_MOVE_TOLERANCE_PX
+      ) {
+        session.moved = true;
+        if (session.longPressTimer !== null) {
+          clearTimeout(session.longPressTimer);
+          session.longPressTimer = null;
+        }
+      }
+    }
+
+    function endMobilePointerTracking(event, cancelled = false) {
+      const session = mobilePointerSession;
+      if (!session || event.pointerId !== session.pointerId) return;
+      if (session.longPressTimer !== null) clearTimeout(session.longPressTimer);
+      session.longPressTimer = null;
+      session.clientX = event.clientX;
+      session.clientY = event.clientY;
+
+      const movedDistance = Math.hypot(
+        session.clientX - session.startClientX,
+        session.clientY - session.startClientY
+      );
+      if (
+        !cancelled &&
+        !session.longPressed &&
+        !session.moved &&
+        movedDistance <= MOBILE_GESTURE_MOVE_TOLERANCE_PX
+      ) {
+        registerMobileTap(session.target, session.clientX, session.clientY);
+      }
+
+      mobilePointerSession = null;
+      if (session.longPressed) {
+        setTimeout(() => mobileLongPressPointerIds.delete(session.pointerId), 0);
+      }
+    }
+
+    function suppressMobileNativeDblClick(event) {
+      if (Date.now() > suppressMobileNativeDblClickUntil) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+
+    function suppressMobileClickAfterLongPress(event) {
+      if (
+        Date.now() > suppressMobileClickUntil ||
+        !mobileSuppressedClickTarget ||
+        !(event.target instanceof Node) ||
+        !viewport.contains(event.target)
+      ) {
+        if (Date.now() > suppressMobileClickUntil) mobileSuppressedClickTarget = null;
+        return;
+      }
+      const suppressedElement = mobileSuppressedClickTarget instanceof Element
+        ? mobileSuppressedClickTarget
+        : null;
+      if (
+        event.target !== mobileSuppressedClickTarget &&
+        !(suppressedElement && suppressedElement.contains(event.target)) &&
+        !(event.target instanceof Element && event.target.contains(mobileSuppressedClickTarget))
+      ) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      mobileSuppressedClickTarget = null;
+      suppressMobileClickUntil = 0;
+    }
+
+    function initializeMobileExperience() {
+      if (!IS_MOBILE_DEVICE) return;
+      document.body.classList.add("mobile-device");
+      mobileToolbar.hidden = false;
+      updateMobileInteractionControls();
+      updateMobileHistoryControls();
+
+      mobilePanBtn.addEventListener("click", () => setMobileInteractionMode("pan"));
+      mobileSelectBtn.addEventListener("click", () => setMobileInteractionMode("select"));
+      mobileUndoBtn.addEventListener("click", () => undoHistory());
+      mobileRedoBtn.addEventListener("click", () => redoHistory());
+
+      window.addEventListener("pointerdown", beginMobilePointerTracking, { capture: true });
+      window.addEventListener("pointermove", updateMobilePointerTracking, { capture: true });
+      window.addEventListener("pointerup", (event) => endMobilePointerTracking(event), { capture: true });
+      window.addEventListener("pointercancel", (event) => endMobilePointerTracking(event, true), { capture: true });
+      window.addEventListener("dblclick", suppressMobileNativeDblClick, { capture: true });
+      window.addEventListener("click", suppressMobileClickAfterLongPress, { capture: true });
     }
 
     function beginGroupTransform(event, mode, captureElement) {
@@ -3653,6 +4091,7 @@
       currentHistorySnapshot = getHistorySnapshot();
       undoStack = [currentHistorySnapshot];
       redoStack = [];
+      updateMobileHistoryControls();
     }
 
     function commitHistorySnapshot(options = {}) {
@@ -3660,7 +4099,10 @@
 
       const { clearRedo = true } = options;
       const snapshot = getHistorySnapshot();
-      if (snapshot === currentHistorySnapshot) return false;
+      if (snapshot === currentHistorySnapshot) {
+        updateMobileHistoryControls();
+        return false;
+      }
 
       undoStack.push(snapshot);
       currentHistorySnapshot = snapshot;
@@ -3668,6 +4110,7 @@
         undoStack.splice(0, undoStack.length - HISTORY_LIMIT);
       }
       if (clearRedo) redoStack = [];
+      updateMobileHistoryControls();
       return true;
     }
 
@@ -3678,6 +4121,7 @@
         historyTimer = null;
         commitHistorySnapshot();
       }, HISTORY_COMMIT_DELAY_MS);
+      updateMobileHistoryControls();
     }
 
     function flushHistoryCommit() {
@@ -3716,6 +4160,8 @@
 
       undoStack.pop();
       redoStack.push(currentSnapshot);
+      if (IS_MOBILE_DEVICE) clearPendingHistoryCommit();
+      updateMobileHistoryControls();
       return true;
     }
 
@@ -3728,6 +4174,8 @@
 
       redoStack.pop();
       undoStack.push(nextSnapshot);
+      if (IS_MOBILE_DEVICE) clearPendingHistoryCommit();
+      updateMobileHistoryControls();
       return true;
     }
 
@@ -4208,11 +4656,14 @@
 
       function endDrag(event) {
         if (event.pointerId !== dragPointerId) return;
+        const wasMobileLongPress = mobileLongPressPointerIds.has(event.pointerId);
         if (node.hasPointerCapture(dragPointerId)) {
           node.releasePointerCapture(dragPointerId);
         }
-        if (event.type === "pointerup" && pendingExternalLinkHref && !dragMoved) {
+        if (event.type === "pointerup" && pendingExternalLinkHref && !dragMoved && !wasMobileLongPress) {
           openExternalHref(pendingExternalLinkHref);
+          suppressExternalLinkVisit = true;
+        } else if (wasMobileLongPress) {
           suppressExternalLinkVisit = true;
         } else {
           suppressExternalLinkVisit = Boolean(pendingExternalLinkHref && dragMoved);
@@ -4872,6 +5323,7 @@
       }
     }
 
+    initializeMobileExperience();
     void boot();
   </script>
 </body>
