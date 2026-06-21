@@ -164,6 +164,10 @@
       cursor: pointer;
     }
 
+    .command-node[data-widget-color] > :first-child {
+      background: var(--widget-color) !important;
+    }
+
     .internal-link {
       color: #6b7280;
       text-decoration: underline;
@@ -320,6 +324,62 @@
     #line-context-menu button:disabled {
       color: #999;
       cursor: not-allowed;
+    }
+
+    #widget-color-picker {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-top: 2px;
+      padding: 9px 6px 4px;
+      border-top: 1px solid #ece8e2;
+    }
+
+    #widget-color-picker[hidden] {
+      display: none;
+    }
+
+    #node-context-menu .widget-color-swatch {
+      width: 24px;
+      height: 24px;
+      flex: 0 0 24px;
+      padding: 0;
+      border: 1px solid rgba(78, 70, 62, 0.17);
+      border-radius: 50%;
+      background: var(--swatch-color);
+      box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.48);
+      cursor: pointer;
+      transition: transform 110ms ease, box-shadow 110ms ease;
+    }
+
+    #node-context-menu .widget-color-swatch:hover {
+      background: var(--swatch-color);
+      transform: scale(1.08);
+    }
+
+    #node-context-menu .widget-color-swatch[aria-checked="true"] {
+      box-shadow:
+        0 0 0 2px #fff,
+        0 0 0 3.5px rgba(74, 68, 62, 0.62),
+        inset 0 0 0 0.5px rgba(255, 255, 255, 0.48);
+    }
+
+    #node-context-menu .widget-color-swatch[data-widget-color=""] {
+      border-color: #99938c;
+      background: #fff;
+      box-shadow: inset 0 0 0 2px #fff;
+    }
+
+    #node-context-menu .widget-color-swatch[data-widget-color=""][aria-checked="true"] {
+      box-shadow:
+        0 0 0 2px #fff,
+        0 0 0 3.5px rgba(74, 68, 62, 0.62),
+        inset 0 0 0 2px #fff;
+    }
+
+    #node-context-menu .widget-color-swatch:focus-visible {
+      outline: 2px solid rgba(54, 125, 210, 0.78);
+      outline-offset: 2px;
     }
 
     #link-node-dialog {
@@ -504,6 +564,15 @@
     <button id="copy-node-id-btn" type="button">Copy node ID</button>
     <button id="draw-line-btn" type="button">Line</button>
     <button id="link-selection-btn" type="button">Link selection to node ID...</button>
+    <div id="widget-color-picker" role="radiogroup" aria-label="Widget color" hidden>
+      <button class="widget-color-swatch" type="button" role="radio" aria-label="Default color" data-widget-color="" style="--swatch-color: #ffffff"></button>
+      <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft peach" data-widget-color="#f4cbb9" style="--swatch-color: #f4cbb9"></button>
+      <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft yellow" data-widget-color="#f3dfaa" style="--swatch-color: #f3dfaa"></button>
+      <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft green" data-widget-color="#c9e1ce" style="--swatch-color: #c9e1ce"></button>
+      <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft blue" data-widget-color="#c8def1" style="--swatch-color: #c8def1"></button>
+      <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft purple" data-widget-color="#ddcfed" style="--swatch-color: #ddcfed"></button>
+      <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft gray" data-widget-color="#dfddd9" style="--swatch-color: #dfddd9"></button>
+    </div>
   </div>
   <div id="line-context-menu" hidden>
     <button id="delete-line-btn" type="button">Delete line</button>
@@ -539,6 +608,7 @@
     const copyNodeIdBtn = document.getElementById("copy-node-id-btn");
     const drawLineBtn = document.getElementById("draw-line-btn");
     const linkSelectionBtn = document.getElementById("link-selection-btn");
+    const widgetColorPicker = document.getElementById("widget-color-picker");
     const lineContextMenu = document.getElementById("line-context-menu");
     const deleteLineBtn = document.getElementById("delete-line-btn");
     const linkNodeDialog = document.getElementById("link-node-dialog");
@@ -585,6 +655,8 @@
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
+    const WIDGET_COLOR_STATE_KEY = "_widgetColor";
+    const WIDGET_COLORS = new Set(["#f4cbb9", "#f3dfaa", "#c9e1ce", "#c8def1", "#ddcfed", "#dfddd9"]);
     const DELOREAN_COMMAND_ID = "delorean";
     const DELOREAN_SPACE_PREFIX = "delorean";
     const SVG_NS = "http://www.w3.org/2000/svg";
@@ -1057,6 +1129,7 @@
     function closeNodeContextMenu() {
       contextMenuNode = null;
       contextMenuSelectionRange = null;
+      widgetColorPicker.hidden = true;
       nodeContextMenu.hidden = true;
     }
 
@@ -1138,6 +1211,8 @@
       contextMenuNode = node;
       contextMenuSelectionRange = isCommandNode(node) ? null : getSelectionRangeWithinNode(node);
       linkSelectionBtn.disabled = !contextMenuSelectionRange;
+      widgetColorPicker.hidden = !isCommandNode(node);
+      updateWidgetColorPicker(node);
       nodeContextMenu.hidden = false;
 
       const menuRect = nodeContextMenu.getBoundingClientRect();
@@ -2661,6 +2736,55 @@
       node.dataset.commandState = JSON.stringify(cloneCommandState(state));
     }
 
+    function normalizeWidgetColor(value) {
+      const color = typeof value === "string" ? value.trim().toLowerCase() : "";
+      return WIDGET_COLORS.has(color) ? color : "";
+    }
+
+    function getWidgetColor(node) {
+      if (!isCommandNode(node)) return "";
+      return normalizeWidgetColor(readCommandState(node)[WIDGET_COLOR_STATE_KEY]);
+    }
+
+    function applyWidgetColor(node) {
+      if (!isCommandNode(node)) return;
+      const color = getWidgetColor(node);
+      if (color) {
+        node.dataset.widgetColor = color;
+        node.style.setProperty("--widget-color", color);
+      } else {
+        delete node.dataset.widgetColor;
+        node.style.removeProperty("--widget-color");
+      }
+    }
+
+    function preserveWidgetColor(node, nextState) {
+      const state = cloneCommandState(nextState);
+      const color = getWidgetColor(node);
+      if (color) state[WIDGET_COLOR_STATE_KEY] = color;
+      else delete state[WIDGET_COLOR_STATE_KEY];
+      return state;
+    }
+
+    function updateWidgetColorPicker(node) {
+      const selectedColor = getWidgetColor(node);
+      for (const swatch of widgetColorPicker.querySelectorAll(".widget-color-swatch")) {
+        const swatchColor = normalizeWidgetColor(swatch.dataset.widgetColor || "");
+        swatch.setAttribute("aria-checked", swatchColor === selectedColor ? "true" : "false");
+      }
+    }
+
+    function setWidgetColor(node, value) {
+      if (!isCommandNode(node)) return;
+      const state = readCommandState(node);
+      const color = normalizeWidgetColor(value);
+      if (color) state[WIDGET_COLOR_STATE_KEY] = color;
+      else delete state[WIDGET_COLOR_STATE_KEY];
+      writeCommandState(node, state);
+      applyWidgetColor(node);
+      scheduleAutosave();
+    }
+
     function destroyCommandNodeContent(node) {
       if (!isCommandNode(node)) return;
       const command = getCommand(node.dataset.commandId || "");
@@ -2805,21 +2929,23 @@
         missing.style.background = "#fffaf3";
         missing.style.color = "#7b6a58";
         node.appendChild(missing);
+        applyWidgetColor(node);
         return;
       }
 
       const state = readCommandState(node);
       command.render(node, state, (nextState) => {
-        writeCommandState(node, nextState);
+        writeCommandState(node, preserveWidgetColor(node, nextState));
         renderCommandNodeContent(node);
         refreshSelectionBounds();
         scheduleAutosave();
       }, getCommandRenderContext(node));
+      applyWidgetColor(node);
     }
 
     function updateCommandNodeState(node, nextState, options = {}) {
       if (!isCommandNode(node) || !world.contains(node)) return;
-      writeCommandState(node, nextState);
+      writeCommandState(node, preserveWidgetColor(node, nextState));
       renderCommandNodeContent(node);
       refreshSelectionBounds();
       if (options.autosave !== false) scheduleAutosave();
@@ -4286,6 +4412,16 @@
         console.error("Copy failed:", error);
         alert("Could not copy node ID.");
       }
+    });
+
+    widgetColorPicker.addEventListener("click", (event) => {
+      if (!(event.target instanceof Element)) return;
+      const swatch = event.target.closest(".widget-color-swatch");
+      if (!swatch || !widgetColorPicker.contains(swatch)) return;
+      const node = contextMenuNode;
+      if (!node) return;
+      setWidgetColor(node, swatch.dataset.widgetColor || "");
+      closeNodeContextMenu();
     });
 
     deleteLineBtn.addEventListener("click", () => {
