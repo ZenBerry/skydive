@@ -769,6 +769,9 @@
 
     const BASE_TEXT_PX = 28;
     const ZOOM_SENSITIVITY = 0.012;
+    const PHYSICAL_WHEEL_MIN_PIXEL_DELTA = 40;
+    const PHYSICAL_WHEEL_MIN_ZOOM_LOG_DELTA = 0.18;
+    const PHYSICAL_WHEEL_ZOOM_DURATION_MS = 140;
     const NAVIGATION_VIEWPORT_FILL = 0.98;
     const MIN_NAVIGATION_SCALE = 0.08;
     const MARQUEE_DRAG_THRESHOLD_PX = 3;
@@ -798,7 +801,7 @@
     const ZOOM_AFFORDANCE_FULL_FONT_SCREEN_PX = 14;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 56; // Increment once for each commit.
+    const APP_VERSION = 57; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -850,6 +853,9 @@
     let lineDraft = null;
     let marqueeSession = null;
     let panSession = null;
+    let physicalWheelZoomAnimation = null;
+    let physicalWheelZoomAnimationFrame = null;
+    let hasPhysicalWheelInput = false;
     let groupTransform = null;
     let selectionBoundsWorld = null;
     let navigationFitTargetNode = null;
@@ -902,6 +908,28 @@
         Math.min(window.screen.width, window.screen.height) <= 1024;
 
       return reportsMobile || hasMobileUserAgent || isIPadDesktopMode || isTouchOnlySmallScreen;
+    }
+
+    function detectPhysicalWheelStep(event) {
+      if (IS_MOBILE_DEVICE || !event.isTrusted) return false;
+
+      // Device type is not exposed, so only discrete wheel signatures qualify.
+      const deltaY = Math.abs(event.deltaY);
+      const legacyDelta = Math.abs(Number(event.wheelDeltaY ?? event.wheelDelta));
+      const hasLegacyWheelStep =
+        Number.isFinite(legacyDelta) &&
+        legacyDelta >= 120 &&
+        Math.abs(legacyDelta % 120) < 0.001;
+      const hasDiscreteDeltaMode = event.deltaMode === 1 || event.deltaMode === 2;
+      const hasSuddenPixelStep =
+        event.deltaMode === 0 &&
+        deltaY >= PHYSICAL_WHEEL_MIN_PIXEL_DELTA &&
+        Math.abs(event.deltaX) < 1 &&
+        hasLegacyWheelStep;
+
+      const detected = hasDiscreteDeltaMode || hasSuddenPixelStep;
+      if (detected) hasPhysicalWheelInput = true;
+      return detected;
     }
 
     function updateMobileInteractionControls() {
@@ -1468,11 +1496,13 @@
       canvasContextMenu.style.top = `${Math.max(8, clampedY)}px`;
     }
 
-    function cancelCameraAnimation() {
+    function cancelCameraAnimation(options = {}) {
+      const { preservePhysicalWheelZoom = false } = options;
       if (cameraAnimationFrame !== null) {
         cancelAnimationFrame(cameraAnimationFrame);
         cameraAnimationFrame = null;
       }
+      if (!preservePhysicalWheelZoom) cancelPhysicalWheelZoomAnimation();
     }
 
     function cancelNodeLayoutAnimation() {
@@ -3712,11 +3742,18 @@
         mobileInteractionMode === "pan" &&
         event.pointerType === "touch" &&
         event.isPrimary !== false;
+      const isPhysicalMiddleButtonPan =
+        !IS_MOBILE_DEVICE &&
+        event.isTrusted &&
+        event.pointerType === "mouse" &&
+        event.button === 1;
+      const isShiftPan = event.button === 0 && event.shiftKey;
       if (
-        event.button !== 0 ||
-        (!event.shiftKey && !isMobileTouchPan) ||
+        (!isShiftPan && !isMobileTouchPan && !isPhysicalMiddleButtonPan) ||
         isCanvasPanExcludedTarget(event.target)
       ) return;
+
+      if (isPhysicalMiddleButtonPan) hasPhysicalWheelInput = true;
 
       closeNodeContextMenu();
       closeLineContextMenu();
@@ -4243,6 +4280,65 @@
       camera.y = clientY - worldPoint.y * camera.scale;
       render();
       scheduleViewportSave();
+    }
+
+    function cancelPhysicalWheelZoomAnimation() {
+      if (physicalWheelZoomAnimationFrame !== null) {
+        cancelAnimationFrame(physicalWheelZoomAnimationFrame);
+      }
+      physicalWheelZoomAnimationFrame = null;
+      physicalWheelZoomAnimation = null;
+    }
+
+    function runPhysicalWheelZoomAnimation(now) {
+      if (!physicalWheelZoomAnimation) {
+        physicalWheelZoomAnimationFrame = null;
+        return;
+      }
+
+      const animation = physicalWheelZoomAnimation;
+      const progress = clamp(
+        (now - animation.startTime) / PHYSICAL_WHEEL_ZOOM_DURATION_MS,
+        0,
+        1
+      );
+      const eased = 1 - Math.pow(1 - progress, 3);
+      camera.x = animation.startX + (animation.targetX - animation.startX) * eased;
+      camera.y = animation.startY + (animation.targetY - animation.startY) * eased;
+      camera.scale = animation.startScale + (animation.targetScale - animation.startScale) * eased;
+      render();
+
+      if (progress < 1) {
+        physicalWheelZoomAnimationFrame = requestAnimationFrame(runPhysicalWheelZoomAnimation);
+        return;
+      }
+
+      physicalWheelZoomAnimation = null;
+      physicalWheelZoomAnimationFrame = null;
+      scheduleViewportSave();
+    }
+
+    function smoothPhysicalWheelZoom(factor, clientX, clientY) {
+      const accumulatedScale = physicalWheelZoomAnimation
+        ? physicalWheelZoomAnimation.targetScale
+        : camera.scale;
+      const targetScale = accumulatedScale * factor;
+      if (!Number.isFinite(targetScale) || targetScale <= 0) return;
+
+      const worldPoint = screenToWorld(clientX, clientY);
+      physicalWheelZoomAnimation = {
+        startTime: performance.now(),
+        startX: camera.x,
+        startY: camera.y,
+        startScale: camera.scale,
+        targetX: clientX - worldPoint.x * targetScale,
+        targetY: clientY - worldPoint.y * targetScale,
+        targetScale
+      };
+
+      if (physicalWheelZoomAnimationFrame === null) {
+        physicalWheelZoomAnimationFrame = requestAnimationFrame(runPhysicalWheelZoomAnimation);
+      }
     }
 
     function selectAllText(node) {
@@ -5387,15 +5483,24 @@
       closeNodeContextMenu();
       closeLineContextMenu();
       closeCanvasContextMenu();
-      cancelCameraAnimation();
+      cancelCameraAnimation({ preservePhysicalWheelZoom: true });
       cancelNodeLayoutAnimation();
 
       const isZoomGesture = event.ctrlKey || event.metaKey;
       if (isZoomGesture) {
-        // Uses native trackpad wheel deltas (including macOS momentum events).
         const factor = Math.exp(-event.deltaY * ZOOM_SENSITIVITY);
-        zoomTo(camera.scale * factor, event.clientX, event.clientY);
+        const isPhysicalWheelStep = detectPhysicalWheelStep(event);
+        const isSuddenZoomJump =
+          Math.abs(event.deltaY * ZOOM_SENSITIVITY) >= PHYSICAL_WHEEL_MIN_ZOOM_LOG_DELTA;
+        if (isPhysicalWheelStep && hasPhysicalWheelInput && isSuddenZoomJump) {
+          smoothPhysicalWheelZoom(factor, event.clientX, event.clientY);
+        } else {
+          // Preserve native trackpad deltas and macOS momentum exactly as before.
+          cancelPhysicalWheelZoomAnimation();
+          zoomTo(camera.scale * factor, event.clientX, event.clientY);
+        }
       } else {
+        cancelPhysicalWheelZoomAnimation();
         camera.x -= event.deltaX;
         camera.y -= event.deltaY;
         render();
