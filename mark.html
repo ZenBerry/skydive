@@ -226,10 +226,18 @@
         const response = await fetch("/api/mark", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: history.slice(-24) })
+          body: JSON.stringify({
+            messages: history.slice(-24),
+            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
+          })
         });
         const data = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(data.error || "Mark could not answer right now.");
+        if (!response.ok) {
+          const message = data.error || (response.status === 504
+            ? "Mark’s request took too long. Please try a narrower question."
+            : "Mark could not answer right now.");
+          throw new Error(message);
+        }
 
         const reply = typeof data.reply === "string" ? data.reply.trim() : "";
         if (!reply) throw new Error("Mark returned an empty response.");
