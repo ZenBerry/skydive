@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
+  <title>Mark — Skydive</title>
+  <style>
+    @import url("https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap");
+
+    @font-face {
+      font-family: "Myriad Pro";
+      src: url("https://res.cloudinary.com/zenberry/raw/upload/v1752586755/fonts/myriadpro_light.woff2") format("woff2");
+      font-display: swap;
+    }
+
+    :root {
+      color-scheme: light;
+      font-family: "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
+      background: #fff;
+      color: #111;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    body {
+      -webkit-font-smoothing: antialiased;
+      text-rendering: geometricPrecision;
+    }
+
+    #chat {
+      width: min(900px, 100%);
+      height: 100dvh;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      padding: env(safe-area-inset-top, 0) max(24px, env(safe-area-inset-right, 0)) env(safe-area-inset-bottom, 0) max(24px, env(safe-area-inset-left, 0));
+    }
+
+    #messages {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 38px;
+      padding: clamp(42px, 10vh, 96px) 0 48px;
+      scrollbar-width: none;
+      scroll-behavior: smooth;
+    }
+
+    #messages::-webkit-scrollbar {
+      display: none;
+    }
+
+    .message {
+      width: min(76%, 620px);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .message.mark {
+      align-self: flex-start;
+      text-align: left;
+    }
+
+    .message.you {
+      align-self: flex-end;
+      text-align: right;
+    }
+
+    .speaker {
+      margin-bottom: 6px;
+      color: #777;
+      font-size: 13px;
+      line-height: 1;
+      letter-spacing: 0.02em;
+    }
+
+    .content {
+      font-size: clamp(18px, 2.15vw, 22px);
+      font-weight: 400;
+      line-height: 1.42;
+    }
+
+    .message.pending .content {
+      color: #999;
+      animation: breathe 1.25s ease-in-out infinite alternate;
+    }
+
+    @keyframes breathe {
+      to { opacity: 0.35; }
+    }
+
+    #composer {
+      flex: none;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: end;
+      gap: 18px;
+      border-top: 1px solid #dedede;
+      padding: 18px 0 max(22px, env(safe-area-inset-bottom, 0));
+      background: #fff;
+    }
+
+    #prompt {
+      width: 100%;
+      min-height: 30px;
+      max-height: 150px;
+      resize: none;
+      overflow-y: auto;
+      padding: 0;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: #111;
+      font: 400 19px/1.45 inherit;
+    }
+
+    #prompt::placeholder {
+      color: #aaa;
+      opacity: 1;
+    }
+
+    #send {
+      padding: 3px 0 2px;
+      border: 0;
+      background: transparent;
+      color: #111;
+      font: 500 15px/1.5 inherit;
+      cursor: pointer;
+    }
+
+    #send:disabled {
+      color: #bbb;
+      cursor: default;
+    }
+
+    @media (max-width: 600px) {
+      #chat {
+        padding-left: max(18px, env(safe-area-inset-left, 0));
+        padding-right: max(18px, env(safe-area-inset-right, 0));
+      }
+
+      #messages {
+        gap: 30px;
+        padding-top: 34px;
+        padding-bottom: 34px;
+      }
+
+      .message {
+        width: 86%;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      #messages { scroll-behavior: auto; }
+      .message.pending .content { animation: none; }
+    }
+  </style>
+</head>
+<body>
+  <main id="chat">
+    <section id="messages" aria-live="polite" aria-label="Conversation with Mark"></section>
+    <form id="composer">
+      <textarea id="prompt" rows="1" maxlength="8000" autocomplete="off" placeholder="Message Mark" aria-label="Message Mark"></textarea>
+      <button id="send" type="submit" disabled>Send</button>
+    </form>
+  </main>
+
+  <script>
+    const messagesElement = document.getElementById("messages");
+    const composer = document.getElementById("composer");
+    const prompt = document.getElementById("prompt");
+    const send = document.getElementById("send");
+    const history = [];
+    let waiting = false;
+
+    function addMessage(role, content, options = {}) {
+      const article = document.createElement("article");
+      article.className = `message ${role === "assistant" ? "mark" : "you"}${options.pending ? " pending" : ""}`;
+
+      const speaker = document.createElement("div");
+      speaker.className = "speaker";
+      speaker.textContent = role === "assistant" ? "Mark" : "You";
+
+      const body = document.createElement("div");
+      body.className = "content";
+      body.textContent = content;
+
+      article.append(speaker, body);
+      messagesElement.append(article);
+      messagesElement.scrollTop = messagesElement.scrollHeight;
+      return article;
+    }
+
+    function resizePrompt() {
+      prompt.style.height = "auto";
+      prompt.style.height = `${Math.min(prompt.scrollHeight, 150)}px`;
+      send.disabled = waiting || !prompt.value.trim();
+    }
+
+    async function submitMessage() {
+      const content = prompt.value.trim();
+      if (!content || waiting) return;
+
+      waiting = true;
+      prompt.value = "";
+      resizePrompt();
+      addMessage("user", content);
+      history.push({ role: "user", content });
+      const pending = addMessage("assistant", "…", { pending: true });
+
+      try {
+        const response = await fetch("/api/mark", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messages: history.slice(-24) })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || "Mark could not answer right now.");
+
+        const reply = typeof data.reply === "string" ? data.reply.trim() : "";
+        if (!reply) throw new Error("Mark returned an empty response.");
+        history.push({ role: "assistant", content: reply });
+        pending.remove();
+        addMessage("assistant", reply);
+      } catch (error) {
+        pending.classList.remove("pending");
+        pending.querySelector(".content").textContent = error.message || "Mark could not answer right now.";
+      } finally {
+        waiting = false;
+        resizePrompt();
+        prompt.focus();
+      }
+    }
+
+    composer.addEventListener("submit", (event) => {
+      event.preventDefault();
+      submitMessage();
+    });
+
+    prompt.addEventListener("input", resizePrompt);
+    prompt.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+        event.preventDefault();
+        submitMessage();
+      }
+    });
+
+    const greeting = "Hi. I’m Mark. Ask me anything—or ask me to work with a Skydive space.";
+    addMessage("assistant", greeting);
+    prompt.focus();
+  </script>
+</body>
+</html>
