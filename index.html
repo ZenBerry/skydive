@@ -769,6 +769,7 @@
 
     const BASE_TEXT_PX = 28;
     const ZOOM_SENSITIVITY = 0.012;
+    const PHYSICAL_WHEEL_ZOOM_SENSITIVITY = ZOOM_SENSITIVITY / 10;
     const PHYSICAL_WHEEL_MIN_PIXEL_DELTA = 40;
     const PHYSICAL_WHEEL_MIN_ZOOM_LOG_DELTA = 0.18;
     const PHYSICAL_WHEEL_ZOOM_DURATION_MS = 140;
@@ -801,13 +802,24 @@
     const ZOOM_AFFORDANCE_FULL_FONT_SCREEN_PX = 14;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 61; // Increment once for each commit.
+    const APP_VERSION = 62; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
     const WIDGET_COLOR_STATE_KEY = "_widgetColor";
     const DEFAULT_WIDGET_COLOR = "#ffffff";
     const WIDGET_COLORS = new Set(["#ffffff", "#f4cbb9", "#fff8ed", "#c9e1ce", "#c8def1", "#ddcfed", "#dfddd9"]);
+    const SANITIZED_INLINE_TAGS = new Map([
+      ["B", "strong"],
+      ["STRONG", "strong"],
+      ["I", "em"],
+      ["EM", "em"],
+      ["U", "u"]
+    ]);
+    const PASTED_BLOCK_TAGS = new Set([
+      "ADDRESS", "ARTICLE", "ASIDE", "BLOCKQUOTE", "DIV", "FOOTER", "H1", "H2", "H3", "H4", "H5", "H6",
+      "HEADER", "LI", "MAIN", "NAV", "OL", "P", "PRE", "SECTION", "TABLE", "TR", "UL"
+    ]);
     const DELOREAN_COMMAND_ID = "delorean";
     const DELOREAN_SPACE_PREFIX = "delorean";
     const SVG_NS = "http://www.w3.org/2000/svg";
@@ -1261,12 +1273,19 @@
       card.appendChild(editor);
     }
 
-    function sanitizeNodeHtml(rawHtml) {
+    function sanitizeNodeHtml(rawHtml, options = {}) {
       if (typeof rawHtml !== "string" || rawHtml.length === 0) return "";
+      const { preserveBlockBreaks = false } = options;
 
       const source = document.createElement("div");
       source.innerHTML = rawHtml;
       const output = document.createElement("div");
+
+      function appendBreak(target) {
+        if (target.lastChild && target.lastChild.nodeName !== "BR") {
+          target.appendChild(document.createElement("br"));
+        }
+      }
 
       function walk(node, target) {
         if (node.nodeType === Node.TEXT_NODE) {
@@ -1320,15 +1339,79 @@
           }
         }
 
+        const sanitizedTag = SANITIZED_INLINE_TAGS.get(tag);
+        if (sanitizedTag) {
+          const formatted = document.createElement(sanitizedTag);
+          for (const child of element.childNodes) {
+            walk(child, formatted);
+          }
+          if (formatted.hasChildNodes()) target.appendChild(formatted);
+          return;
+        }
+
+        const isPastedBlock = preserveBlockBreaks && PASTED_BLOCK_TAGS.has(tag);
+        if (isPastedBlock) appendBreak(target);
+
         for (const child of element.childNodes) {
           walk(child, target);
         }
+        if (isPastedBlock) appendBreak(target);
       }
 
       for (const child of source.childNodes) {
         walk(child, output);
       }
+      if (preserveBlockBreaks) {
+        while (output.lastChild && output.lastChild.nodeName === "BR") {
+          output.lastChild.remove();
+        }
+      }
       return output.innerHTML;
+    }
+
+    function getSanitizedPasteHtml(event) {
+      const clipboard = event.clipboardData;
+      if (!clipboard) return "";
+
+      const plainText = clipboard.getData("text/plain") || "";
+      const clipboardHtml = clipboard.getData("text/html") || "";
+      const sanitizedHtml = clipboardHtml
+        ? sanitizeNodeHtml(clipboardHtml, { preserveBlockBreaks: true })
+        : "";
+      if (sanitizedHtml) return sanitizedHtml;
+
+      const plain = document.createElement("div");
+      plain.textContent = plainText;
+      return plain.innerHTML.replace(/\r\n?|\n/g, "<br>");
+    }
+
+    function insertSanitizedPaste(node, html) {
+      if (!html) return false;
+
+      const selection = window.getSelection();
+      const range = selection && selection.rangeCount > 0
+        ? selection.getRangeAt(0)
+        : document.createRange();
+      if (
+        !node.contains(range.startContainer) ||
+        !node.contains(range.endContainer)
+      ) {
+        range.selectNodeContents(node);
+        range.collapse(false);
+      }
+
+      range.deleteContents();
+      const fragment = range.createContextualFragment(html);
+      const lastInsertedNode = fragment.lastChild;
+      range.insertNode(fragment);
+
+      if (selection && lastInsertedNode) {
+        range.setStartAfter(lastInsertedNode);
+        range.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+      return true;
     }
 
     function normalizeNodeMarkup(node) {
@@ -5121,11 +5204,12 @@
         updateSlashMenuForNode(node);
       });
 
-      node.addEventListener("paste", () => {
-        setTimeout(() => {
-          autoLinkExternalUrls(node, { force: true, moveCaretToEnd: true });
-          updateSlashMenuForNode(node);
-        }, 0);
+      node.addEventListener("paste", (event) => {
+        event.preventDefault();
+        if (!insertSanitizedPaste(node, getSanitizedPasteHtml(event))) return;
+        autoLinkExternalUrls(node, { force: true, moveCaretToEnd: true });
+        scheduleAutosave();
+        updateSlashMenuForNode(node);
       });
 
       node.addEventListener("blur", () => {
@@ -5493,7 +5577,8 @@
         const isSuddenZoomJump =
           Math.abs(event.deltaY * ZOOM_SENSITIVITY) >= PHYSICAL_WHEEL_MIN_ZOOM_LOG_DELTA;
         if (isPhysicalWheelStep && hasPhysicalWheelInput && isSuddenZoomJump) {
-          smoothPhysicalWheelZoom(factor, event.clientX, event.clientY);
+          const physicalWheelFactor = Math.exp(-event.deltaY * PHYSICAL_WHEEL_ZOOM_SENSITIVITY);
+          smoothPhysicalWheelZoom(physicalWheelFactor, event.clientX, event.clientY);
         } else {
           // Preserve native trackpad deltas and macOS momentum exactly as before.
           cancelPhysicalWheelZoomAnimation();
