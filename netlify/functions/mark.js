@@ -420,7 +420,7 @@ async function preloadReadObservation(event, messages, timeZone) {
       result: boundedToolResult(await findLinks(event, { timeZone, includeArchives }, timeZone))
     };
   }
-  if (/\b(list|show|which|what)\b[\s\S]*\bspaces?\b/.test(latest)) {
+  if (/\b(list|show)\b[\s\S]*\bspaces\b/.test(latest)) {
     return {
       name: "skydive_list_spaces",
       arguments: {},
