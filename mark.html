@@ -94,6 +94,15 @@
       line-height: 1.42;
     }
 
+    .content.secret-content {
+      cursor: pointer;
+      -webkit-text-security: disc;
+    }
+
+    .content.secret-content.revealed {
+      -webkit-text-security: none;
+    }
+
     .message.pending .content {
       color: #999;
       animation: breathe 1.25s ease-in-out infinite alternate;
@@ -106,7 +115,7 @@
     #composer {
       flex: none;
       display: grid;
-      grid-template-columns: 1fr auto;
+      grid-template-columns: 1fr auto auto;
       align-items: end;
       gap: 18px;
       border-top: 1px solid #dedede;
@@ -131,6 +140,40 @@
     #prompt::placeholder {
       color: #aaa;
       opacity: 1;
+    }
+
+    #prompt.concealed {
+      -webkit-text-security: disc;
+    }
+
+    #visibility {
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: #777;
+      cursor: pointer;
+    }
+
+    #visibility svg {
+      width: 19px;
+      height: 19px;
+      fill: none;
+      stroke: currentColor;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      stroke-width: 1.6;
+    }
+
+    #visibility .eye-slash {
+      display: none;
+    }
+
+    #visibility[aria-pressed="true"] .eye-slash {
+      display: block;
     }
 
     #send {
@@ -175,6 +218,13 @@
     <section id="messages" aria-live="polite" aria-label="Conversation with Mark"></section>
     <form id="composer">
       <textarea id="prompt" rows="1" maxlength="8000" autocomplete="off" placeholder="Message Mark" aria-label="Message Mark"></textarea>
+      <button id="visibility" type="button" aria-label="Hide input" aria-pressed="false" title="Hide input">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path>
+          <circle cx="12" cy="12" r="2.5"></circle>
+          <path class="eye-slash" d="M4 4l16 16"></path>
+        </svg>
+      </button>
       <button id="send" type="submit" disabled>Send</button>
     </form>
   </main>
@@ -183,9 +233,12 @@
     const messagesElement = document.getElementById("messages");
     const composer = document.getElementById("composer");
     const prompt = document.getElementById("prompt");
+    const visibility = document.getElementById("visibility");
     const send = document.getElementById("send");
     const history = [];
     let waiting = false;
+    let secretExpected = false;
+    let concealed = false;
 
     function addMessage(role, content, options = {}) {
       const article = document.createElement("article");
@@ -198,6 +251,18 @@
       const body = document.createElement("div");
       body.className = "content";
       body.textContent = content;
+      if (options.secret) {
+        body.classList.add("secret-content");
+        body.title = "Click to show or hide";
+        body.tabIndex = 0;
+        const toggle = () => body.classList.toggle("revealed");
+        body.addEventListener("click", toggle);
+        body.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          toggle();
+        });
+      }
 
       article.append(speaker, body);
       messagesElement.append(article);
@@ -208,18 +273,35 @@
     function resizePrompt() {
       prompt.style.height = "auto";
       prompt.style.height = `${Math.min(prompt.scrollHeight, 150)}px`;
-      send.disabled = waiting || !prompt.value.trim();
+      const hasContent = secretExpected || concealed ? prompt.value.length > 0 : Boolean(prompt.value.trim());
+      send.disabled = waiting || !hasContent;
+    }
+
+    function setConcealed(nextConcealed) {
+      concealed = Boolean(nextConcealed);
+      prompt.classList.toggle("concealed", concealed);
+      visibility.setAttribute("aria-pressed", String(concealed));
+      visibility.setAttribute("aria-label", concealed ? "Show input" : "Hide input");
+      visibility.title = concealed ? "Show input" : "Hide input";
+    }
+
+    function setSecretExpected(expected) {
+      secretExpected = Boolean(expected);
+      setConcealed(secretExpected);
     }
 
     async function submitMessage() {
-      const content = prompt.value.trim();
-      if (!content || waiting) return;
+      const rawContent = prompt.value;
+      const submittedSecret = secretExpected || concealed;
+      const content = submittedSecret ? rawContent : rawContent.trim();
+      if ((!submittedSecret && !content) || waiting) return;
 
       waiting = true;
       prompt.value = "";
       resizePrompt();
-      addMessage("user", content);
-      history.push({ role: "user", content });
+      addMessage("user", content, { secret: submittedSecret });
+      const requestHistory = [...history, { role: "user", content }];
+      history.push({ role: "user", content: submittedSecret ? "[hidden input]" : content });
       const pending = addMessage("assistant", "…", { pending: true });
 
       try {
@@ -227,7 +309,8 @@
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            messages: history.slice(-24),
+            messages: requestHistory.slice(-24),
+            secret: submittedSecret,
             timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
           })
         });
@@ -244,6 +327,7 @@
         history.push({ role: "assistant", content: reply });
         pending.remove();
         addMessage("assistant", reply);
+        setSecretExpected(data.secretInput === true);
       } catch (error) {
         pending.classList.remove("pending");
         pending.querySelector(".content").textContent = error.message || "Mark could not answer right now.";
@@ -260,6 +344,11 @@
     });
 
     prompt.addEventListener("input", resizePrompt);
+    visibility.addEventListener("click", () => {
+      setConcealed(!concealed);
+      resizePrompt();
+      prompt.focus();
+    });
     prompt.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
         event.preventDefault();

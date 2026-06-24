@@ -149,6 +149,25 @@
       outline-offset: 2px;
     }
 
+    .text-node[data-creator-initial]::before {
+      content: attr(data-creator-initial);
+      position: absolute;
+      top: 50%;
+      right: calc(100% + 0.34em);
+      width: 0.78em;
+      height: 0.78em;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: #111;
+      box-shadow: 0 0 0 0.045em #fff;
+      color: #fff;
+      font: 500 0.42em/1 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
+      text-transform: uppercase;
+      transform: translateY(-50%);
+      pointer-events: auto;
+    }
+
     .text-node.editing {
       -webkit-user-select: text;
       user-select: text;
@@ -802,7 +821,7 @@
     const ZOOM_AFFORDANCE_FULL_FONT_SCREEN_PX = 14;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 66; // Increment once for each commit.
+    const APP_VERSION = 67; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -886,6 +905,7 @@
     let loadingProgressValue = 0;
     let lineConnections = [];
     let spaceMeta = {};
+    let currentUser = null;
     let deloreanModified = false;
     let mobileInteractionMode = "pan";
     let mobilePointerSession = null;
@@ -1087,6 +1107,35 @@
         delete node.dataset.deletedAt;
         node.removeAttribute("aria-hidden");
       }
+    }
+
+    function normalizeCreator(value) {
+      if (!value || typeof value !== "object") return null;
+      const id = typeof value.id === "string" ? value.id.trim() : "";
+      const nickname = typeof value.nickname === "string" ? value.nickname.trim() : "";
+      return id && nickname ? { id, nickname } : null;
+    }
+
+    function setNodeCreator(node, value) {
+      const creator = normalizeCreator(value);
+      if (!creator) {
+        delete node.dataset.creatorId;
+        delete node.dataset.creatorNickname;
+        delete node.dataset.creatorInitial;
+        node.removeAttribute("title");
+        return;
+      }
+      node.dataset.creatorId = creator.id;
+      node.dataset.creatorNickname = creator.nickname;
+      node.dataset.creatorInitial = Array.from(creator.nickname)[0] || "?";
+      node.title = creator.nickname;
+    }
+
+    function getNodeCreator(node) {
+      return normalizeCreator({
+        id: node.dataset.creatorId || "",
+        nickname: node.dataset.creatorNickname || ""
+      });
     }
 
     function markDeloreanModified() {
@@ -3462,6 +3511,8 @@
       const deletedAt = normalizeTimestamp(node.dataset.deletedAt);
       if (createdAt) base.createdAt = createdAt;
       if (deletedAt) base.deletedAt = deletedAt;
+      const createdBy = getNodeCreator(node);
+      if (createdBy) base.createdBy = createdBy;
 
       if (isCommandNode(node)) {
         return {
@@ -4555,6 +4606,7 @@
             body: JSON.stringify({ state })
           });
           latestSharedUpdatedAt = Number(data.updatedAt) || latestSharedUpdatedAt;
+          if (Object.prototype.hasOwnProperty.call(data, "viewer")) currentUser = normalizeCreator(data.viewer);
         } finally {
           savingSharedState = false;
         }
@@ -4812,12 +4864,14 @@
           createCommandNode(x, y, commandId, commandState, baseFontSize, id, commandVersion, {
             createdAt: entry.createdAt,
             deletedAt: entry.deletedAt,
+            createdBy: entry.createdBy,
             preserveTimestamps: true
           });
         } else {
           createTextNode(x, y, text, baseFontSize, id, html, {
             createdAt: entry.createdAt,
             deletedAt: entry.deletedAt,
+            createdBy: entry.createdBy,
             preserveTimestamps: true
           });
         }
@@ -5350,6 +5404,7 @@
       // Keeps newly-created text visually consistent regardless of current zoom.
       node.dataset.baseFontSize = String(baseFontSize);
       setNodeTimestamps(node, options);
+      setNodeCreator(node, options.createdBy || (!options.preserveTimestamps ? currentUser : null));
       setNodePosition(node, worldX, worldY);
       attachNodeHandlers(node);
       world.appendChild(node);
@@ -5378,6 +5433,7 @@
       node.contentEditable = "false";
       node.dataset.baseFontSize = String(baseFontSize);
       setNodeTimestamps(node, options);
+      setNodeCreator(node, options.createdBy || (!options.preserveTimestamps ? currentUser : null));
       setNodePosition(node, worldX, worldY);
       if (!isNodeDeleted(node)) renderCommandNodeContent(node);
       attachNodeHandlers(node);
@@ -5890,7 +5946,9 @@
     }
 
     function applySharedState(data, options = {}) {
-      if (!data || !data.state) return false;
+      if (!data) return false;
+      if (Object.prototype.hasOwnProperty.call(data, "viewer")) currentUser = normalizeCreator(data.viewer);
+      if (!data.state) return false;
 
       const updatedAt = Number(data.updatedAt) || 1;
       if (updatedAt <= latestSharedUpdatedAt) return false;
@@ -5912,6 +5970,7 @@
     async function loadFromSharedSpace(options = {}) {
       if (!SHARED_SPACE_SLUG) return false;
       const data = await requestSharedSpace();
+      if (Object.prototype.hasOwnProperty.call(data, "viewer")) currentUser = normalizeCreator(data.viewer);
       if (!data.state) {
         latestSharedUpdatedAt = Number(data.updatedAt) || latestSharedUpdatedAt;
         return false;

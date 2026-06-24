@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const { MongoClient } = require("mongodb");
+const { authorSnapshot, getSessionUser } = require("./lib/users");
 
 const mongoUri = process.env.MONGODB_URI;
 const dbName = process.env.MONGODB_DB || "ZENBERRY_MAIN";
@@ -205,6 +206,13 @@ function normalizeCommandState(value) {
   return state;
 }
 
+function normalizeCreator(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const id = boundedString(value.id, 128, "createdBy.id", "").trim();
+  const nickname = boundedString(value.nickname, 80, "createdBy.nickname", "").trim();
+  return id && nickname ? { id, nickname } : null;
+}
+
 function normalizeNode(entry, seenIds) {
   if (!entry || typeof entry !== "object") {
     throw new HttpError(400, "Every node must be an object.");
@@ -226,6 +234,8 @@ function normalizeNode(entry, seenIds) {
   const deletedAt = optionalTimestamp(entry.deletedAt, `node ${id}.deletedAt`);
   if (createdAt) base.createdAt = createdAt;
   if (deletedAt) base.deletedAt = deletedAt;
+  const createdBy = normalizeCreator(entry.createdBy);
+  if (createdBy) base.createdBy = createdBy;
 
   if (entry.kind === "command") {
     return {
@@ -500,7 +510,25 @@ function applyLinkText(state, op) {
   source.html = `${escapeHtml(before)}${createInternalLinkHtml(label, target.id)}${escapeHtml(after)}`;
 }
 
-function applyOps(currentState, ops) {
+function attributeReplacementNodes(nextState, currentState, creator) {
+  const currentById = new Map(currentState.nodes.map((node) => [node.id, node]));
+  nextState.nodes = nextState.nodes.map((node) => {
+    const current = currentById.get(node.id);
+    if (current && current.createdBy) return { ...node, createdBy: current.createdBy };
+    if (current) {
+      const copy = { ...node };
+      delete copy.createdBy;
+      return copy;
+    }
+    if (creator) return { ...node, createdBy: creator };
+    const copy = { ...node };
+    delete copy.createdBy;
+    return copy;
+  });
+  return nextState;
+}
+
+function applyOps(currentState, ops, viewer = null) {
   if (!Array.isArray(ops) || ops.length === 0) {
     throw new HttpError(400, "ops must be a non-empty array.");
   }
@@ -509,6 +537,7 @@ function applyOps(currentState, ops) {
   }
 
   let state = normalizeState(currentState);
+  const creator = authorSnapshot(viewer);
   const allocatedIds = new Set(state.nodes.map((node) => node.id));
   let nextNodeNumber = getNextNodeNumber(state);
 
@@ -537,7 +566,7 @@ function applyOps(currentState, ops) {
 
     const opName = boundedString(op.op, 64, "op").trim();
     if (opName === "replace_state") {
-      state = normalizeState(op.state);
+      state = attributeReplacementNodes(normalizeState(op.state), state, creator);
       allocatedIds.clear();
       state.nodes.forEach((node) => allocatedIds.add(node.id));
       nextNodeNumber = getNextNodeNumber(state);
@@ -554,6 +583,7 @@ function applyOps(currentState, ops) {
         y: finiteNumber(op.y, 0, "y"),
         baseFontSize: positiveNumber(op.baseFontSize, 28, "baseFontSize"),
         createdAt: Date.now(),
+        ...(creator ? { createdBy: creator } : {}),
         text: op.text === undefined ? htmlToPlainText(html) : text,
         html
       });
@@ -569,6 +599,7 @@ function applyOps(currentState, ops) {
         y: finiteNumber(op.y, 0, "y"),
         baseFontSize: positiveNumber(op.baseFontSize, 28, "baseFontSize"),
         createdAt: Date.now(),
+        ...(creator ? { createdBy: creator } : {}),
         commandId: boundedString(op.commandId, 128, "commandId").trim(),
         ...(commandVersion ? { commandVersion } : {}),
         commandState: normalizeCommandState(op.commandState)
@@ -631,11 +662,12 @@ function applyOps(currentState, ops) {
   return normalizeState(state);
 }
 
-async function ensureSpace(collection, slug) {
+async function ensureSpace(collection, slug, viewer = null) {
   const now = Date.now();
+  const creator = authorSnapshot(viewer);
   await collection.updateOne(
     { slug },
-    { $setOnInsert: { slug, state: null, revision: 0, createdAt: now, updatedAt: now } },
+    { $setOnInsert: { slug, state: null, revision: 0, createdAt: now, updatedAt: now, createdBy: creator } },
     { upsert: true }
   );
   await collection.updateOne(
@@ -644,7 +676,7 @@ async function ensureSpace(collection, slug) {
   );
   return collection.findOne(
     { slug },
-    { projection: { _id: 0, slug: 1, state: 1, updatedAt: 1, revision: 1 } }
+    { projection: { _id: 0, slug: 1, state: 1, updatedAt: 1, revision: 1, createdBy: 1 } }
   );
 }
 
@@ -679,6 +711,7 @@ function buildManifest(event) {
           baseFontSize: "number",
           createdAt: "optional number",
           deletedAt: "optional number",
+          createdBy: "optional { id, nickname } assigned from the active Skydive session",
           text: "string",
           html: "string"
         },
@@ -690,6 +723,7 @@ function buildManifest(event) {
           baseFontSize: "number",
           createdAt: "optional number",
           deletedAt: "optional number",
+          createdBy: "optional { id, nickname } assigned from the active Skydive session",
           commandId: "string",
           commandVersion: "optional string",
           commandState: "object"
@@ -738,21 +772,22 @@ function buildManifest(event) {
 async function listSpaces(collection) {
   const spaces = await collection.find(
     {},
-    { projection: { _id: 0, slug: 1, updatedAt: 1, revision: 1 } }
+    { projection: { _id: 0, slug: 1, updatedAt: 1, revision: 1, createdBy: 1 } }
   ).sort({ updatedAt: -1 }).limit(500).toArray();
 
   return spaces.map((space) => ({
     slug: space.slug,
     updatedAt: Number(space.updatedAt) || 0,
-    revision: Number(space.revision) || 0
+    revision: Number(space.revision) || 0,
+    createdBy: space.createdBy || null
   }));
 }
 
-async function applySpaceOps(collection, payload) {
+async function applySpaceOps(collection, payload, viewer = null) {
   const slug = getSlug(payload.space);
   if (!slug) throw new HttpError(400, "A valid space slug is required.");
 
-  const current = await ensureSpace(collection, slug);
+  const current = await ensureSpace(collection, slug, viewer);
   const currentRevision = Number(current.revision) || 0;
   if (payload.baseRevision !== undefined && Number(payload.baseRevision) !== currentRevision) {
     throw new HttpError(409, "Space revision changed before ops could be applied.", {
@@ -767,7 +802,7 @@ async function applySpaceOps(collection, payload) {
     });
   }
 
-  const state = applyOps(current.state, payload.ops);
+  const state = applyOps(current.state, payload.ops, viewer);
   const now = Date.now();
   const revisionFilter = current.revision === undefined
     ? { $or: [{ revision: { $exists: false } }, { revision: 0 }] }
@@ -777,7 +812,7 @@ async function applySpaceOps(collection, payload) {
     {
       $set: { slug, state, updatedAt: now },
       $inc: { revision: 1 },
-      $setOnInsert: { createdAt: now }
+      $setOnInsert: { createdAt: now, createdBy: authorSnapshot(viewer) }
     },
     { upsert: false }
   );
@@ -815,13 +850,15 @@ exports.handler = async (event) => {
     if (event.httpMethod === "GET" && query.space) {
       requireAuth(event);
       const collection = await getCollection();
+      const viewer = await getSessionUser(event);
       const slug = getSlug(query.space);
       if (!slug) return json(400, { error: "A valid space slug is required." });
-      const space = await ensureSpace(collection, slug);
+      const space = await ensureSpace(collection, slug, viewer);
       return json(200, {
         slug,
         revision: Number(space.revision) || 0,
         updatedAt: Number(space.updatedAt) || 0,
+        createdBy: space.createdBy || null,
         state: normalizeState(space.state)
       });
     }
@@ -829,8 +866,9 @@ exports.handler = async (event) => {
     if (event.httpMethod === "POST") {
       requireAuth(event);
       const collection = await getCollection();
+      const viewer = await getSessionUser(event);
       const payload = event.body ? JSON.parse(event.body) : {};
-      return json(200, await applySpaceOps(collection, payload));
+      return json(200, await applySpaceOps(collection, payload, viewer));
     }
 
     return json(405, { error: "Method not allowed." });

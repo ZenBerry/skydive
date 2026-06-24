@@ -1,4 +1,5 @@
 const { MongoClient } = require("mongodb");
+const { authorSnapshot, getSessionUser } = require("./lib/users");
 
 const mongoUri = process.env.MONGODB_URI;
 const dbName = process.env.MONGODB_DB || "ZENBERRY_MAIN";
@@ -52,6 +53,30 @@ function stripViewportState(state) {
   return nextState;
 }
 
+function attributeNewNodes(state, currentState, viewer) {
+  const nextState = JSON.parse(JSON.stringify(state));
+  const existingNodes = currentState && Array.isArray(currentState.nodes) ? currentState.nodes : [];
+  const existingById = new Map(existingNodes.map((node) => [String(node.id || ""), node]));
+  const creator = authorSnapshot(viewer);
+  if (!Array.isArray(nextState.nodes)) return nextState;
+
+  nextState.nodes = nextState.nodes.map((node) => {
+    if (!node || typeof node !== "object") return node;
+    const existing = existingById.get(String(node.id || ""));
+    if (existing && existing.createdBy) return { ...node, createdBy: existing.createdBy };
+    if (existing) {
+      const copy = { ...node };
+      delete copy.createdBy;
+      return copy;
+    }
+    if (creator) return { ...node, createdBy: creator };
+    const copy = { ...node };
+    delete copy.createdBy;
+    return copy;
+  });
+  return nextState;
+}
+
 exports.handler = async (event) => {
   const slug = getSlug(event);
   if (!slug) {
@@ -60,12 +85,14 @@ exports.handler = async (event) => {
 
   try {
     const collection = await getCollection();
+    const viewer = await getSessionUser(event);
+    const creator = authorSnapshot(viewer);
 
     if (event.httpMethod === "GET") {
       const now = Date.now();
       await collection.updateOne(
         { slug },
-        { $setOnInsert: { slug, state: null, revision: 0, createdAt: now, updatedAt: now } },
+        { $setOnInsert: { slug, state: null, revision: 0, createdAt: now, updatedAt: now, createdBy: creator } },
         { upsert: true }
       );
       await collection.updateOne(
@@ -75,10 +102,10 @@ exports.handler = async (event) => {
 
       const space = await collection.findOne(
         { slug },
-        { projection: { _id: 0, slug: 1, state: 1, updatedAt: 1, revision: 1 } }
+        { projection: { _id: 0, slug: 1, state: 1, updatedAt: 1, revision: 1, createdBy: 1 } }
       );
 
-      return json(200, space);
+      return json(200, { ...space, viewer });
     }
 
     if (event.httpMethod === "PUT") {
@@ -88,18 +115,19 @@ exports.handler = async (event) => {
       }
 
       const now = Date.now();
-      const state = stripViewportState(payload.state);
+      const current = await collection.findOne({ slug }, { projection: { _id: 0, state: 1 } });
+      const state = attributeNewNodes(stripViewportState(payload.state), current && current.state, viewer);
       await collection.updateOne(
         { slug },
         {
           $set: { slug, state, updatedAt: now },
           $inc: { revision: 1 },
-          $setOnInsert: { createdAt: now }
+          $setOnInsert: { createdAt: now, createdBy: creator }
         },
         { upsert: true }
       );
 
-      return json(200, { slug, updatedAt: now });
+      return json(200, { slug, updatedAt: now, viewer });
     }
 
     return json(405, { error: "Method not allowed." });
