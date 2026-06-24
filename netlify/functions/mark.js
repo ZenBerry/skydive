@@ -485,6 +485,9 @@ function hasMatchingFreshRead(observations, parameters) {
 async function runPromptAgent(event, messages, manifest, systemInstruction, timeZone, deadline) {
   const preloaded = await preloadReadObservation(event, messages, timeZone);
   const observations = preloaded ? [preloaded] : [];
+  if (preloaded) {
+    return deterministicObservationReply(observations) || "I couldn’t complete that Skydive lookup.";
+  }
   let actions = 0;
   for (let turnIndex = 0; turnIndex <= MAX_ACTIONS; turnIndex += 1) {
     let turn;
