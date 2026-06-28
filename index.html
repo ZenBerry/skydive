@@ -751,6 +751,7 @@
   <script src="/commands/file.js"></script>
   <script src="/commands/rec.js"></script>
   <script src="/commands/delorean.js"></script>
+  <script src="/commands/today.js"></script>
   <script>
     const viewport = document.getElementById("viewport");
     const lineLayer = document.getElementById("line-layer");
@@ -821,7 +822,7 @@
     const ZOOM_AFFORDANCE_FULL_FONT_SCREEN_PX = 14;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 67; // Increment once for each commit.
+    const APP_VERSION = 68; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -3672,7 +3673,27 @@
       range.setStart(start.node, start.offset);
       range.setEnd(end.node, end.offset);
       range.deleteContents();
+      range.collapse(true);
+      const selection = window.getSelection();
+      if (selection) {
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
       normalizeNodeMarkup(node);
+    }
+
+    function insertTextAtCaretInNode(node, text) {
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0) return false;
+      const range = selection.getRangeAt(0);
+      if (!node.contains(range.startContainer)) return false;
+      range.deleteContents();
+      range.insertNode(document.createTextNode(text));
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      normalizeNodeMarkup(node);
+      return true;
     }
 
     function executeSlashCommand(index = slashCommandSelectedIndex) {
@@ -3686,6 +3707,14 @@
       const sourceX = Number(sourceNode.dataset.x);
       const sourceY = Number(sourceNode.dataset.y);
       removeSlashToken(sourceNode, session);
+
+      if (command.output === "text" && typeof command.createText === "function") {
+        insertTextAtCaretInNode(sourceNode, command.createText({ args: session.args || "", query: session.query || "" }));
+        sourceNode.focus();
+        closeSlashCommandMenu();
+        scheduleAutosave();
+        return;
+      }
 
       const state = typeof command.createState === "function"
         ? command.createState({ args: session.args || "", query: session.query || "" })

@@ -123,6 +123,16 @@
           "error": { "type": "string" }
         }
       }
+    },
+    {
+      "id": "today",
+      "version": "1.0.0",
+      "title": "Today",
+      "description": "Insert today's date.",
+      "aliases": ["date"],
+      "source": "static",
+      "dynamicExecutable": false,
+      "output": "text"
     }
   ]
 }
