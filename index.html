@@ -154,15 +154,16 @@
       position: absolute;
       top: 50%;
       right: calc(100% + 0.34em);
-      width: 0.78em;
-      height: 0.78em;
+      width: 0.82em;
+      height: 0.82em;
       display: grid;
       place-items: center;
       border-radius: 50%;
-      background: #111;
-      box-shadow: 0 0 0 0.045em #fff;
-      color: #fff;
-      font: 500 0.42em/1 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
+      background: var(--creator-avatar-bg, #111);
+      border: 0.045em solid var(--creator-avatar-border, #111);
+      color: var(--creator-avatar-fg, #fff);
+      font: 500 0.34em/1 "Roboto", "Helvetica Neue", Arial, sans-serif;
+      letter-spacing: 0;
       text-transform: uppercase;
       transform: translateY(-50%);
       pointer-events: auto;
@@ -822,7 +823,7 @@
     const ZOOM_AFFORDANCE_FULL_FONT_SCREEN_PX = 14;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 68; // Increment once for each commit.
+    const APP_VERSION = 69; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -1114,7 +1115,94 @@
       if (!value || typeof value !== "object") return null;
       const id = typeof value.id === "string" ? value.id.trim() : "";
       const nickname = typeof value.nickname === "string" ? value.nickname.trim() : "";
-      return id && nickname ? { id, nickname } : null;
+      const accentColor = normalizeAvatarColor(value.accentColor);
+      return id && nickname ? { id, nickname, ...(accentColor ? { accentColor } : {}) } : null;
+    }
+
+    function normalizeAvatarColor(value) {
+      const match = String(value || "").trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+      if (!match) return "";
+      const hex = match[1].toLowerCase();
+      return hex.length === 3
+        ? `#${hex.split("").map((digit) => digit + digit).join("")}`
+        : `#${hex}`;
+    }
+
+    function avatarRgb(hex) {
+      const color = normalizeAvatarColor(hex) || "#111111";
+      const value = color.slice(1);
+      return {
+        r: parseInt(value.slice(0, 2), 16),
+        g: parseInt(value.slice(2, 4), 16),
+        b: parseInt(value.slice(4, 6), 16)
+      };
+    }
+
+    function avatarHex({ r, g, b }) {
+      return `#${[r, g, b].map((channel) => (
+        Math.max(0, Math.min(255, Math.round(channel))).toString(16).padStart(2, "0")
+      )).join("")}`;
+    }
+
+    function avatarLuminance(hex) {
+      const { r, g, b } = avatarRgb(hex);
+      return [r, g, b].map((channel) => {
+        const value = channel / 255;
+        return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+      }).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
+    }
+
+    function mixAvatarColor(hex, targetHex, amount) {
+      const source = avatarRgb(hex);
+      const target = avatarRgb(targetHex);
+      return avatarHex({
+        r: source.r + (target.r - source.r) * amount,
+        g: source.g + (target.g - source.g) * amount,
+        b: source.b + (target.b - source.b) * amount
+      });
+    }
+
+    function getAvatarPalette(accentColor) {
+      const background = normalizeAvatarColor(accentColor) || "#111111";
+      const luminance = avatarLuminance(background);
+      const foreground = luminance > 0.58 ? "#111111" : "#ffffff";
+      const border = luminance > 0.72
+        ? "#111111"
+        : luminance < 0.18
+          ? mixAvatarColor(background, "#000000", 0.45)
+          : mixAvatarColor(background, "#000000", 0.36);
+      return { background, foreground, border };
+    }
+
+    function getCreatorAccentColor(creator) {
+      if (
+        currentUser &&
+        creator &&
+        currentUser.id === creator.id &&
+        currentUser.accentColor
+      ) {
+        return currentUser.accentColor;
+      }
+      return creator && creator.accentColor ? creator.accentColor : "#111111";
+    }
+
+    function applyNodeCreatorAvatar(node, creator) {
+      const palette = getAvatarPalette(getCreatorAccentColor(creator));
+      node.style.setProperty("--creator-avatar-bg", palette.background);
+      node.style.setProperty("--creator-avatar-border", palette.border);
+      node.style.setProperty("--creator-avatar-fg", palette.foreground);
+    }
+
+    function refreshCreatorAvatars() {
+      for (const node of world.querySelectorAll(".text-node[data-creator-id]")) {
+        const creator = getNodeCreator(node);
+        if (creator) applyNodeCreatorAvatar(node, creator);
+      }
+    }
+
+    function setCurrentUser(value) {
+      currentUser = normalizeCreator(value);
+      refreshCreatorAvatars();
     }
 
     function setNodeCreator(node, value) {
@@ -1123,19 +1211,30 @@
         delete node.dataset.creatorId;
         delete node.dataset.creatorNickname;
         delete node.dataset.creatorInitial;
+        delete node.dataset.creatorAccentColor;
+        node.style.removeProperty("--creator-avatar-bg");
+        node.style.removeProperty("--creator-avatar-border");
+        node.style.removeProperty("--creator-avatar-fg");
         node.removeAttribute("title");
         return;
       }
       node.dataset.creatorId = creator.id;
       node.dataset.creatorNickname = creator.nickname;
       node.dataset.creatorInitial = Array.from(creator.nickname)[0] || "?";
+      if (creator.accentColor) {
+        node.dataset.creatorAccentColor = creator.accentColor;
+      } else {
+        delete node.dataset.creatorAccentColor;
+      }
+      applyNodeCreatorAvatar(node, creator);
       node.title = creator.nickname;
     }
 
     function getNodeCreator(node) {
       return normalizeCreator({
         id: node.dataset.creatorId || "",
-        nickname: node.dataset.creatorNickname || ""
+        nickname: node.dataset.creatorNickname || "",
+        accentColor: node.dataset.creatorAccentColor || ""
       });
     }
 
@@ -4635,7 +4734,7 @@
             body: JSON.stringify({ state })
           });
           latestSharedUpdatedAt = Number(data.updatedAt) || latestSharedUpdatedAt;
-          if (Object.prototype.hasOwnProperty.call(data, "viewer")) currentUser = normalizeCreator(data.viewer);
+          if (Object.prototype.hasOwnProperty.call(data, "viewer")) setCurrentUser(data.viewer);
         } finally {
           savingSharedState = false;
         }
@@ -5976,7 +6075,7 @@
 
     function applySharedState(data, options = {}) {
       if (!data) return false;
-      if (Object.prototype.hasOwnProperty.call(data, "viewer")) currentUser = normalizeCreator(data.viewer);
+      if (Object.prototype.hasOwnProperty.call(data, "viewer")) setCurrentUser(data.viewer);
       if (!data.state) return false;
 
       const updatedAt = Number(data.updatedAt) || 1;
@@ -5999,7 +6098,7 @@
     async function loadFromSharedSpace(options = {}) {
       if (!SHARED_SPACE_SLUG) return false;
       const data = await requestSharedSpace();
-      if (Object.prototype.hasOwnProperty.call(data, "viewer")) currentUser = normalizeCreator(data.viewer);
+      if (Object.prototype.hasOwnProperty.call(data, "viewer")) setCurrentUser(data.viewer);
       if (!data.state) {
         latestSharedUpdatedAt = Number(data.updatedAt) || latestSharedUpdatedAt;
         return false;

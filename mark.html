@@ -115,12 +115,29 @@
     #composer {
       flex: none;
       display: grid;
-      grid-template-columns: 1fr auto auto;
+      grid-template-columns: auto 1fr auto auto;
       align-items: end;
-      gap: 18px;
+      column-gap: 14px;
       border-top: 1px solid #dedede;
       padding: 18px 0 max(22px, env(safe-area-inset-bottom, 0));
       background: #fff;
+    }
+
+    #current-user-bullet {
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      align-self: end;
+      margin-bottom: 1px;
+      border: 1.5px solid var(--user-bullet-border, #111);
+      border-radius: 50%;
+      background: var(--user-bullet-bg, #111);
+      color: var(--user-bullet-fg, #fff);
+      font: 500 11px/1 "Roboto", "Helvetica Neue", Arial, sans-serif;
+      letter-spacing: 0;
+      text-transform: uppercase;
+      user-select: none;
     }
 
     #prompt {
@@ -217,6 +234,7 @@
   <main id="chat">
     <section id="messages" aria-live="polite" aria-label="Conversation with Mark"></section>
     <form id="composer">
+      <div id="current-user-bullet" aria-label="Current user" title="Logged out">?</div>
       <textarea id="prompt" rows="1" maxlength="8000" autocomplete="off" placeholder="Message Mark" aria-label="Message Mark"></textarea>
       <button id="visibility" type="button" aria-label="Hide input" aria-pressed="false" title="Hide input">
         <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -232,6 +250,7 @@
   <script>
     const messagesElement = document.getElementById("messages");
     const composer = document.getElementById("composer");
+    const currentUserBullet = document.getElementById("current-user-bullet");
     const prompt = document.getElementById("prompt");
     const visibility = document.getElementById("visibility");
     const send = document.getElementById("send");
@@ -239,6 +258,94 @@
     let waiting = false;
     let secretExpected = false;
     let concealed = false;
+    let currentUser = null;
+
+    function normalizeAvatarColor(value) {
+      const match = String(value || "").trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+      if (!match) return "";
+      const hex = match[1].toLowerCase();
+      return hex.length === 3
+        ? `#${hex.split("").map((digit) => digit + digit).join("")}`
+        : `#${hex}`;
+    }
+
+    function normalizeUser(value) {
+      if (!value || typeof value !== "object") return null;
+      const id = typeof value.id === "string" ? value.id.trim() : "";
+      const nickname = typeof value.nickname === "string" ? value.nickname.trim() : "";
+      const accentColor = normalizeAvatarColor(value.accentColor);
+      return id && nickname ? { id, nickname, ...(accentColor ? { accentColor } : {}) } : null;
+    }
+
+    function avatarRgb(hex) {
+      const color = normalizeAvatarColor(hex) || "#111111";
+      const value = color.slice(1);
+      return {
+        r: parseInt(value.slice(0, 2), 16),
+        g: parseInt(value.slice(2, 4), 16),
+        b: parseInt(value.slice(4, 6), 16)
+      };
+    }
+
+    function avatarHex({ r, g, b }) {
+      return `#${[r, g, b].map((channel) => (
+        Math.max(0, Math.min(255, Math.round(channel))).toString(16).padStart(2, "0")
+      )).join("")}`;
+    }
+
+    function avatarLuminance(hex) {
+      const { r, g, b } = avatarRgb(hex);
+      return [r, g, b].map((channel) => {
+        const value = channel / 255;
+        return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+      }).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
+    }
+
+    function mixAvatarColor(hex, targetHex, amount) {
+      const source = avatarRgb(hex);
+      const target = avatarRgb(targetHex);
+      return avatarHex({
+        r: source.r + (target.r - source.r) * amount,
+        g: source.g + (target.g - source.g) * amount,
+        b: source.b + (target.b - source.b) * amount
+      });
+    }
+
+    function getAvatarPalette(accentColor) {
+      const background = normalizeAvatarColor(accentColor) || "#111111";
+      const luminance = avatarLuminance(background);
+      const foreground = luminance > 0.58 ? "#111111" : "#ffffff";
+      const border = luminance > 0.72
+        ? "#111111"
+        : luminance < 0.18
+          ? mixAvatarColor(background, "#000000", 0.45)
+          : mixAvatarColor(background, "#000000", 0.36);
+      return { background, foreground, border };
+    }
+
+    function renderCurrentUserBullet() {
+      const palette = getAvatarPalette(currentUser && currentUser.accentColor);
+      currentUserBullet.style.setProperty("--user-bullet-bg", palette.background);
+      currentUserBullet.style.setProperty("--user-bullet-border", palette.border);
+      currentUserBullet.style.setProperty("--user-bullet-fg", palette.foreground);
+      currentUserBullet.textContent = currentUser ? Array.from(currentUser.nickname)[0] || "?" : "?";
+      currentUserBullet.title = currentUser ? currentUser.nickname : "Logged out";
+    }
+
+    function setCurrentUser(value) {
+      currentUser = normalizeUser(value);
+      renderCurrentUserBullet();
+    }
+
+    async function loadCurrentUser() {
+      try {
+        const response = await fetch("/api/mark", { method: "GET", headers: { "Accept": "application/json" } });
+        const data = await response.json().catch(() => ({}));
+        if (response.ok && Object.prototype.hasOwnProperty.call(data, "user")) setCurrentUser(data.user);
+      } catch (error) {
+        console.error("Current user lookup failed:", error);
+      }
+    }
 
     function addMessage(role, content, options = {}) {
       const article = document.createElement("article");
@@ -324,6 +431,7 @@
 
         const reply = typeof data.reply === "string" ? data.reply.trim() : "";
         if (!reply) throw new Error("Mark returned an empty response.");
+        if (Object.prototype.hasOwnProperty.call(data, "user")) setCurrentUser(data.user);
         history.push({ role: "assistant", content: reply });
         pending.remove();
         addMessage("assistant", reply);
@@ -357,7 +465,9 @@
     });
 
     const greeting = "Hi. I’m Mark. Ask me anything—or ask me to work with a Skydive space.";
+    renderCurrentUserBullet();
     addMessage("assistant", greeting);
+    void loadCurrentUser();
     prompt.focus();
   </script>
 </body>

@@ -6,13 +6,48 @@ const mongoUri = process.env.MONGODB_URI;
 const dbName = process.env.MONGODB_DB || "ZENBERRY_MAIN";
 const usersCollectionName = process.env.MONGODB_USERS_COLLECTION || "SKYDIVE_USERS";
 const sessionsCollectionName = process.env.MONGODB_USER_SESSIONS_COLLECTION || "SKYDIVE_USER_SESSIONS";
+const spacesCollectionName = process.env.MONGODB_COLLECTION || "SKYDIVE_SPACES";
 const SESSION_COOKIE = "skydive_session";
 const FLOW_COOKIE = "skydive_mark_flow";
 const DAY_SECONDS = 60 * 60 * 24;
 const SESSION_SECONDS = positiveInteger(process.env.SKYDIVE_SESSION_SECONDS, DAY_SECONDS * 400);
 const SESSION_REFRESH_SECONDS = positiveInteger(process.env.SKYDIVE_SESSION_REFRESH_SECONDS, DAY_SECONDS);
 const FLOW_SECONDS = 60 * 10;
+const DEFAULT_ACCENT_COLOR = "#111111";
 const scrypt = promisify(crypto.scrypt);
+
+const NAMED_COLORS = new Map(Object.entries({
+  black: "#111111",
+  white: "#ffffff",
+  red: "#dc2626",
+  blue: "#2563eb",
+  green: "#16a34a",
+  yellow: "#facc15",
+  orange: "#f97316",
+  purple: "#7c3aed",
+  violet: "#7c3aed",
+  pink: "#ec4899",
+  magenta: "#d946ef",
+  cyan: "#06b6d4",
+  teal: "#0d9488",
+  mint: "#2dd4bf",
+  lime: "#84cc16",
+  navy: "#1e3a8a",
+  indigo: "#4f46e5",
+  brown: "#92400e",
+  gray: "#6b7280",
+  grey: "#6b7280",
+  silver: "#c0c0c0",
+  gold: "#d4a017",
+  cream: "#fff7ed",
+  beige: "#e7d8bd",
+  coral: "#f9735b",
+  "sky blue": "#38bdf8",
+  "light blue": "#60a5fa",
+  "dark blue": "#1d4ed8",
+  "light green": "#4ade80",
+  "dark green": "#15803d"
+}));
 
 let collectionsPromise = null;
 
@@ -30,13 +65,14 @@ async function getCollections() {
       const db = client.db(dbName);
       const users = db.collection(usersCollectionName);
       const sessions = db.collection(sessionsCollectionName);
+      const spaces = db.collection(spacesCollectionName);
       await Promise.all([
         users.createIndex({ nicknameKey: 1 }, { unique: true }),
         sessions.createIndex({ tokenHash: 1 }, { unique: true }),
         sessions.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
         sessions.createIndex({ userId: 1 })
       ]);
-      return { users, sessions };
+      return { users, sessions, spaces };
     })();
   }
   return collectionsPromise;
@@ -86,9 +122,44 @@ function normalizeNickname(value) {
   return { nickname, nicknameKey: nickname.toLocaleLowerCase("en-US") };
 }
 
+function hexFromRgb(red, green, blue) {
+  return `#${[red, green, blue].map((channel) => (
+    Math.max(0, Math.min(255, channel)).toString(16).padStart(2, "0")
+  )).join("")}`;
+}
+
+function normalizeAccentColor(value) {
+  const raw = String(value || "").normalize("NFKC").trim();
+  if (!raw) return "";
+
+  const hex = raw.match(/#?([0-9a-f]{3}|[0-9a-f]{6})\b/i);
+  if (hex) {
+    const value = hex[1].toLowerCase();
+    return value.length === 3
+      ? `#${value.split("").map((digit) => digit + digit).join("")}`
+      : `#${value}`;
+  }
+
+  const rgb = raw.match(/\brgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\)/i);
+  if (rgb) {
+    const channels = rgb.slice(1, 4).map(Number);
+    if (channels.every((channel) => channel >= 0 && channel <= 255)) {
+      return hexFromRgb(channels[0], channels[1], channels[2]);
+    }
+  }
+
+  const words = raw.toLocaleLowerCase("en-US").replace(/[^a-z\s-]/g, " ").replace(/[-\s]+/g, " ").trim();
+  const matches = [...NAMED_COLORS.keys()].sort((a, b) => b.length - a.length);
+  const matchedName = matches.find((name) => new RegExp(`(?:^|\\s)${name.replace(/\s+/g, "\\s+")}(?:\\s|$)`).test(words));
+  return matchedName ? NAMED_COLORS.get(matchedName) : "";
+}
+
 function publicUser(user) {
   if (!user) return null;
-  return { id: String(user.userId || user.id || user._id || ""), nickname: String(user.nickname || "") };
+  const visible = { id: String(user.userId || user.id || user._id || ""), nickname: String(user.nickname || "") };
+  const accentColor = normalizeAccentColor(user.accentColor);
+  if (accentColor) visible.accentColor = accentColor;
+  return visible;
 }
 
 function authorSnapshot(user) {
@@ -170,6 +241,7 @@ async function createSession(event, user) {
     tokenHash: tokenHash(token),
     userId: String(user._id),
     nickname: user.nickname,
+    accentColor: normalizeAccentColor(user.accentColor) || DEFAULT_ACCENT_COLOR,
     createdAt: new Date(),
     refreshedAt: new Date(),
     expiresAt: new Date(Date.now() + SESSION_SECONDS * 1000)
@@ -284,6 +356,37 @@ async function removePassword(event) {
   return accountReply("Password removed. You’re still logged in, and future logins only need your nickname.", { user: current });
 }
 
+async function setAccentColor(event, args = {}) {
+  const current = await getSessionUser(event);
+  if (!current) return accountReply("Please log in first, then I can change your bullet color.");
+
+  const requested = typeof args.color === "string" ? args.color : "";
+  const accentColor = normalizeAccentColor(requested);
+  if (!accentColor) {
+    return accountReply("Tell me the color for your bullet as plain English, HEX, or rgb(). For example: white, #38bdf8, or rgb(56, 189, 248).", { user: current });
+  }
+
+  const { users, sessions, spaces } = await getCollections();
+  const now = new Date();
+  const user = { ...current, accentColor };
+  await users.updateOne({ _id: current.id }, { $set: { accentColor, updatedAt: now } });
+  await sessions.updateMany({ kind: "session", userId: current.id }, { $set: { accentColor } });
+
+  await spaces.updateMany(
+    { "state.nodes.createdBy.id": current.id },
+    {
+      $set: {
+        "state.nodes.$[node].createdBy.accentColor": accentColor,
+        updatedAt: Date.now()
+      },
+      $inc: { revision: 1 }
+    },
+    { arrayFilters: [{ "node.createdBy.id": current.id }] }
+  );
+
+  return accountReply("Done — I repainted your bullet color.", { user });
+}
+
 async function beginRename(event) {
   const current = await getSessionUser(event);
   if (!current) return accountReply("Please log in first.");
@@ -309,6 +412,7 @@ async function runAccountAction(event, name) {
   if (name === "user_status") return status(event);
   if (name === "user_begin_password_change") return beginPasswordChange(event);
   if (name === "user_remove_password") return removePassword(event);
+  if (name === "user_set_accent_color") return setAccentColor(event, args);
   if (name === "user_begin_rename") return beginRename(event);
   if (name === "user_begin_deletion") return beginDeletion(event);
   return null;
@@ -316,6 +420,11 @@ async function runAccountAction(event, name) {
 
 function matchAccountIntent(content) {
   const text = String(content || "").toLocaleLowerCase("en-US");
+  const accentWords = /\b(?:accent|bullet|dot|avatar|icon|initial|user\s+color|user\s+colour)\b/;
+  const colorChangeWords = /\b(?:set|change|add|update|make|turn|paint|repaint|choose|use|switch)\b/;
+  if (accentWords.test(text) && colorChangeWords.test(text)) {
+    return { name: "user_set_accent_color", args: { color: content } };
+  }
   if (/\b(log(?:\s+me)?\s*out|logout|sign\s*out)\b/.test(text)) return "user_logout";
   if (/\b(register|sign\s*up|create (?:me )?(?:an? )?(?:user|account))\b/.test(text)) return "user_begin_registration";
   if (/\b(log\s*in|login|sign\s*in)\b/.test(text)) return "user_begin_login";
@@ -345,7 +454,7 @@ async function handleActiveFlow(event, content, secret) {
     const normalized = normalizeNickname(content);
     if (!normalized) return accountReply("That nickname didn’t come through clearly. Try another one—anything readable is fine.");
     const now = new Date();
-    const user = { _id: crypto.randomUUID(), ...normalized, createdAt: now, updatedAt: now };
+    const user = { _id: crypto.randomUUID(), ...normalized, accentColor: DEFAULT_ACCENT_COLOR, createdAt: now, updatedAt: now };
     try {
       await users.insertOne(user);
     } catch (error) {
@@ -429,7 +538,7 @@ async function handleActiveFlow(event, content, secret) {
     cookies.push(await clearFlow(event));
     return accountReply(`Done—I'll call you ${normalized.nickname}.`, {
       cookies,
-      user: { id: current.id, nickname: normalized.nickname }
+      user: { ...current, nickname: normalized.nickname }
     });
   }
 
