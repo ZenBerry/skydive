@@ -828,7 +828,7 @@
     const ZOOM_AFFORDANCE_FULL_FONT_SCREEN_PX = 14;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 73; // Increment once for each commit.
+    const APP_VERSION = 74; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -2778,25 +2778,53 @@
     function getColumnAlignmentTargets(items) {
       if (items.length < 2) return [];
 
-      const ordered = items.slice().sort((a, b) =>
-        a.y - b.y ||
-        a.x - b.x ||
+      const cameraBasis = getCameraBasis();
+      const projected = items
+        .map((item) => {
+          const corners = getNodeWorldCorners(item.node);
+          if (corners.length !== 4) return null;
+          const axes = corners.map((point) => ({
+            x: point.x * cameraBasis.cos - point.y * cameraBasis.sin,
+            y: point.x * cameraBasis.sin + point.y * cameraBasis.cos
+          }));
+          const xs = axes.map((point) => point.x);
+          const ys = axes.map((point) => point.y);
+          const left = Math.min(...xs);
+          const top = Math.min(...ys);
+          const bottom = Math.max(...ys);
+          return {
+            ...item,
+            visualLeft: left,
+            visualTop: top,
+            visualBottom: bottom,
+            visualHeight: Math.max(0.001, bottom - top)
+          };
+        })
+        .filter(Boolean);
+
+      if (projected.length < 2) return [];
+
+      const ordered = projected.slice().sort((a, b) =>
+        a.visualTop - b.visualTop ||
+        a.visualLeft - b.visualLeft ||
         a.index - b.index
       );
-      const left = Math.min(...items.map((item) => item.x));
-      const top = Math.min(...items.map((item) => item.y));
-      const bottom = Math.max(...items.map((item) => item.y + item.height));
-      const totalHeight = ordered.reduce((sum, item) => sum + item.height, 0);
+      const left = Math.min(...projected.map((item) => item.visualLeft));
+      const top = Math.min(...projected.map((item) => item.visualTop));
+      const bottom = Math.max(...projected.map((item) => item.visualBottom));
+      const totalHeight = ordered.reduce((sum, item) => sum + item.visualHeight, 0);
       const gap = Math.max(0, (bottom - top - totalHeight) / (ordered.length - 1));
-      let nextY = top;
+      let nextTop = top;
 
       return ordered.map((item) => {
+        const visualDx = left - item.visualLeft;
+        const visualDy = nextTop - item.visualTop;
         const target = {
           node: item.node,
-          x: left,
-          y: nextY
+          x: item.x + visualDx * cameraBasis.cos + visualDy * cameraBasis.sin,
+          y: item.y - visualDx * cameraBasis.sin + visualDy * cameraBasis.cos
         };
-        nextY += item.height + gap;
+        nextTop += item.visualHeight + gap;
         return target;
       });
     }
