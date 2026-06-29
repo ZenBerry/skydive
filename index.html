@@ -794,6 +794,7 @@
 
     const BASE_TEXT_PX = 28;
     const ZOOM_SENSITIVITY = 0.012;
+    const ROTATION_SENSITIVITY = 0.006;
     const PHYSICAL_WHEEL_ZOOM_SENSITIVITY = ZOOM_SENSITIVITY / 10;
     const PHYSICAL_WHEEL_MIN_PIXEL_DELTA = 40;
     const PHYSICAL_WHEEL_MIN_ZOOM_LOG_DELTA = 0.18;
@@ -827,7 +828,7 @@
     const ZOOM_AFFORDANCE_FULL_FONT_SCREEN_PX = 14;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 71; // Increment once for each commit.
+    const APP_VERSION = 72; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -910,6 +911,7 @@
     let externalLinkCardPointer = null;
     let loadingProgressValue = 0;
     let lineConnections = [];
+    let lineRenderRoot = lineLayer;
     let spaceMeta = {};
     let currentUser = null;
     let deloreanModified = false;
@@ -930,7 +932,8 @@
     const camera = {
       x: window.innerWidth / 2,
       y: window.innerHeight / 2,
-      scale: 1
+      scale: 1,
+      rotation: 0
     };
 
     versionCounter.textContent = `v${APP_VERSION}`;
@@ -1803,6 +1806,75 @@
       return Math.min(max, Math.max(min, value));
     }
 
+    function normalizeRotation(value) {
+      if (!Number.isFinite(value)) return 0;
+      return Math.atan2(Math.sin(value), Math.cos(value));
+    }
+
+    function getCameraRotation() {
+      return normalizeRotation(camera.rotation);
+    }
+
+    function getCameraBasis(rotation = getCameraRotation()) {
+      return {
+        cos: Math.cos(rotation),
+        sin: Math.sin(rotation)
+      };
+    }
+
+    function getCameraScreenOffset(worldX, worldY, scale = getCameraScale(), rotation = getCameraRotation()) {
+      const basis = getCameraBasis(rotation);
+      return {
+        x: (worldX * basis.cos - worldY * basis.sin) * scale,
+        y: (worldX * basis.sin + worldY * basis.cos) * scale
+      };
+    }
+
+    function worldToScreen(worldX, worldY, scale = getCameraScale(), rotation = getCameraRotation()) {
+      const offset = getCameraScreenOffset(worldX, worldY, scale, rotation);
+      return {
+        x: camera.x + offset.x,
+        y: camera.y + offset.y
+      };
+    }
+
+    function getTransformedWorldRectBounds(rect) {
+      const corners = [
+        worldToScreen(rect.minX, rect.minY),
+        worldToScreen(rect.maxX, rect.minY),
+        worldToScreen(rect.maxX, rect.maxY),
+        worldToScreen(rect.minX, rect.maxY)
+      ];
+      const xs = corners.map((point) => point.x);
+      const ys = corners.map((point) => point.y);
+      const left = Math.min(...xs);
+      const top = Math.min(...ys);
+      const right = Math.max(...xs);
+      const bottom = Math.max(...ys);
+      return {
+        left,
+        top,
+        right,
+        bottom,
+        width: Math.max(0, right - left),
+        height: Math.max(0, bottom - top)
+      };
+    }
+
+    function setCameraTransformAt(clientX, clientY, nextScale, nextRotation) {
+      if (!Number.isFinite(nextScale) || nextScale <= 0) return false;
+      const worldPoint = screenToWorld(clientX, clientY);
+      const rotation = normalizeRotation(nextRotation);
+      const offset = getCameraScreenOffset(worldPoint.x, worldPoint.y, nextScale, rotation);
+      camera.scale = nextScale;
+      camera.rotation = rotation;
+      camera.x = clientX - offset.x;
+      camera.y = clientY - offset.y;
+      render();
+      scheduleViewportSave();
+      return true;
+    }
+
     function easeInOutHeavy(t) {
       if (t < 0.5) {
         return 16 * Math.pow(t, 5);
@@ -1817,15 +1889,14 @@
 
     function getNodeWorldSize(node) {
       const scale = camera.scale > 0 ? camera.scale : 1;
-      const rect = node.getBoundingClientRect();
       if (isCommandNode(node)) {
         return {
-          width: Math.max(rect.width / scale, 1),
-          height: Math.max(rect.height / scale, 1)
+          width: Math.max(node.scrollWidth, node.offsetWidth, 1),
+          height: Math.max(node.scrollHeight, node.offsetHeight, 1)
         };
       }
-      const widthPx = Math.max(rect.width, node.scrollWidth, node.offsetWidth, 1);
-      const heightPx = Math.max(rect.height, node.scrollHeight, node.offsetHeight, 1);
+      const widthPx = Math.max(node.scrollWidth, node.offsetWidth, 1);
+      const heightPx = Math.max(node.scrollHeight, node.offsetHeight, 1);
       return {
         width: widthPx / scale,
         height: heightPx / scale
@@ -2428,7 +2499,7 @@
         0,
         { dashed: options.draft }
       );
-      lineLayer.appendChild(group);
+      lineRenderRoot.appendChild(group);
 
       if (options.id) {
         const hitPath = document.createElementNS(SVG_NS, "path");
@@ -2438,7 +2509,7 @@
         if (Number.isFinite(options.hitStrokeWidth)) {
           hitPath.style.strokeWidth = `${options.hitStrokeWidth}px`;
         }
-        lineLayer.appendChild(hitPath);
+        lineRenderRoot.appendChild(hitPath);
       }
       return true;
     }
@@ -2448,17 +2519,19 @@
       const width = Math.max(1, viewport.clientWidth);
       const height = Math.max(1, viewport.clientHeight);
       const scale = getCameraScale();
-      const viewBox = [
-        -camera.x / scale,
-        -camera.y / scale,
-        width / scale,
-        height / scale
-      ].join(" ");
-      lineLayer.setAttribute("viewBox", viewBox);
+      const rotation = getCameraRotation();
+      const basis = getCameraBasis(rotation);
+      lineLayer.setAttribute("viewBox", `0 0 ${width} ${height}`);
       lineLayer.setAttribute("width", String(width));
       lineLayer.setAttribute("height", String(height));
       lineLayer.style.transform = "";
       lineLayer.replaceChildren();
+      lineRenderRoot = document.createElementNS(SVG_NS, "g");
+      lineRenderRoot.setAttribute(
+        "transform",
+        `matrix(${formatLineNumber(scale * basis.cos)} ${formatLineNumber(scale * basis.sin)} ${formatLineNumber(-scale * basis.sin)} ${formatLineNumber(scale * basis.cos)} ${formatLineNumber(camera.x)} ${formatLineNumber(camera.y)})`
+      );
+      lineLayer.appendChild(lineRenderRoot);
 
       for (const line of lineConnections) {
         if (line.deletedAt) continue;
@@ -2946,11 +3019,13 @@
         : BASE_TEXT_PX;
       const nodeXRaw = Number(node.dataset.x);
       const nodeYRaw = Number(node.dataset.y);
-      const nodeX = Number.isFinite(nodeXRaw) ? nodeXRaw : (rect.left - camera.x) / camera.scale;
-      const nodeY = Number.isFinite(nodeYRaw) ? nodeYRaw : (rect.top - camera.y) / camera.scale;
+      const fallbackPoint = screenToWorld(rect.left, rect.top);
+      const nodeX = Number.isFinite(nodeXRaw) ? nodeXRaw : fallbackPoint.x;
+      const nodeY = Number.isFinite(nodeYRaw) ? nodeYRaw : fallbackPoint.y;
       const finalMeasured = measureNodeRenderedSizePx(node, baseFontSize * targetScale);
-      const targetX = guide.left - nodeX * targetScale;
-      const targetY = guide.centerY - nodeY * targetScale - finalMeasured.height / 2;
+      const targetOffset = getCameraScreenOffset(nodeX, nodeY, targetScale, camera.rotation);
+      const targetX = guide.left - targetOffset.x;
+      const targetY = guide.centerY - targetOffset.y - finalMeasured.height / 2;
       const duration = getNavigationDuration(targetX, targetY, targetScale);
 
       // highlightNavigationTarget(node);
@@ -3004,8 +3079,9 @@
       );
       const centerX = bounds.minX + bounds.width / 2;
       const centerY = bounds.minY + bounds.height / 2;
-      const targetX = viewWidth / 2 - centerX * targetScale;
-      const targetY = viewHeight / 2 - centerY * targetScale;
+      const targetOffset = getCameraScreenOffset(centerX, centerY, targetScale, camera.rotation);
+      const targetX = viewWidth / 2 - targetOffset.x;
+      const targetY = viewHeight / 2 - targetOffset.y;
       const duration = getNavigationDuration(targetX, targetY, targetScale);
 
       navigationFitTargetNode = null;
@@ -3966,10 +4042,11 @@
       const padding = getGroupSelectionPaddingScreenPx();
       const handleSize = getGroupSelectionHandleScreenPx();
       const handleOffset = -(handleSize / 2 + 1);
-      const left = camera.x + selectionBoundsWorld.minX * camera.scale - padding;
-      const top = camera.y + selectionBoundsWorld.minY * camera.scale - padding;
-      const width = selectionBoundsWorld.width * camera.scale + padding * 2;
-      const height = selectionBoundsWorld.height * camera.scale + padding * 2;
+      const screenBounds = getTransformedWorldRectBounds(selectionBoundsWorld);
+      const left = screenBounds.left - padding;
+      const top = screenBounds.top - padding;
+      const width = screenBounds.width + padding * 2;
+      const height = screenBounds.height + padding * 2;
 
       groupSelectionBox.hidden = false;
       groupSelectionBox.style.left = `${left}px`;
@@ -4613,9 +4690,13 @@
     }
 
     function screenToWorld(clientX, clientY) {
+      const scale = getCameraScale();
+      const basis = getCameraBasis();
+      const dx = clientX - camera.x;
+      const dy = clientY - camera.y;
       return {
-        x: (clientX - camera.x) / camera.scale,
-        y: (clientY - camera.y) / camera.scale
+        x: (dx * basis.cos + dy * basis.sin) / scale,
+        y: (-dx * basis.sin + dy * basis.cos) / scale
       };
     }
 
@@ -4634,30 +4715,31 @@
       const worldX = Number(node.dataset.x);
       const worldY = Number(node.dataset.y);
       const baseFontSize = Number(node.dataset.baseFontSize);
-      const renderedFontSize = baseFontSize * camera.scale;
-      node.style.left = `${camera.x + worldX * camera.scale}px`;
-      node.style.top = `${camera.y + worldY * camera.scale}px`;
+      const scale = getCameraScale();
+      const rotation = getCameraRotation();
+      const renderedFontSize = baseFontSize * scale;
+      const screenPoint = worldToScreen(worldX, worldY, scale, rotation);
+      node.style.left = `${screenPoint.x}px`;
+      node.style.top = `${screenPoint.y}px`;
       if (isCommandNode(node)) {
         node.style.fontSize = `${baseFontSize}px`;
         node.style.minWidth = "0px";
-        node.style.transform = `scale(${camera.scale})`;
+        node.style.transform = `rotate(${rotation}rad) scale(${scale})`;
         node.style.transformOrigin = "top left";
       } else {
         node.style.fontSize = `${renderedFontSize}px`;
         node.style.minWidth = `${getTextNodeMinWidthScreenPx(renderedFontSize)}px`;
-        node.style.transform = "none";
-        node.style.transformOrigin = "";
+        node.style.transform = `rotate(${rotation}rad)`;
+        node.style.transformOrigin = "top left";
       }
     }
 
     function zoomTo(newScale, clientX, clientY) {
-      if (!Number.isFinite(newScale) || newScale <= 0) return;
-      const worldPoint = screenToWorld(clientX, clientY);
-      camera.scale = newScale;
-      camera.x = clientX - worldPoint.x * camera.scale;
-      camera.y = clientY - worldPoint.y * camera.scale;
-      render();
-      scheduleViewportSave();
+      setCameraTransformAt(clientX, clientY, newScale, camera.rotation);
+    }
+
+    function rotateTo(newRotation, clientX, clientY) {
+      setCameraTransformAt(clientX, clientY, camera.scale, newRotation);
     }
 
     function cancelPhysicalWheelZoomAnimation() {
@@ -4704,13 +4786,14 @@
       if (!Number.isFinite(targetScale) || targetScale <= 0) return;
 
       const worldPoint = screenToWorld(clientX, clientY);
+      const targetOffset = getCameraScreenOffset(worldPoint.x, worldPoint.y, targetScale, camera.rotation);
       physicalWheelZoomAnimation = {
         startTime: performance.now(),
         startX: camera.x,
         startY: camera.y,
         startScale: camera.scale,
-        targetX: clientX - worldPoint.x * targetScale,
-        targetY: clientY - worldPoint.y * targetScale,
+        targetX: clientX - targetOffset.x,
+        targetY: clientY - targetOffset.y,
         targetScale
       };
 
@@ -4911,7 +4994,8 @@
         sessionStorage.setItem(getViewportStorageKey(), JSON.stringify({
           x: camera.x,
           y: camera.y,
-          scale: camera.scale
+          scale: camera.scale,
+          rotation: getCameraRotation()
         }));
         return true;
       } catch (error) {
@@ -4951,12 +5035,14 @@
         const x = Number(nextCamera.x);
         const y = Number(nextCamera.y);
         const scale = Number(nextCamera.scale);
-        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(scale) || scale <= 0) {
+        const rotation = Number(nextCamera.rotation || 0);
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(scale) || scale <= 0 || !Number.isFinite(rotation)) {
           throw new Error("Invalid viewport state.");
         }
         camera.x = x;
         camera.y = y;
         camera.scale = scale;
+        camera.rotation = normalizeRotation(rotation);
         return true;
       } catch (error) {
         console.error("Viewport restore failed:", error);
@@ -5870,8 +5956,10 @@
       cancelCameraAnimation({ preservePhysicalWheelZoom: true });
       cancelNodeLayoutAnimation();
 
-      const isZoomGesture = event.ctrlKey || event.metaKey;
-      if (isZoomGesture) {
+      if (event.altKey) {
+        cancelPhysicalWheelZoomAnimation();
+        rotateTo(camera.rotation + event.deltaY * ROTATION_SENSITIVITY, event.clientX, event.clientY);
+      } else if (event.ctrlKey || event.metaKey) {
         const factor = Math.exp(-event.deltaY * ZOOM_SENSITIVITY);
         const isPhysicalWheelStep = detectPhysicalWheelStep(event);
         const isSuddenZoomJump =
@@ -5894,6 +5982,7 @@
     }, { passive: false });
 
     let gestureStartScale = camera.scale;
+    let gestureStartRotation = camera.rotation;
     viewport.addEventListener("gesturestart", (event) => {
       event.preventDefault();
       closeNodeContextMenu();
@@ -5903,12 +5992,20 @@
       cancelNodeLayoutAnimation();
       if (IS_MOBILE_DEVICE) cancelMobileSessionsForPinch();
       gestureStartScale = camera.scale;
+      gestureStartRotation = camera.rotation;
     });
 
     viewport.addEventListener("gesturechange", (event) => {
       event.preventDefault();
       const center = getGestureZoomCenter(event);
-      zoomTo(gestureStartScale * event.scale, center.clientX, center.clientY);
+      const scale = Number.isFinite(event.scale) ? event.scale : 1;
+      const rotationDegrees = Number.isFinite(event.rotation) ? event.rotation : 0;
+      setCameraTransformAt(
+        center.clientX,
+        center.clientY,
+        gestureStartScale * scale,
+        gestureStartRotation + rotationDegrees * Math.PI / 180
+      );
     });
 
     viewport.addEventListener("dblclick", (event) => {
