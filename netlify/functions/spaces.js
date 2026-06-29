@@ -1,5 +1,5 @@
 const { MongoClient } = require("mongodb");
-const { authorSnapshot, getSessionUser } = require("./lib/users");
+const { authorSnapshot, getSessionUserWithRefresh } = require("./lib/users");
 
 const mongoUri = process.env.MONGODB_URI;
 const dbName = process.env.MONGODB_DB || "ZENBERRY_MAIN";
@@ -25,14 +25,16 @@ async function getCollection() {
   return collectionPromise;
 }
 
-function json(statusCode, body) {
-  return {
+function json(statusCode, body, cookies = []) {
+  const response = {
     statusCode,
     headers: {
       "Content-Type": "application/json"
     },
     body: JSON.stringify(body)
   };
+  if (cookies.length) response.multiValueHeaders = { "Set-Cookie": cookies };
+  return response;
 }
 
 function getSlug(event) {
@@ -85,7 +87,7 @@ exports.handler = async (event) => {
 
   try {
     const collection = await getCollection();
-    const viewer = await getSessionUser(event);
+    const { user: viewer, cookies } = await getSessionUserWithRefresh(event);
     const creator = authorSnapshot(viewer);
 
     if (event.httpMethod === "GET") {
@@ -105,7 +107,7 @@ exports.handler = async (event) => {
         { projection: { _id: 0, slug: 1, state: 1, updatedAt: 1, revision: 1, createdBy: 1 } }
       );
 
-      return json(200, { ...space, viewer });
+      return json(200, { ...space, viewer }, cookies);
     }
 
     if (event.httpMethod === "PUT") {
@@ -127,7 +129,7 @@ exports.handler = async (event) => {
         { upsert: true }
       );
 
-      return json(200, { slug, updatedAt: now, viewer });
+      return json(200, { slug, updatedAt: now, viewer }, cookies);
     }
 
     return json(405, { error: "Method not allowed." });

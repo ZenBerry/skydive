@@ -5,6 +5,7 @@ const SKYDIVE_AGENT_TOKEN = (process.env.SKYDIVE_AGENT_TOKEN || "").trim();
 const {
   handleActiveFlow,
   matchAccountIntent,
+  refreshSession,
   runAccountAction
 } = require("./lib/users");
 
@@ -49,6 +50,15 @@ function json(statusCode, body, cookies = []) {
   };
   if (cookies.length) response.multiValueHeaders = { "Set-Cookie": cookies };
   return response;
+}
+
+function clearsSessionCookie(cookies) {
+  return (cookies || []).some((cookie) => /^skydive_session=.*(?:^|;\s*)Max-Age=0(?:;|$)/.test(cookie));
+}
+
+async function sessionCookies(event, cookies = []) {
+  if (clearsSessionCookie(cookies)) return cookies || [];
+  return [...(cookies || []), ...await refreshSession(event)];
 }
 
 function cleanMessages(value, options = {}) {
@@ -592,7 +602,7 @@ exports.handler = async (event) => {
         secretInput: activeFlow.secretInput,
         user: activeFlow.user,
         model: "deterministic-account-flow"
-      }, activeFlow.cookies);
+      }, await sessionCookies(event, activeFlow.cookies));
     }
 
     const accountIntent = matchAccountIntent(latest);
@@ -603,7 +613,7 @@ exports.handler = async (event) => {
         secretInput: accountResult.secretInput,
         user: accountResult.user,
         model: "deterministic-account-intent"
-      }, accountResult.cookies);
+      }, await sessionCookies(event, accountResult.cookies));
     }
 
     const result = await runMark(event, messages, timeZone);
@@ -613,9 +623,9 @@ exports.handler = async (event) => {
         secretInput: result.secretInput,
         user: result.user,
         model: GEMMA_MODEL
-      }, result.cookies);
+      }, await sessionCookies(event, result.cookies));
     }
-    return json(200, { reply: result, secretInput: false, model: GEMMA_MODEL });
+    return json(200, { reply: result, secretInput: false, model: GEMMA_MODEL }, await sessionCookies(event));
   } catch (error) {
     if (error instanceof SyntaxError) return json(400, { error: "Request body must be valid JSON." });
     if (error instanceof HttpError) {

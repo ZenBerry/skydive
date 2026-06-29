@@ -8,11 +8,18 @@ const usersCollectionName = process.env.MONGODB_USERS_COLLECTION || "SKYDIVE_USE
 const sessionsCollectionName = process.env.MONGODB_USER_SESSIONS_COLLECTION || "SKYDIVE_USER_SESSIONS";
 const SESSION_COOKIE = "skydive_session";
 const FLOW_COOKIE = "skydive_mark_flow";
-const SESSION_SECONDS = 60 * 60 * 24 * 30;
+const DAY_SECONDS = 60 * 60 * 24;
+const SESSION_SECONDS = positiveInteger(process.env.SKYDIVE_SESSION_SECONDS, DAY_SECONDS * 400);
+const SESSION_REFRESH_SECONDS = positiveInteger(process.env.SKYDIVE_SESSION_REFRESH_SECONDS, DAY_SECONDS);
 const FLOW_SECONDS = 60 * 10;
 const scrypt = promisify(crypto.scrypt);
 
 let collectionsPromise = null;
+
+function positiveInteger(value, fallback) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
 
 async function getCollections() {
   if (!mongoUri) throw new Error("MONGODB_URI is required for user access.");
@@ -105,6 +112,48 @@ async function getSessionUser(event) {
   return session ? publicUser(session) : null;
 }
 
+async function refreshSession(event) {
+  const token = parseCookies(event)[SESSION_COOKIE];
+  if (!token) return [];
+
+  const { sessions } = await getCollections();
+  const now = new Date();
+  const hash = tokenHash(token);
+  const session = await sessions.findOne({
+    kind: "session",
+    tokenHash: hash,
+    expiresAt: { $gt: now }
+  });
+  if (!session) return [];
+
+  const lastRefresh = session.refreshedAt || session.createdAt || new Date(0);
+  const ageMs = now.getTime() - new Date(lastRefresh).getTime();
+  const remainingMs = new Date(session.expiresAt).getTime() - now.getTime();
+  const shouldRefresh = ageMs >= SESSION_REFRESH_SECONDS * 1000 ||
+    remainingMs < (SESSION_SECONDS - SESSION_REFRESH_SECONDS) * 1000;
+  if (!shouldRefresh) return [];
+
+  await sessions.updateOne(
+    { _id: session._id, kind: "session", tokenHash: hash },
+    {
+      $set: {
+        refreshedAt: now,
+        expiresAt: new Date(now.getTime() + SESSION_SECONDS * 1000)
+      }
+    }
+  );
+  return [cookie(event, SESSION_COOKIE, token, SESSION_SECONDS)];
+}
+
+async function getSessionUserWithRefresh(event) {
+  const session = await getSessionRecord(event);
+  if (!session) return { user: null, cookies: [] };
+  return {
+    user: publicUser(session),
+    cookies: await refreshSession(event)
+  };
+}
+
 async function deleteTokenRecord(event, cookieName) {
   const token = parseCookies(event)[cookieName];
   if (!token) return;
@@ -122,6 +171,7 @@ async function createSession(event, user) {
     userId: String(user._id),
     nickname: user.nickname,
     createdAt: new Date(),
+    refreshedAt: new Date(),
     expiresAt: new Date(Date.now() + SESSION_SECONDS * 1000)
   });
   return cookie(event, SESSION_COOKIE, token, SESSION_SECONDS);
@@ -405,7 +455,9 @@ async function handleActiveFlow(event, content, secret) {
 module.exports = {
   authorSnapshot,
   getSessionUser,
+  getSessionUserWithRefresh,
   handleActiveFlow,
   matchAccountIntent,
+  refreshSession,
   runAccountAction
 };
