@@ -170,11 +170,7 @@
     }
 
     .text-node[data-creator-avatar-image]::before {
-      content: "";
-      border: 0;
-      background: transparent var(--creator-avatar-image) center / contain no-repeat;
-      color: transparent;
-      font-size: 0;
+      background: var(--creator-avatar-bg, #111) var(--creator-avatar-image) center / contain no-repeat;
     }
 
     .text-node.editing {
@@ -831,7 +827,7 @@
     const ZOOM_AFFORDANCE_FULL_FONT_SCREEN_PX = 14;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 70; // Increment once for each commit.
+    const APP_VERSION = 71; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -1201,13 +1197,6 @@
       context.textAlign = "left";
       context.textBaseline = "alphabetic";
       context.font = `700 ${fontSize}px Roboto, "Helvetica Neue", Arial, sans-serif`;
-
-      const metrics = context.measureText(glyph);
-      const left = Number.isFinite(metrics.actualBoundingBoxLeft) ? metrics.actualBoundingBoxLeft : 0;
-      const right = Number.isFinite(metrics.actualBoundingBoxRight) ? metrics.actualBoundingBoxRight : metrics.width;
-      const ascent = Number.isFinite(metrics.actualBoundingBoxAscent) ? metrics.actualBoundingBoxAscent : fontSize * 0.5;
-      const descent = Number.isFinite(metrics.actualBoundingBoxDescent) ? metrics.actualBoundingBoxDescent : fontSize * 0.5;
-      context.fillText(glyph, center + (left - right) / 2, center + (ascent - descent) / 2);
 
       const dataUrl = canvas.toDataURL("image/png");
       cache.set(cacheKey, dataUrl);
