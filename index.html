@@ -828,7 +828,7 @@
     const ZOOM_AFFORDANCE_FULL_FONT_SCREEN_PX = 14;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 72; // Increment once for each commit.
+    const APP_VERSION = 73; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -1811,6 +1811,15 @@
       return Math.atan2(Math.sin(value), Math.cos(value));
     }
 
+    function getNodeRotation(node) {
+      if (!(node instanceof HTMLElement)) return 0;
+      return normalizeRotation(Number(node.dataset.rotation || 0));
+    }
+
+    function getNewNodeRotation() {
+      return normalizeRotation(-camera.rotation);
+    }
+
     function getCameraRotation() {
       return normalizeRotation(camera.rotation);
     }
@@ -1859,6 +1868,47 @@
         width: Math.max(0, right - left),
         height: Math.max(0, bottom - top)
       };
+    }
+
+    function getPointBounds(points) {
+      const xs = points.map((point) => point.x);
+      const ys = points.map((point) => point.y);
+      const minX = Math.min(...xs);
+      const minY = Math.min(...ys);
+      const maxX = Math.max(...xs);
+      const maxY = Math.max(...ys);
+      return {
+        minX,
+        minY,
+        maxX,
+        maxY,
+        width: Math.max(0.001, maxX - minX),
+        height: Math.max(0.001, maxY - minY)
+      };
+    }
+
+    function getNodeWorldCorners(node) {
+      const x = Number(node.dataset.x);
+      const y = Number(node.dataset.y);
+      const size = getNodeWorldSize(node);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return [];
+
+      const rotation = getNodeRotation(node);
+      const basis = getCameraBasis(rotation);
+      return [
+        { x, y },
+        { x: x + size.width * basis.cos, y: y + size.width * basis.sin },
+        {
+          x: x + size.width * basis.cos - size.height * basis.sin,
+          y: y + size.width * basis.sin + size.height * basis.cos
+        },
+        { x: x - size.height * basis.sin, y: y + size.height * basis.cos }
+      ];
+    }
+
+    function getNodeWorldBounds(node) {
+      const corners = getNodeWorldCorners(node);
+      return corners.length === 4 ? getPointBounds(corners) : null;
     }
 
     function setCameraTransformAt(clientX, clientY, nextScale, nextRotation) {
@@ -2100,6 +2150,13 @@
     }
 
     function getNodeWorldCenter(node) {
+      const corners = getNodeWorldCorners(node);
+      if (corners.length === 4) {
+        return {
+          x: (corners[0].x + corners[2].x) / 2,
+          y: (corners[0].y + corners[2].y) / 2
+        };
+      }
       const size = getNodeWorldSize(node);
       return {
         x: Number(node.dataset.x) + size.width / 2,
@@ -2229,12 +2286,16 @@
 
       const normalX = dx / length;
       const normalY = dy / length;
+      const rotation = getNodeRotation(node);
+      const basis = getCameraBasis(rotation);
+      const localDx = dx * basis.cos + dy * basis.sin;
+      const localDy = -dx * basis.sin + dy * basis.cos;
       const padding = getNodeAnchorPaddingWorld(node);
       const radiusX = Math.max(size.width / 2 + padding, 0.5);
       const radiusY = Math.max(size.height / 2 + padding, 0.5);
       const ellipseScale = 1 / Math.max(
         0.001,
-        Math.sqrt((dx * dx) / (radiusX * radiusX) + (dy * dy) / (radiusY * radiusY))
+        Math.sqrt((localDx * localDx) / (radiusX * radiusX) + (localDy * localDy) / (radiusY * radiusY))
       );
       const endpointGap = getLineEndpointGapWorld(node);
 
@@ -2665,7 +2726,11 @@
         const radiusY = Math.max(size.height / 2 + padding, 0.5);
         const dx = point.x - center.x;
         const dy = point.y - center.y;
-        const score = (dx * dx) / (radiusX * radiusX) + (dy * dy) / (radiusY * radiusY);
+        const rotation = getNodeRotation(node);
+        const basis = getCameraBasis(rotation);
+        const localDx = dx * basis.cos + dy * basis.sin;
+        const localDy = -dx * basis.sin + dy * basis.cos;
+        const score = (localDx * localDx) / (radiusX * radiusX) + (localDy * localDy) / (radiusY * radiusY);
         if (score <= 1 && score < bestScore) {
           bestScore = score;
           bestNode = node;
@@ -3040,14 +3105,12 @@
 
       for (const node of world.children) {
         if (!(node instanceof HTMLElement) || isNodeDeleted(node)) continue;
-        const x = Number(node.dataset.x);
-        const y = Number(node.dataset.y);
-        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-        const size = getNodeWorldSize(node);
-        minX = Math.min(minX, x);
-        minY = Math.min(minY, y);
-        maxX = Math.max(maxX, x + size.width);
-        maxY = Math.max(maxY, y + size.height);
+        const bounds = getNodeWorldBounds(node);
+        if (!bounds) continue;
+        minX = Math.min(minX, bounds.minX);
+        minY = Math.min(minY, bounds.minY);
+        maxX = Math.max(maxX, bounds.maxX);
+        maxY = Math.max(maxY, bounds.maxY);
       }
 
       if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
@@ -3734,6 +3797,8 @@
         y: Number(node.dataset.y),
         baseFontSize: Number(node.dataset.baseFontSize)
       };
+      const rotation = getNodeRotation(node);
+      if (Math.abs(rotation) >= 0.000001) base.rotation = rotation;
       const createdAt = normalizeTimestamp(node.dataset.createdAt);
       const deletedAt = normalizeTimestamp(node.dataset.deletedAt);
       if (createdAt) base.createdAt = createdAt;
@@ -4073,13 +4138,12 @@
 
       for (const node of selectedNodes) {
         if (!world.contains(node) || isNodeDeleted(node)) continue;
-        const x = Number(node.dataset.x);
-        const y = Number(node.dataset.y);
-        const size = getNodeWorldSize(node);
-        minX = Math.min(minX, x);
-        minY = Math.min(minY, y);
-        maxX = Math.max(maxX, x + size.width);
-        maxY = Math.max(maxY, y + size.height);
+        const bounds = getNodeWorldBounds(node);
+        if (!bounds) continue;
+        minX = Math.min(minX, bounds.minX);
+        minY = Math.min(minY, bounds.minY);
+        maxX = Math.max(maxX, bounds.maxX);
+        maxY = Math.max(maxY, bounds.maxY);
       }
 
       if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
@@ -4305,12 +4369,7 @@
       clearSelection();
       const point = screenToWorld(clientX, clientY);
       const node = createTextNode(point.x, point.y);
-      const nodeWorldSize = getNodeWorldSize(node);
-      setNodePosition(
-        node,
-        point.x - nodeWorldSize.width / 2,
-        point.y - nodeWorldSize.height / 2
-      );
+      setNodeCenteredAtWorldPoint(node, point.x, point.y);
       scheduleAutosave();
       startEditing(node);
     }
@@ -4711,12 +4770,23 @@
       }
     }
 
+    function setNodeCenteredAtWorldPoint(node, centerX, centerY) {
+      const size = getNodeWorldSize(node);
+      const rotation = getNodeRotation(node);
+      const basis = getCameraBasis(rotation);
+      const offsetX = size.width * 0.5 * basis.cos - size.height * 0.5 * basis.sin;
+      const offsetY = size.width * 0.5 * basis.sin + size.height * 0.5 * basis.cos;
+      setNodePosition(node, centerX - offsetX, centerY - offsetY);
+    }
+
     function renderNode(node) {
       const worldX = Number(node.dataset.x);
       const worldY = Number(node.dataset.y);
       const baseFontSize = Number(node.dataset.baseFontSize);
       const scale = getCameraScale();
       const rotation = getCameraRotation();
+      const nodeRotation = getNodeRotation(node);
+      const totalRotation = normalizeRotation(rotation + nodeRotation);
       const renderedFontSize = baseFontSize * scale;
       const screenPoint = worldToScreen(worldX, worldY, scale, rotation);
       node.style.left = `${screenPoint.x}px`;
@@ -4724,12 +4794,12 @@
       if (isCommandNode(node)) {
         node.style.fontSize = `${baseFontSize}px`;
         node.style.minWidth = "0px";
-        node.style.transform = `rotate(${rotation}rad) scale(${scale})`;
+        node.style.transform = `rotate(${totalRotation}rad) scale(${scale})`;
         node.style.transformOrigin = "top left";
       } else {
         node.style.fontSize = `${renderedFontSize}px`;
         node.style.minWidth = `${getTextNodeMinWidthScreenPx(renderedFontSize)}px`;
-        node.style.transform = `rotate(${rotation}rad)`;
+        node.style.transform = `rotate(${totalRotation}rad)`;
         node.style.transformOrigin = "top left";
       }
     }
@@ -5120,6 +5190,9 @@
         const baseFontSize = Number.isFinite(Number(entry.baseFontSize)) && Number(entry.baseFontSize) > 0
           ? Number(entry.baseFontSize)
           : BASE_TEXT_PX / camera.scale;
+        const rotation = Number.isFinite(Number(entry.rotation))
+          ? normalizeRotation(Number(entry.rotation))
+          : 0;
         if (entry.kind === "command") {
           const commandId = typeof entry.commandId === "string" ? entry.commandId : "";
           const commandVersion = typeof entry.commandVersion === "string" ? entry.commandVersion : "";
@@ -5130,6 +5203,7 @@
             createdAt: entry.createdAt,
             deletedAt: entry.deletedAt,
             createdBy: entry.createdBy,
+            rotation,
             preserveTimestamps: true
           });
         } else {
@@ -5137,6 +5211,7 @@
             createdAt: entry.createdAt,
             deletedAt: entry.deletedAt,
             createdBy: entry.createdBy,
+            rotation,
             preserveTimestamps: true
           });
         }
@@ -5668,6 +5743,11 @@
 
       // Keeps newly-created text visually consistent regardless of current zoom.
       node.dataset.baseFontSize = String(baseFontSize);
+      const rotation = Object.prototype.hasOwnProperty.call(options, "rotation")
+        ? Number(options.rotation)
+        : getNewNodeRotation();
+      const normalizedRotation = normalizeRotation(rotation);
+      if (Math.abs(normalizedRotation) >= 0.000001) node.dataset.rotation = String(normalizedRotation);
       setNodeTimestamps(node, options);
       setNodeCreator(node, options.createdBy || (!options.preserveTimestamps ? currentUser : null));
       setNodePosition(node, worldX, worldY);
@@ -5697,6 +5777,11 @@
       writeCommandState(node, commandState);
       node.contentEditable = "false";
       node.dataset.baseFontSize = String(baseFontSize);
+      const rotation = Object.prototype.hasOwnProperty.call(options, "rotation")
+        ? Number(options.rotation)
+        : getNewNodeRotation();
+      const normalizedRotation = normalizeRotation(rotation);
+      if (Math.abs(normalizedRotation) >= 0.000001) node.dataset.rotation = String(normalizedRotation);
       setNodeTimestamps(node, options);
       setNodeCreator(node, options.createdBy || (!options.preserveTimestamps ? currentUser : null));
       setNodePosition(node, worldX, worldY);
@@ -6017,12 +6102,7 @@
       clearSelection();
       const point = screenToWorld(event.clientX, event.clientY);
       const node = createTextNode(point.x, point.y);
-      const nodeWorldSize = getNodeWorldSize(node);
-      setNodePosition(
-        node,
-        point.x - nodeWorldSize.width / 2,
-        point.y - nodeWorldSize.height / 2
-      );
+      setNodeCenteredAtWorldPoint(node, point.x, point.y);
       scheduleAutosave();
       startEditing(node);
     });
