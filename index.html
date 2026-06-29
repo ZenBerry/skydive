@@ -7,7 +7,7 @@
   <script src="https://unpkg.com/@zenberry/quico@latest/dist/quico.js"></script>
   <quico>S</quico>
   <style>
-    @import url("https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap");
+    @import url("https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap");
 
     @font-face {
       font-family: "Myriad Pro";
@@ -154,19 +154,27 @@
       position: absolute;
       top: 50%;
       right: calc(100% + 0.34em);
-      width: 0.82em;
-      height: 0.82em;
+      width: 0.9em;
+      height: 0.9em;
       display: grid;
       place-items: center;
       border-radius: 50%;
       background: var(--creator-avatar-bg, #111);
       border: 0.045em solid var(--creator-avatar-border, #111);
       color: var(--creator-avatar-fg, #fff);
-      font: 500 0.34em/1 "Roboto", "Helvetica Neue", Arial, sans-serif;
+      font: 700 0.28em/1 "Roboto", "Helvetica Neue", Arial, sans-serif;
       letter-spacing: 0;
       text-transform: uppercase;
       transform: translateY(-50%);
       pointer-events: auto;
+    }
+
+    .text-node[data-creator-avatar-image]::before {
+      content: "";
+      border: 0;
+      background: transparent var(--creator-avatar-image) center / contain no-repeat;
+      color: transparent;
+      font-size: 0;
     }
 
     .text-node.editing {
@@ -823,7 +831,7 @@
     const ZOOM_AFFORDANCE_FULL_FONT_SCREEN_PX = 14;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 69; // Increment once for each commit.
+    const APP_VERSION = 70; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -1162,6 +1170,50 @@
       });
     }
 
+    function drawQuicoAvatarDataUrl(character, palette) {
+      const glyph = Array.from(String(character || "").trim())[0] || "?";
+      const cacheKey = [glyph, palette.background, palette.border, palette.foreground].join("|");
+      const cache = drawQuicoAvatarDataUrl.cache || (drawQuicoAvatarDataUrl.cache = new Map());
+      if (cache.has(cacheKey)) return cache.get(cacheKey);
+
+      const size = 256;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+
+      const context = canvas.getContext("2d");
+      if (!context) return "";
+
+      const center = size / 2;
+      const radius = size * 0.44;
+      context.clearRect(0, 0, size, size);
+      context.beginPath();
+      context.arc(center, center, radius, 0, Math.PI * 2);
+      context.closePath();
+      context.fillStyle = palette.background;
+      context.fill();
+      context.lineWidth = 24;
+      context.strokeStyle = palette.border;
+      context.stroke();
+
+      const fontSize = Math.round(size * 0.56);
+      context.fillStyle = palette.foreground;
+      context.textAlign = "left";
+      context.textBaseline = "alphabetic";
+      context.font = `700 ${fontSize}px Roboto, "Helvetica Neue", Arial, sans-serif`;
+
+      const metrics = context.measureText(glyph);
+      const left = Number.isFinite(metrics.actualBoundingBoxLeft) ? metrics.actualBoundingBoxLeft : 0;
+      const right = Number.isFinite(metrics.actualBoundingBoxRight) ? metrics.actualBoundingBoxRight : metrics.width;
+      const ascent = Number.isFinite(metrics.actualBoundingBoxAscent) ? metrics.actualBoundingBoxAscent : fontSize * 0.5;
+      const descent = Number.isFinite(metrics.actualBoundingBoxDescent) ? metrics.actualBoundingBoxDescent : fontSize * 0.5;
+      context.fillText(glyph, center + (left - right) / 2, center + (ascent - descent) / 2);
+
+      const dataUrl = canvas.toDataURL("image/png");
+      cache.set(cacheKey, dataUrl);
+      return dataUrl;
+    }
+
     function getAvatarPalette(accentColor) {
       const background = normalizeAvatarColor(accentColor) || "#111111";
       const luminance = avatarLuminance(background);
@@ -1191,6 +1243,14 @@
       node.style.setProperty("--creator-avatar-bg", palette.background);
       node.style.setProperty("--creator-avatar-border", palette.border);
       node.style.setProperty("--creator-avatar-fg", palette.foreground);
+      const dataUrl = drawQuicoAvatarDataUrl(Array.from(creator.nickname)[0] || "?", palette);
+      if (dataUrl) {
+        node.dataset.creatorAvatarImage = "true";
+        node.style.setProperty("--creator-avatar-image", `url("${dataUrl}")`);
+      } else {
+        delete node.dataset.creatorAvatarImage;
+        node.style.removeProperty("--creator-avatar-image");
+      }
     }
 
     function refreshCreatorAvatars() {
@@ -1212,9 +1272,11 @@
         delete node.dataset.creatorNickname;
         delete node.dataset.creatorInitial;
         delete node.dataset.creatorAccentColor;
+        delete node.dataset.creatorAvatarImage;
         node.style.removeProperty("--creator-avatar-bg");
         node.style.removeProperty("--creator-avatar-border");
         node.style.removeProperty("--creator-avatar-fg");
+        node.style.removeProperty("--creator-avatar-image");
         node.removeAttribute("title");
         return;
       }

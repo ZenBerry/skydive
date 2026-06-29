@@ -26,6 +26,8 @@ const NAMED_COLORS = new Map(Object.entries({
   orange: "#f97316",
   purple: "#7c3aed",
   violet: "#7c3aed",
+  "light purple": "#c084fc",
+  lavender: "#c4b5fd",
   pink: "#ec4899",
   magenta: "#d946ef",
   cyan: "#06b6d4",
@@ -372,17 +374,21 @@ async function setAccentColor(event, args = {}) {
   await users.updateOne({ _id: current.id }, { $set: { accentColor, updatedAt: now } });
   await sessions.updateMany({ kind: "session", userId: current.id }, { $set: { accentColor } });
 
-  await spaces.updateMany(
-    { "state.nodes.createdBy.id": current.id },
-    {
-      $set: {
-        "state.nodes.$[node].createdBy.accentColor": accentColor,
-        updatedAt: Date.now()
+  try {
+    await spaces.updateMany(
+      { "state.nodes.createdBy.id": current.id },
+      {
+        $set: {
+          "state.nodes.$[node].createdBy.accentColor": accentColor,
+          updatedAt: Date.now()
+        },
+        $inc: { revision: 1 }
       },
-      $inc: { revision: 1 }
-    },
-    { arrayFilters: [{ "node.createdBy.id": current.id }] }
-  );
+      { arrayFilters: [{ "node.createdBy.id": current.id }] }
+    );
+  } catch (error) {
+    console.error("Accent color saved, but existing node repaint failed:", error);
+  }
 
   return accountReply("Done — I repainted your bullet color.", { user });
 }
@@ -405,7 +411,7 @@ async function beginDeletion(event) {
   });
 }
 
-async function runAccountAction(event, name) {
+async function runAccountAction(event, name, args = {}) {
   if (name === "user_begin_registration") return beginRegistration(event);
   if (name === "user_begin_login") return beginLogin(event);
   if (name === "user_logout") return logout(event);

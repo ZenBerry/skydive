@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#ffffff">
   <title>Mark — Skydive</title>
   <style>
-    @import url("https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap");
+    @import url("https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap");
 
     @font-face {
       font-family: "Myriad Pro";
@@ -116,7 +116,7 @@
       flex: none;
       display: grid;
       grid-template-columns: auto 1fr auto auto;
-      align-items: end;
+      align-items: center;
       column-gap: 14px;
       border-top: 1px solid #dedede;
       padding: 18px 0 max(22px, env(safe-area-inset-bottom, 0));
@@ -128,16 +128,21 @@
       height: 28px;
       display: grid;
       place-items: center;
-      align-self: end;
-      margin-bottom: 1px;
       border: 1.5px solid var(--user-bullet-border, #111);
       border-radius: 50%;
       background: var(--user-bullet-bg, #111);
       color: var(--user-bullet-fg, #fff);
-      font: 500 11px/1 "Roboto", "Helvetica Neue", Arial, sans-serif;
+      font: 700 10px/1 "Roboto", "Helvetica Neue", Arial, sans-serif;
       letter-spacing: 0;
       text-transform: uppercase;
       user-select: none;
+    }
+
+    #current-user-bullet.has-bullet-image {
+      border: 0;
+      background: transparent var(--user-bullet-image) center / contain no-repeat;
+      color: transparent;
+      font-size: 0;
     }
 
     #prompt {
@@ -151,7 +156,10 @@
       outline: 0;
       background: transparent;
       color: #111;
-      font: 400 19px/1.45 inherit;
+      font-family: inherit;
+      font-size: 19px;
+      font-weight: 400;
+      line-height: 1.45;
     }
 
     #prompt::placeholder {
@@ -194,11 +202,18 @@
     }
 
     #send {
-      padding: 3px 0 2px;
+      min-width: 32px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      padding: 0;
       border: 0;
       background: transparent;
       color: #111;
-      font: 500 15px/1.5 inherit;
+      font-family: inherit;
+      font-size: 15px;
+      font-weight: 500;
+      line-height: 1;
       cursor: pointer;
     }
 
@@ -311,6 +326,50 @@
       });
     }
 
+    function drawQuicoAvatarDataUrl(character, palette) {
+      const glyph = Array.from(String(character || "").trim())[0] || "?";
+      const cacheKey = [glyph, palette.background, palette.border, palette.foreground].join("|");
+      const cache = drawQuicoAvatarDataUrl.cache || (drawQuicoAvatarDataUrl.cache = new Map());
+      if (cache.has(cacheKey)) return cache.get(cacheKey);
+
+      const size = 256;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+
+      const context = canvas.getContext("2d");
+      if (!context) return "";
+
+      const center = size / 2;
+      const radius = size * 0.44;
+      context.clearRect(0, 0, size, size);
+      context.beginPath();
+      context.arc(center, center, radius, 0, Math.PI * 2);
+      context.closePath();
+      context.fillStyle = palette.background;
+      context.fill();
+      context.lineWidth = 24;
+      context.strokeStyle = palette.border;
+      context.stroke();
+
+      const fontSize = Math.round(size * 0.56);
+      context.fillStyle = palette.foreground;
+      context.textAlign = "left";
+      context.textBaseline = "alphabetic";
+      context.font = `700 ${fontSize}px Roboto, "Helvetica Neue", Arial, sans-serif`;
+
+      const metrics = context.measureText(glyph);
+      const left = Number.isFinite(metrics.actualBoundingBoxLeft) ? metrics.actualBoundingBoxLeft : 0;
+      const right = Number.isFinite(metrics.actualBoundingBoxRight) ? metrics.actualBoundingBoxRight : metrics.width;
+      const ascent = Number.isFinite(metrics.actualBoundingBoxAscent) ? metrics.actualBoundingBoxAscent : fontSize * 0.5;
+      const descent = Number.isFinite(metrics.actualBoundingBoxDescent) ? metrics.actualBoundingBoxDescent : fontSize * 0.5;
+      context.fillText(glyph, center + (left - right) / 2, center + (ascent - descent) / 2);
+
+      const dataUrl = canvas.toDataURL("image/png");
+      cache.set(cacheKey, dataUrl);
+      return dataUrl;
+    }
+
     function getAvatarPalette(accentColor) {
       const background = normalizeAvatarColor(accentColor) || "#111111";
       const luminance = avatarLuminance(background);
@@ -325,11 +384,21 @@
 
     function renderCurrentUserBullet() {
       const palette = getAvatarPalette(currentUser && currentUser.accentColor);
+      const glyph = currentUser ? Array.from(currentUser.nickname)[0] || "?" : "?";
+      const dataUrl = drawQuicoAvatarDataUrl(glyph, palette);
       currentUserBullet.style.setProperty("--user-bullet-bg", palette.background);
       currentUserBullet.style.setProperty("--user-bullet-border", palette.border);
       currentUserBullet.style.setProperty("--user-bullet-fg", palette.foreground);
-      currentUserBullet.textContent = currentUser ? Array.from(currentUser.nickname)[0] || "?" : "?";
+      currentUserBullet.textContent = glyph;
+      if (dataUrl) {
+        currentUserBullet.classList.add("has-bullet-image");
+        currentUserBullet.style.setProperty("--user-bullet-image", `url("${dataUrl}")`);
+      } else {
+        currentUserBullet.classList.remove("has-bullet-image");
+        currentUserBullet.style.removeProperty("--user-bullet-image");
+      }
       currentUserBullet.title = currentUser ? currentUser.nickname : "Logged out";
+      currentUserBullet.setAttribute("aria-label", currentUser ? `Current user: ${currentUser.nickname}` : "Logged out");
     }
 
     function setCurrentUser(value) {
