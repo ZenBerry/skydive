@@ -303,15 +303,17 @@
     elements.wave.dataset.fallback = "true";
     runtime.audio = audio;
 
+    const getDuration = () => Number.isFinite(audio.duration) ? audio.duration : 0;
+
     audio.addEventListener("loadedmetadata", () => {
-      elements.time.textContent = `0:00 / ${formatTime(audio.duration)}`;
+      elements.time.textContent = `0:00 / ${formatTime(getDuration())}`;
       elements.start.disabled = false;
       elements.pause.disabled = false;
       elements.stop.disabled = false;
       if (elements.speed) elements.speed.disabled = false;
     });
     audio.addEventListener("timeupdate", () => {
-      elements.time.textContent = `${formatTime(audio.currentTime)} / ${formatTime(audio.duration)}`;
+      elements.time.textContent = `${formatTime(audio.currentTime)} / ${formatTime(getDuration())}`;
     });
     audio.addEventListener("error", () => {
       elements.status.textContent = "Could not load audio";

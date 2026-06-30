@@ -201,11 +201,17 @@
       display: none !important;
     }
 
-    .command-node {
+    .command-node,
+    .external-link-card {
       --widget-color: #ffffff;
       --widget-button-color: #e8e8e8;
       --widget-button-hover-color: #f0f0f0;
       --widget-border-color: #d6d6d6;
+      --widget-field-color: #ffffff;
+      --widget-field-border-color: #d6d6d6;
+    }
+
+    .command-node {
       min-width: 0;
       min-height: 0;
       white-space: normal;
@@ -266,9 +272,9 @@
       max-width: 18em;
       margin: 0 0.12em;
       padding: 0.45em 0.52em 0.42em;
-      border: 0.04em solid #d6d6d6;
+      border: 0.04em solid var(--widget-border-color);
       border-radius: 0.55em;
-      background: #fff;
+      background: var(--widget-color);
       box-shadow: none;
       color: #3f3328;
       cursor: grab;
@@ -302,7 +308,7 @@
     .external-link-card button {
       border: 0;
       border-radius: 0.38em;
-      background: #e8e8e8;
+      background: var(--widget-button-color);
       padding: 0.26em 0.42em;
       color: #4b3b2d;
       font: 500 0.45em/1 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
@@ -310,7 +316,7 @@
     }
 
     .external-link-card button:hover {
-      background: #f0f0f0;
+      background: var(--widget-button-hover-color);
     }
 
     .external-link-editor {
@@ -326,9 +332,9 @@
       width: 17em;
       max-width: 100%;
       box-sizing: border-box;
-      border: 0.04em solid #e0d2c0;
+      border: 0.04em solid var(--widget-field-border-color);
       border-radius: 0.38em;
-      background: #fffdf9;
+      background: var(--widget-field-color);
       padding: 0.28em 0.38em;
       color: #3f3328;
       font: 400 0.46em/1.2 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
@@ -828,7 +834,7 @@
     const ZOOM_AFFORDANCE_FULL_FONT_SCREEN_PX = 14;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 74; // Increment once for each commit.
+    const APP_VERSION = 75; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -887,6 +893,7 @@
     let lineRenderFrame = null;
     let lineDraftAnimationFrame = null;
     let contextMenuNode = null;
+    let contextMenuWidget = null;
     let contextMenuLineId = null;
     let contextMenuSelectionRange = null;
     let pendingLinkSourceNode = null;
@@ -1411,7 +1418,10 @@
       card.contentEditable = "false";
       card.dataset.href = normalizedHref;
       card.dataset.label = typeof label === "string" ? label.trim() : "";
+      const color = normalizeWidgetColor(options.widgetColor || options.color || "");
+      if (color && color !== DEFAULT_WIDGET_COLOR) card.dataset.widgetColor = color;
       attachExternalLinkCardPointerHandlers(card);
+      applyWidgetColor(card);
 
       renderExternalLinkCard(card, options);
       return card;
@@ -1425,6 +1435,7 @@
       const isEditing = Boolean(options.editing);
       card.dataset.displayLabel = getExternalLinkDisplayLabel(href, label);
       card.replaceChildren();
+      applyWidgetColor(card);
 
       const actions = document.createElement("span");
       actions.className = "external-link-actions";
@@ -1540,7 +1551,9 @@
             ""
           );
           if (href) {
-            const card = createExternalLinkCard(href, element.dataset.label || "");
+            const card = createExternalLinkCard(href, element.dataset.label || "", {
+              widgetColor: element.dataset.widgetColor || ""
+            });
             if (card) target.appendChild(card);
             return;
           }
@@ -1660,6 +1673,7 @@
 
     function closeNodeContextMenu() {
       contextMenuNode = null;
+      contextMenuWidget = null;
       contextMenuSelectionRange = null;
       widgetColorPicker.hidden = true;
       nodeContextMenu.hidden = true;
@@ -1741,15 +1755,16 @@
       }
     }
 
-    function openNodeContextMenu(node, clientX, clientY) {
+    function openNodeContextMenu(node, clientX, clientY, eventTarget = null) {
       closeLineContextMenu();
       closeCanvasContextMenu();
       closeLinkNodeDialog();
       contextMenuNode = node;
-      contextMenuSelectionRange = isCommandNode(node) ? null : getSelectionRangeWithinNode(node);
+      contextMenuWidget = eventTargetExternalLinkCard(eventTarget, node);
+      contextMenuSelectionRange = isCommandNode(node) || contextMenuWidget ? null : getSelectionRangeWithinNode(node);
       linkSelectionBtn.disabled = !contextMenuSelectionRange;
-      widgetColorPicker.hidden = !isCommandNode(node);
-      updateWidgetColorPicker(node);
+      widgetColorPicker.hidden = !isWidgetColorable(contextMenuWidget || node);
+      updateWidgetColorPicker(contextMenuWidget || node);
       nodeContextMenu.hidden = false;
 
       const menuRect = nodeContextMenu.getBoundingClientRect();
@@ -3548,6 +3563,21 @@
       return node instanceof HTMLElement && node.dataset.kind === "command";
     }
 
+    function isExternalLinkCard(element) {
+      return element instanceof HTMLElement && element.classList.contains("external-link-card");
+    }
+
+    function isWidgetColorable(element) {
+      return isCommandNode(element) || isExternalLinkCard(element);
+    }
+
+    function eventTargetExternalLinkCard(target, node) {
+      if (!(target instanceof Element)) return null;
+      const card = target.closest(".external-link-card");
+      if (!isExternalLinkCard(card) || !node.contains(card)) return null;
+      return card;
+    }
+
     function isCommandInteractiveTarget(target) {
       if (!(target instanceof Element)) return false;
       return Boolean(target.closest("button, input, textarea, select, [data-command-interactive]"));
@@ -3614,18 +3644,26 @@
     }
 
     function getWidgetColor(node) {
-      if (!isCommandNode(node)) return DEFAULT_WIDGET_COLOR;
-      return normalizeWidgetColor(readCommandState(node)[WIDGET_COLOR_STATE_KEY]) || DEFAULT_WIDGET_COLOR;
+      if (isCommandNode(node)) {
+        return normalizeWidgetColor(readCommandState(node)[WIDGET_COLOR_STATE_KEY]) || DEFAULT_WIDGET_COLOR;
+      }
+      if (isExternalLinkCard(node)) {
+        return normalizeWidgetColor(node.dataset.widgetColor || "") || DEFAULT_WIDGET_COLOR;
+      }
+      return DEFAULT_WIDGET_COLOR;
     }
 
     function applyWidgetColor(node) {
-      if (!isCommandNode(node)) return;
+      if (!isWidgetColorable(node)) return;
       const color = getWidgetColor(node);
-      node.dataset.widgetColor = color;
+      if (isCommandNode(node) || color !== DEFAULT_WIDGET_COLOR) node.dataset.widgetColor = color;
+      else delete node.dataset.widgetColor;
       node.style.setProperty("--widget-color", color);
       node.style.setProperty("--widget-button-color", adjustWidgetColorLightness(color, -9));
       node.style.setProperty("--widget-button-hover-color", adjustWidgetColorLightness(color, -6));
       node.style.setProperty("--widget-border-color", adjustWidgetColorLightness(color, -16));
+      node.style.setProperty("--widget-field-color", adjustWidgetColorLightness(color, 4));
+      node.style.setProperty("--widget-field-border-color", adjustWidgetColorLightness(color, -14));
     }
 
     function preserveWidgetColor(node, nextState) {
@@ -3645,12 +3683,18 @@
     }
 
     function setWidgetColor(node, value) {
-      if (!isCommandNode(node)) return;
-      const state = readCommandState(node);
+      if (!isWidgetColorable(node)) return;
       const color = normalizeWidgetColor(value) || DEFAULT_WIDGET_COLOR;
-      if (color !== DEFAULT_WIDGET_COLOR) state[WIDGET_COLOR_STATE_KEY] = color;
-      else delete state[WIDGET_COLOR_STATE_KEY];
-      writeCommandState(node, state);
+      if (isCommandNode(node)) {
+        const state = readCommandState(node);
+        if (color !== DEFAULT_WIDGET_COLOR) state[WIDGET_COLOR_STATE_KEY] = color;
+        else delete state[WIDGET_COLOR_STATE_KEY];
+        writeCommandState(node, state);
+      } else if (color !== DEFAULT_WIDGET_COLOR) {
+        node.dataset.widgetColor = color;
+      } else {
+        delete node.dataset.widgetColor;
+      }
       applyWidgetColor(node);
       scheduleAutosave();
     }
@@ -4045,6 +4089,12 @@
         state,
         Number(sourceNode.dataset.baseFontSize)
       );
+      if (command.id === AUDIO_WIDGET_COMMAND_ID) {
+        const recordButton = commandNode.querySelector('[data-action="record"]');
+        if (recordButton instanceof HTMLButtonElement && !recordButton.disabled) {
+          recordButton.click();
+        }
+      }
 
       if (!(sourceNode.textContent || "").trim()) {
         softDeleteNodes([sourceNode]);
@@ -5486,7 +5536,7 @@
       const mimeType = file && typeof file.type === "string" ? file.type.toLowerCase() : "";
       if (mimeType.startsWith("audio/")) return true;
       const extension = getFileExtension(file && file.name);
-      return new Set(["aac", "aif", "aiff", "flac", "m4a", "mp3", "oga", "ogg", "opus", "wav", "webm"]).has(extension);
+      return new Set(["aac", "aif", "aiff", "caf", "flac", "m4a", "mp3", "oga", "ogg", "opus", "wav", "wave", "webm"]).has(extension);
     }
 
     function createAudioUploadNode(file, worldX, worldY) {
@@ -5827,7 +5877,7 @@
       if (!node || !world.contains(node)) return;
       event.preventDefault();
       event.stopPropagation();
-      openNodeContextMenu(node, event.clientX, event.clientY);
+      openNodeContextMenu(node, event.clientX, event.clientY, event.target);
     });
 
     lineLayer.addEventListener("contextmenu", (event) => {
@@ -5864,9 +5914,9 @@
       if (!(event.target instanceof Element)) return;
       const swatch = event.target.closest(".widget-color-swatch");
       if (!swatch || !widgetColorPicker.contains(swatch)) return;
-      const node = contextMenuNode;
-      if (!node) return;
-      setWidgetColor(node, swatch.dataset.widgetColor || "");
+      const widget = contextMenuWidget || contextMenuNode;
+      if (!widget) return;
+      setWidgetColor(widget, swatch.dataset.widgetColor || "");
       closeNodeContextMenu();
     });
 
