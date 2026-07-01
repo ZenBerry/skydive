@@ -614,11 +614,6 @@
       cursor: nesw-resize;
     }
 
-    #group-selection-box[data-mode="resize"] .group-selection-handle[data-handle="n"],
-    #group-selection-box[data-mode="resize"] .group-selection-handle[data-handle="s"] {
-      cursor: ns-resize;
-    }
-
     #group-selection-box[data-mode="rotate"] {
       cursor: default;
     }
@@ -654,15 +649,6 @@
       border-top: 0;
       border-radius: 0 0 10px 0;
     }
-
-    #group-selection-box[data-mode="rotate"] .group-selection-handle[data-handle="n"],
-    #group-selection-box[data-mode="rotate"] .group-selection-handle[data-handle="s"] {
-      height: 6px;
-      border-left: 0;
-      border-right: 0;
-      cursor: grab;
-    }
-
     .fit-marker {
       position: fixed;
       width: 10px;
@@ -761,10 +747,8 @@
     <div id="marquee-selection" hidden></div>
     <div id="group-selection-box" hidden>
       <div class="group-selection-handle" data-handle="nw"></div>
-      <div class="group-selection-handle" data-handle="n"></div>
       <div class="group-selection-handle" data-handle="ne"></div>
       <div class="group-selection-handle" data-handle="sw"></div>
-      <div class="group-selection-handle" data-handle="s"></div>
       <div class="group-selection-handle" data-handle="se"></div>
     </div>
   </div>
@@ -896,7 +880,7 @@
     const ZOOM_AFFORDANCE_FULL_FONT_SCREEN_PX = 14;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 75; // Increment once for each commit.
+    const APP_VERSION = 76; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -970,6 +954,7 @@
     let groupTransform = null;
     let selectionBoundsWorld = null;
     let selectionHandleMode = "resize";
+    let selectionOverlayRotation = 0;
     let suppressSelectionModeToggleUntil = 0;
     let navigationFitTargetNode = null;
     let navigationFitMarkersVisible = false;
@@ -1986,6 +1971,29 @@
       return {
         x: center.x + dx * basis.cos - dy * basis.sin,
         y: center.y + dx * basis.sin + dy * basis.cos
+      };
+    }
+
+    function getBoundsCenter(bounds) {
+      return {
+        x: bounds.minX + bounds.width * 0.5,
+        y: bounds.minY + bounds.height * 0.5
+      };
+    }
+
+    function worldToSelectionLocal(point, rotation = selectionOverlayRotation) {
+      const basis = getCameraBasis(rotation);
+      return {
+        x: point.x * basis.cos + point.y * basis.sin,
+        y: -point.x * basis.sin + point.y * basis.cos
+      };
+    }
+
+    function selectionLocalToWorld(point, rotation = selectionOverlayRotation) {
+      const basis = getCameraBasis(rotation);
+      return {
+        x: point.x * basis.cos - point.y * basis.sin,
+        y: point.x * basis.sin + point.y * basis.cos
       };
     }
 
@@ -4278,6 +4286,14 @@
       }
     }
 
+    function getSelectionOverlayRotationForNodes(nodes) {
+      if (nodes.size === 1) {
+        const [node] = nodes;
+        return getNodeRotation(node);
+      }
+      return 0;
+    }
+
     function renderGroupSelectionBox() {
       if (selectedNodes.size === 0 || !selectionBoundsWorld) {
         groupSelectionBox.hidden = true;
@@ -4287,51 +4303,49 @@
       const padding = getGroupSelectionPaddingScreenPx();
       const handleSize = getGroupSelectionHandleScreenPx();
       const handleOffset = -(handleSize / 2 + 1);
-      const screenBounds = getTransformedWorldRectBounds(selectionBoundsWorld);
-      const left = screenBounds.left - padding;
-      const top = screenBounds.top - padding;
-      const width = screenBounds.width + padding * 2;
-      const height = screenBounds.height + padding * 2;
+      const scale = getCameraScale();
+      const centerWorld = selectionLocalToWorld(getBoundsCenter(selectionBoundsWorld));
+      const screenCenter = worldToScreen(centerWorld.x, centerWorld.y);
+      const width = selectionBoundsWorld.width * scale + padding * 2;
+      const height = selectionBoundsWorld.height * scale + padding * 2;
+      const left = screenCenter.x - width * 0.5;
+      const top = screenCenter.y - height * 0.5;
 
       groupSelectionBox.hidden = false;
       groupSelectionBox.style.left = `${left}px`;
       groupSelectionBox.style.top = `${top}px`;
       groupSelectionBox.style.width = `${width}px`;
       groupSelectionBox.style.height = `${height}px`;
+      groupSelectionBox.style.transform = `rotate(${normalizeRotation(getCameraRotation() + selectionOverlayRotation)}rad)`;
+      groupSelectionBox.style.transformOrigin = "50% 50%";
       groupSelectionBox.dataset.mode = selectionHandleMode;
 
       for (const handle of groupSelectionHandles) {
         handle.style.width = "";
         handle.style.height = "";
         const name = handle.dataset.handle || "";
-        const isMiddle = name === "n" || name === "s";
-        const size = selectionHandleMode === "rotate" && !isMiddle
+        const size = selectionHandleMode === "rotate"
           ? handleSize + 2
           : handleSize;
-        const middleHeight = Math.max(4, Math.round(size * 0.5));
         handle.style.width = `${size}px`;
-        handle.style.height = `${isMiddle && selectionHandleMode === "rotate" ? middleHeight : size}px`;
+        handle.style.height = `${size}px`;
         handle.style.left = "";
         handle.style.right = "";
         handle.style.top = "";
         handle.style.bottom = "";
+        handle.style.transform = "";
 
         if (name.includes("n")) handle.style.top = `${handleOffset}px`;
         if (name.includes("s")) handle.style.bottom = `${handleOffset}px`;
         if (name.includes("w")) handle.style.left = `${handleOffset}px`;
         if (name.includes("e")) handle.style.right = `${handleOffset}px`;
-        if (name === "n" || name === "s") {
-          handle.style.left = "50%";
-          handle.style.transform = "translateX(-50%)";
-        } else {
-          handle.style.transform = "";
-        }
       }
     }
 
     function refreshSelectionBounds() {
       if (selectedNodes.size === 0) {
         selectionBoundsWorld = null;
+        selectionOverlayRotation = 0;
         setSelectionHandleMode("resize");
         renderGroupSelectionBox();
         return;
@@ -4344,17 +4358,21 @@
 
       for (const node of selectedNodes) {
         if (!world.contains(node) || isNodeDeleted(node)) continue;
-        const bounds = getNodeWorldBounds(node);
-        if (!bounds) continue;
-        minX = Math.min(minX, bounds.minX);
-        minY = Math.min(minY, bounds.minY);
-        maxX = Math.max(maxX, bounds.maxX);
-        maxY = Math.max(maxY, bounds.maxY);
+        const corners = getNodeWorldCorners(node);
+        if (corners.length !== 4) continue;
+        for (const corner of corners) {
+          const local = worldToSelectionLocal(corner);
+          minX = Math.min(minX, local.x);
+          minY = Math.min(minY, local.y);
+          maxX = Math.max(maxX, local.x);
+          maxY = Math.max(maxY, local.y);
+        }
       }
 
       if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
         selectedNodes.clear();
         selectionBoundsWorld = null;
+        selectionOverlayRotation = 0;
         applySelectionNodeClasses();
         renderGroupSelectionBox();
         return;
@@ -4384,6 +4402,7 @@
         selectedNodes.add(node);
       }
 
+      selectionOverlayRotation = getSelectionOverlayRotationForNodes(next);
       setSelectionHandleMode("resize");
       applySelectionNodeClasses();
       refreshSelectionBounds();
@@ -4881,19 +4900,20 @@
       cancelCameraAnimation();
       cancelNodeLayoutAnimation();
 
-      const boundsCenter = {
-        x: selectionBoundsWorld.minX + selectionBoundsWorld.width * 0.5,
-        y: selectionBoundsWorld.minY + selectionBoundsWorld.height * 0.5
-      };
+      const selectionRotation = selectionOverlayRotation;
+      const boundsCenterLocal = getBoundsCenter(selectionBoundsWorld);
+      const boundsCenter = selectionLocalToWorld(boundsCenterLocal, selectionRotation);
       const startPointer = screenToWorld(event.clientX, event.clientY);
       groupTransform = {
         pointerId: event.pointerId,
         mode,
         captureElement,
         handle: captureElement.dataset.handle || "se",
+        selectionRotation,
         startClientX: event.clientX,
         startClientY: event.clientY,
         startPointer,
+        startPointerLocal: worldToSelectionLocal(startPointer, selectionRotation),
         startAngle: Math.atan2(startPointer.y - boundsCenter.y, startPointer.x - boundsCenter.x),
         center: boundsCenter,
         initialBounds: { ...selectionBoundsWorld },
@@ -4904,6 +4924,8 @@
             node,
             x: Number(node.dataset.x),
             y: Number(node.dataset.y),
+            localX: worldToSelectionLocal({ x: Number(node.dataset.x), y: Number(node.dataset.y) }, selectionRotation).x,
+            localY: worldToSelectionLocal({ x: Number(node.dataset.x), y: Number(node.dataset.y) }, selectionRotation).y,
             centerX: center ? center.x : Number(node.dataset.x),
             centerY: center ? center.y : Number(node.dataset.y),
             baseFontSize: Number(node.dataset.baseFontSize),
@@ -4918,8 +4940,9 @@
     }
 
     function getResizeTransformDeltas(transform, pointer) {
-      const dx = pointer.x - transform.startPointer.x;
-      const dy = pointer.y - transform.startPointer.y;
+      const pointerLocal = worldToSelectionLocal(pointer, transform.selectionRotation);
+      const dx = pointerLocal.x - transform.startPointerLocal.x;
+      const dy = pointerLocal.y - transform.startPointerLocal.y;
       const handle = transform.handle;
       return {
         x: handle.includes("w") ? -dx : handle.includes("e") ? dx : 0,
@@ -4936,6 +4959,14 @@
 
     function updateGroupTransform(event) {
       if (!groupTransform || event.pointerId !== groupTransform.pointerId) return;
+      if (
+        event.type === "pointermove" &&
+        event.pointerType === "mouse" &&
+        (event.buttons & 1) === 0
+      ) {
+        endGroupTransform(event);
+        return;
+      }
 
       const pointer = screenToWorld(event.clientX, event.clientY);
       const dx = pointer.x - groupTransform.startPointer.x;
@@ -4961,6 +4992,7 @@
           pointer.x - groupTransform.center.x
         );
         const rotationDelta = normalizeRotation(nextAngle - groupTransform.startAngle);
+        selectionOverlayRotation = normalizeRotation(groupTransform.selectionRotation + rotationDelta);
         for (const snapshot of groupTransform.nodeSnapshots) {
           const nextCenter = rotatePointAround(
             { x: snapshot.centerX, y: snapshot.centerY },
@@ -4990,12 +5022,15 @@
       const anchor = getResizeAnchor(groupTransform.initialBounds, groupTransform.handle);
 
       for (const snapshot of groupTransform.nodeSnapshots) {
-        const nextX = anchor.x + (snapshot.x - anchor.x) * scaleX;
-        const nextY = anchor.y + (snapshot.y - anchor.y) * scaleY;
+        const nextLocal = {
+          x: anchor.x + (snapshot.localX - anchor.x) * scaleX,
+          y: anchor.y + (snapshot.localY - anchor.y) * scaleY
+        };
+        const nextWorld = selectionLocalToWorld(nextLocal, groupTransform.selectionRotation);
         snapshot.node.dataset.baseFontSize = String(
           Math.max(0.001, snapshot.baseFontSize * fontScale)
         );
-        setNodePosition(snapshot.node, nextX, nextY, { skipSelectionUpdate: true });
+        setNodePosition(snapshot.node, nextWorld.x, nextWorld.y, { skipSelectionUpdate: true });
       }
 
       refreshSelectionBounds();
@@ -6231,18 +6266,15 @@
       beginGroupTransform(event, "drag", groupSelectionBox);
     });
 
-    groupSelectionBox.addEventListener("pointermove", updateGroupTransform);
-    groupSelectionBox.addEventListener("pointerup", endGroupTransform);
-    groupSelectionBox.addEventListener("pointercancel", endGroupTransform);
-
     for (const handle of groupSelectionHandles) {
       handle.addEventListener("pointerdown", (event) => {
         beginGroupTransform(event, selectionHandleMode, handle);
       });
-      handle.addEventListener("pointermove", updateGroupTransform);
-      handle.addEventListener("pointerup", endGroupTransform);
-      handle.addEventListener("pointercancel", endGroupTransform);
     }
+
+    window.addEventListener("pointermove", updateGroupTransform, { capture: true });
+    window.addEventListener("pointerup", endGroupTransform, { capture: true });
+    window.addEventListener("pointercancel", endGroupTransform, { capture: true });
 
     window.addEventListener("pointermove", updateLineDraftPointer, { capture: true });
 
