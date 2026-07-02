@@ -15,6 +15,7 @@ const MAX_OPS = 120;
 const MAX_TEXT_LENGTH = 40000;
 const MAX_HTML_LENGTH = 80000;
 const MAX_COMMAND_STATE_LENGTH = 50000;
+const CALC_OPERATIONS = new Set(["+", "-", "*", "÷", "="]);
 
 let collectionPromise = null;
 let staticCommandRegistry = { schemaVersion: 1, commands: [] };
@@ -213,6 +214,13 @@ function normalizeCreator(value) {
   return id && nickname ? { id, nickname } : null;
 }
 
+function normalizeCalcOperation(value) {
+  const operation = String(value || "").trim();
+  if (operation === "/") return "÷";
+  if (operation.toLowerCase() === "x") return "*";
+  return CALC_OPERATIONS.has(operation) ? operation : "";
+}
+
 function normalizeNode(entry, seenIds) {
   if (!entry || typeof entry !== "object") {
     throw new HttpError(400, "Every node must be an object.");
@@ -258,6 +266,7 @@ function normalizeNode(entry, seenIds) {
   return {
     ...base,
     kind: "text",
+    ...(entry.variable === true ? { variable: true } : {}),
     html: html || escapeHtml(text),
     text
   };
@@ -298,8 +307,10 @@ function normalizeLine(entry, index, nodeIds, seenLineIds, seenConnections) {
   const line = { id, from, to };
   const createdAt = optionalTimestamp(entry.createdAt, `line ${id}.createdAt`);
   const deletedAt = optionalTimestamp(entry.deletedAt, `line ${id}.deletedAt`);
+  const operation = normalizeCalcOperation(entry.operation);
   if (createdAt) line.createdAt = createdAt;
   if (deletedAt) line.deletedAt = deletedAt;
+  if (operation) line.operation = operation;
 
   const connectionKey = getLineConnectionKey(from, to);
   if (!deletedAt) {
@@ -712,6 +723,7 @@ function buildManifest(event) {
           createdAt: "optional number",
           deletedAt: "optional number",
           createdBy: "optional { id, nickname } assigned from the active Skydive session",
+          variable: "optional boolean for read-only calculation result nodes",
           text: "string",
           html: "string"
         },
@@ -734,6 +746,7 @@ function buildManifest(event) {
           id: "string",
           from: "node id",
           to: "node id",
+          operation: "optional one of +, -, *, ÷, =",
           createdAt: "optional number",
           deletedAt: "optional number"
         }

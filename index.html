@@ -98,6 +98,28 @@
       cursor: context-menu;
     }
 
+    .connection-line-operation {
+      pointer-events: none;
+    }
+
+    .connection-line-operation circle {
+      fill: #fff;
+      stroke: rgba(17, 24, 39, 0.38);
+      stroke-width: 1.2;
+      vector-effect: non-scaling-stroke;
+    }
+
+    .connection-line-operation text {
+      fill: #111;
+      font: 700 13px/1 "Roboto", "Helvetica Neue", Arial, sans-serif;
+      dominant-baseline: central;
+      text-anchor: middle;
+      paint-order: stroke;
+      stroke: #fff;
+      stroke-width: 0.7;
+      vector-effect: non-scaling-stroke;
+    }
+
     #world {
       position: absolute;
       left: 0;
@@ -199,6 +221,16 @@
 
     .text-node[data-deleted-at] {
       display: none !important;
+    }
+
+    .text-node.variable-node {
+      box-sizing: border-box;
+      padding: 0.18em 0.34em 0.16em;
+      border: 0.04em solid #93c5fd;
+      border-radius: 0.32em;
+      background: #eaf4ff;
+      color: #0f172a;
+      cursor: grab;
     }
 
     .command-node,
@@ -458,6 +490,48 @@
     }
 
     #node-context-menu .widget-color-swatch:focus-visible {
+      outline: 2px solid rgba(54, 125, 210, 0.78);
+      outline-offset: 2px;
+    }
+
+    #calc-operation-picker {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 7px;
+      padding: 4px 6px 7px;
+      border-bottom: 1px solid #ece8e2;
+    }
+
+    #line-context-menu .calc-operation-btn {
+      width: 24px;
+      height: 24px;
+      flex: 0 0 24px;
+      padding: 0;
+      border: 1px solid rgba(78, 70, 62, 0.17);
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.48);
+      color: #111;
+      text-align: center;
+      font: 700 13px/1 "Roboto", "Helvetica Neue", Arial, sans-serif;
+      cursor: pointer;
+      transition: background-color 110ms ease, transform 110ms ease, box-shadow 110ms ease;
+    }
+
+    #line-context-menu button.calc-operation-btn:hover:not(:disabled) {
+      background: #fff;
+      transform: scale(1.08);
+    }
+
+    #line-context-menu .calc-operation-btn[aria-pressed="true"] {
+      box-shadow:
+        0 0 0 2px #fff,
+        0 0 0 3.5px rgba(74, 68, 62, 0.62),
+        inset 0 0 0 0.5px rgba(255, 255, 255, 0.48);
+    }
+
+    #line-context-menu .calc-operation-btn:focus-visible {
       outline: 2px solid rgba(54, 125, 210, 0.78);
       outline-offset: 2px;
     }
@@ -785,6 +859,13 @@
     </div>
   </div>
   <div id="line-context-menu" hidden>
+    <div id="calc-operation-picker" role="toolbar" aria-label="Calculation operation">
+      <button class="calc-operation-btn" type="button" data-calc-operation="+" aria-label="Add">+</button>
+      <button class="calc-operation-btn" type="button" data-calc-operation="-" aria-label="Subtract">-</button>
+      <button class="calc-operation-btn" type="button" data-calc-operation="*" aria-label="Multiply">*</button>
+      <button class="calc-operation-btn" type="button" data-calc-operation="÷" aria-label="Divide">÷</button>
+      <button class="calc-operation-btn" type="button" data-calc-operation="=" aria-label="Equals">=</button>
+    </div>
     <button id="delete-line-btn" type="button">Delete line</button>
   </div>
   <div id="canvas-context-menu" hidden>
@@ -825,6 +906,7 @@
     const linkSelectionBtn = document.getElementById("link-selection-btn");
     const widgetColorPicker = document.getElementById("widget-color-picker");
     const lineContextMenu = document.getElementById("line-context-menu");
+    const calcOperationPicker = document.getElementById("calc-operation-picker");
     const deleteLineBtn = document.getElementById("delete-line-btn");
     const canvasContextMenu = document.getElementById("canvas-context-menu");
     const birdsEyeViewBtn = document.getElementById("birds-eye-view-btn");
@@ -880,13 +962,14 @@
     const ZOOM_AFFORDANCE_FULL_FONT_SCREEN_PX = 14;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 76; // Increment once for each commit.
+    const APP_VERSION = 77; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
     const WIDGET_COLOR_STATE_KEY = "_widgetColor";
     const DEFAULT_WIDGET_COLOR = "#ffffff";
     const WIDGET_COLORS = new Set(["#ffffff", "#f4cbb9", "#fff8ed", "#c9e1ce", "#c8def1", "#ddcfed", "#dfddd9"]);
+    const CALC_OPERATIONS = new Set(["+", "-", "*", "÷", "="]);
     const SANITIZED_INLINE_TAGS = new Map([
       ["B", "strong"],
       ["STRONG", "strong"],
@@ -1828,6 +1911,7 @@
       closeCanvasContextMenu();
       closeLinkNodeDialog();
       contextMenuLineId = lineId;
+      updateCalcOperationPicker(lineId);
       lineContextMenu.hidden = false;
 
       const menuRect = lineContextMenu.getBoundingClientRect();
@@ -2119,6 +2203,165 @@
       return lineConnections.some((line) => !line.deletedAt && getLineConnectionKey(line.from, line.to) === key);
     }
 
+    function normalizeCalcOperation(value) {
+      const operation = String(value || "").trim();
+      if (operation === "/") return "÷";
+      if (operation.toLowerCase() === "x") return "*";
+      return CALC_OPERATIONS.has(operation) ? operation : "";
+    }
+
+    function isCalcVariableNode(node) {
+      return node instanceof HTMLElement && node.dataset.variable === "true";
+    }
+
+    function setCalcVariableNode(node, active) {
+      if (!(node instanceof HTMLElement) || isCommandNode(node)) return false;
+      const shouldBeActive = Boolean(active);
+      if (shouldBeActive === isCalcVariableNode(node)) return false;
+
+      if (shouldBeActive) {
+        node.dataset.variable = "true";
+        node.classList.add("variable-node");
+        node.contentEditable = "false";
+        node.classList.remove("editing");
+      } else {
+        delete node.dataset.variable;
+        node.classList.remove("variable-node");
+      }
+      renderNode(node);
+      return true;
+    }
+
+    function getNodeNumericValue(node) {
+      if (!(node instanceof HTMLElement)) return null;
+      const text = (node.textContent || "").replace(/,/g, "").trim();
+      if (!text) return null;
+      const value = Number(text);
+      return Number.isFinite(value) ? value : null;
+    }
+
+    function formatCalcResult(value) {
+      if (!Number.isFinite(value)) return "NaN";
+      const normalized = Math.abs(value) < 1e-12 ? 0 : value;
+      return Number(normalized.toPrecision(12)).toString();
+    }
+
+    function getIncomingCalcLine(nodeId, visitedLineIds) {
+      let candidate = null;
+      for (const line of lineConnections) {
+        const operation = normalizeCalcOperation(line.operation);
+        if (
+          line.deletedAt ||
+          operation === "" ||
+          operation === "=" ||
+          line.to !== nodeId ||
+          visitedLineIds.has(line.id)
+        ) {
+          continue;
+        }
+        candidate = line;
+      }
+      return candidate;
+    }
+
+    function buildCalcChain(finalNodeId) {
+      const visitedLineIds = new Set();
+      const visitedNodeIds = new Set([finalNodeId]);
+      const reversedLines = [];
+      let currentId = finalNodeId;
+
+      while (currentId) {
+        const line = getIncomingCalcLine(currentId, visitedLineIds);
+        if (!line) break;
+        if (visitedNodeIds.has(line.from)) return null;
+        visitedLineIds.add(line.id);
+        visitedNodeIds.add(line.from);
+        reversedLines.push(line);
+        currentId = line.from;
+      }
+
+      return {
+        startId: currentId,
+        lines: reversedLines.reverse()
+      };
+    }
+
+    function calculateChainValue(finalNodeId) {
+      const chain = buildCalcChain(finalNodeId);
+      if (!chain || !chain.startId) return null;
+
+      const startNode = getNodeById(chain.startId);
+      let value = getNodeNumericValue(startNode);
+      if (value === null) return null;
+
+      for (const line of chain.lines) {
+        const node = getNodeById(line.to);
+        const nextValue = getNodeNumericValue(node);
+        if (nextValue === null) return null;
+        const operation = normalizeCalcOperation(line.operation);
+        if (operation === "+") value += nextValue;
+        else if (operation === "-") value -= nextValue;
+        else if (operation === "*") value *= nextValue;
+        else if (operation === "÷") value = nextValue === 0 ? NaN : value / nextValue;
+      }
+
+      return value;
+    }
+
+    function updateCalcVariables() {
+      const equalLines = lineConnections.filter((line) =>
+        !line.deletedAt && normalizeCalcOperation(line.operation) === "="
+      );
+      const targetIds = new Set(equalLines.map((line) => line.to).filter(Boolean));
+      let changed = false;
+
+      for (const node of world.children) {
+        if (!(node instanceof HTMLElement) || isCommandNode(node) || isNodeDeleted(node)) continue;
+        if (!targetIds.has(node.dataset.nodeId || "")) {
+          changed = setCalcVariableNode(node, false) || changed;
+        }
+      }
+
+      const passes = Math.max(1, equalLines.length + 1);
+      for (let pass = 0; pass < passes; pass += 1) {
+        let passChanged = false;
+        for (const line of equalLines) {
+          const targetNode = getNodeById(line.to);
+          if (!targetNode || isCommandNode(targetNode)) continue;
+          changed = setCalcVariableNode(targetNode, true) || changed;
+          const result = calculateChainValue(line.from);
+          const nextText = result === null ? "NaN" : formatCalcResult(result);
+          if (targetNode.textContent !== nextText) {
+            targetNode.textContent = nextText;
+            normalizeNodeMarkup(targetNode);
+            renderNode(targetNode);
+            passChanged = true;
+            changed = true;
+          }
+        }
+        if (!passChanged) break;
+      }
+
+      if (changed) {
+        requestLineRender();
+        refreshSelectionBounds();
+      }
+      return changed;
+    }
+
+    function setLineOperation(lineId, operation) {
+      const id = typeof lineId === "string" ? lineId.trim() : "";
+      const normalized = normalizeCalcOperation(operation);
+      if (!id || !normalized) return false;
+      const line = lineConnections.find((entry) => entry.id === id && !entry.deletedAt);
+      if (!line) return false;
+      line.operation = normalized;
+      renderLineConnections();
+      updateCalcVariables();
+      scheduleAutosave();
+      return true;
+    }
+
     function createLineConnection(sourceNode, targetNode) {
       if (!(sourceNode instanceof HTMLElement) || !(targetNode instanceof HTMLElement)) return false;
       if (isNodeDeleted(sourceNode) || isNodeDeleted(targetNode)) return false;
@@ -2146,6 +2389,7 @@
       if (!line) return false;
       line.deletedAt = Date.now();
       renderLineConnections();
+      updateCalcVariables();
       scheduleAutosave();
       return true;
     }
@@ -2160,6 +2404,8 @@
       const deletedAt = normalizeTimestamp(line.deletedAt);
       if (createdAt) serialized.createdAt = createdAt;
       if (deletedAt) serialized.deletedAt = deletedAt;
+      const operation = normalizeCalcOperation(line.operation);
+      if (operation) serialized.operation = operation;
       return serialized;
     }
 
@@ -2199,12 +2445,14 @@
           id: resolveLineId(entry.id),
           from,
           to,
+          ...(normalizeCalcOperation(entry.operation) ? { operation: normalizeCalcOperation(entry.operation) } : {}),
           ...(createdAt ? { createdAt } : {}),
           ...(deletedAt ? { deletedAt } : {})
         });
       }
 
       renderLineConnections();
+      updateCalcVariables();
     }
 
     function removeLineConnectionsForNodes(nodes, deletedAt = Date.now()) {
@@ -2224,6 +2472,7 @@
       });
       if (!changed) return false;
       renderLineConnections();
+      updateCalcVariables();
       return true;
     }
 
@@ -2513,6 +2762,27 @@
       ].join(" ");
     }
 
+    function appendCalcOperationMarker(group, geometry, operation) {
+      const normalized = normalizeCalcOperation(operation);
+      if (!normalized) return;
+
+      const point = getCubicPoint(geometry, 0.5);
+      const marker = document.createElementNS(SVG_NS, "g");
+      marker.setAttribute("class", "connection-line-operation");
+      marker.setAttribute("transform", `translate(${formatLineNumber(point.x)} ${formatLineNumber(point.y)})`);
+
+      const circle = document.createElementNS(SVG_NS, "circle");
+      circle.setAttribute("r", formatLineNumber(screenToWorldLength(10)));
+
+      const label = document.createElementNS(SVG_NS, "text");
+      label.setAttribute("y", formatLineNumber(screenToWorldLength(0.2)));
+      label.style.fontSize = `${formatLineNumber(screenToWorldLength(13))}px`;
+      label.textContent = normalized;
+
+      marker.append(circle, label);
+      group.appendChild(marker);
+    }
+
     function getCubicPoint(geometry, t) {
       const inverse = 1 - t;
       const a = inverse * inverse * inverse;
@@ -2675,6 +2945,7 @@
         0,
         { dashed: options.draft }
       );
+      appendCalcOperationMarker(group, geometry, options.operation);
       lineRenderRoot.appendChild(group);
 
       if (options.id) {
@@ -2718,6 +2989,7 @@
         if (!points) continue;
         appendConnectionPath(getNaturalLineGeometry(points.start, points.end, line.id), {
           id: line.id,
+          operation: line.operation,
           startWidth: getNodeLineWidth(sourceNode),
           endWidth: getNodeLineWidth(targetNode),
           hitStrokeWidth: getLineHitStrokeScreenPx(sourceNode, targetNode)
@@ -3782,6 +4054,15 @@
       }
     }
 
+    function updateCalcOperationPicker(lineId) {
+      const line = lineConnections.find((entry) => entry.id === lineId && !entry.deletedAt);
+      const selectedOperation = normalizeCalcOperation(line && line.operation);
+      for (const button of calcOperationPicker.querySelectorAll(".calc-operation-btn")) {
+        const operation = normalizeCalcOperation(button.dataset.calcOperation || "");
+        button.setAttribute("aria-pressed", operation && operation === selectedOperation ? "true" : "false");
+      }
+    }
+
     function setWidgetColor(node, value) {
       if (!isWidgetColorable(node)) return;
       const color = normalizeWidgetColor(value) || DEFAULT_WIDGET_COLOR;
@@ -3991,6 +4272,7 @@
       return {
         ...base,
         kind: "text",
+        ...(isCalcVariableNode(node) ? { variable: true } : {}),
         html: sanitizeNodeHtml(node.innerHTML),
         text: node.textContent || ""
       };
@@ -5193,6 +5475,7 @@
 
     function startEditing(node, selectAll = false) {
       if (isCommandNode(node)) return;
+      if (isCalcVariableNode(node)) return;
       node.classList.add("editing");
       node.contentEditable = "true";
       node.focus();
@@ -5523,6 +5806,7 @@
             deletedAt: entry.deletedAt,
             createdBy: entry.createdBy,
             rotation,
+            variable: entry.variable === true,
             preserveTimestamps: true
           });
         }
@@ -5937,6 +6221,7 @@
       node.addEventListener("dblclick", (event) => {
         event.stopPropagation();
         if (isCommandNode(node)) return;
+        if (isCalcVariableNode(node)) return;
         clearSelection();
         startEditing(node);
       });
@@ -5975,23 +6260,32 @@
       });
 
       node.addEventListener("input", () => {
+        if (isCalcVariableNode(node)) return;
         autoLinkExternalUrls(node, { moveCaretToEnd: true });
+        updateCalcVariables();
         scheduleAutosave();
         updateSlashMenuForNode(node);
       });
 
       node.addEventListener("paste", (event) => {
+        if (isCalcVariableNode(node)) {
+          event.preventDefault();
+          return;
+        }
         event.preventDefault();
         if (!insertSanitizedPaste(node, getSanitizedPasteHtml(event))) return;
         autoLinkExternalUrls(node, { force: true, moveCaretToEnd: true });
+        updateCalcVariables();
         scheduleAutosave();
         updateSlashMenuForNode(node);
       });
 
       node.addEventListener("blur", () => {
         if (isCommandNode(node)) return;
+        if (isCalcVariableNode(node)) return;
         autoLinkExternalUrls(node, { force: true });
         stopEditing(node);
+        updateCalcVariables();
         closeSlashCommandMenu();
         scheduleAutosave();
       });
@@ -6068,6 +6362,7 @@
       setNodeTimestamps(node, options);
       setNodeCreator(node, options.createdBy || (!options.preserveTimestamps ? currentUser : null));
       setNodePosition(node, worldX, worldY);
+      if (options.variable === true) setCalcVariableNode(node, true);
       attachNodeHandlers(node);
       world.appendChild(node);
       if (!isNodeDeleted(node)) observeNodeForLines(node);
@@ -6157,6 +6452,16 @@
       if (!widget) return;
       setWidgetColor(widget, swatch.dataset.widgetColor || "");
       closeNodeContextMenu();
+    });
+
+    calcOperationPicker.addEventListener("click", (event) => {
+      if (!(event.target instanceof Element)) return;
+      const button = event.target.closest(".calc-operation-btn");
+      if (!button || !calcOperationPicker.contains(button)) return;
+      const lineId = contextMenuLineId;
+      const operation = button.dataset.calcOperation || "";
+      closeLineContextMenu();
+      setLineOperation(lineId, operation);
     });
 
     deleteLineBtn.addEventListener("click", () => {
