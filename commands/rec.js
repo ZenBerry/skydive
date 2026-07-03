@@ -285,6 +285,10 @@
     });
     wavesurfer.on("finish", () => {
       if (!container.isConnected) return;
+      if (runtime.loop) {
+        restartLoop(runtime);
+        return;
+      }
       elements.time.textContent = `0:00 / ${formatTime(wavesurfer.getDuration())}`;
     });
     wavesurfer.on("error", () => {
@@ -297,6 +301,7 @@
   function createNativeFallback(url, elements, runtime) {
     const audio = document.createElement("audio");
     audio.src = url;
+    audio.loop = runtime.loop;
     audio.preload = "metadata";
     audio.hidden = true;
     elements.card.appendChild(audio);
@@ -315,9 +320,43 @@
     audio.addEventListener("timeupdate", () => {
       elements.time.textContent = `${formatTime(audio.currentTime)} / ${formatTime(getDuration())}`;
     });
+    audio.addEventListener("ended", () => {
+      if (runtime.loop) restartLoop(runtime);
+    });
     audio.addEventListener("error", () => {
       elements.status.textContent = "Could not load audio";
     });
+  }
+
+  function restartLoop(runtime) {
+    const player = getPlayer(runtime);
+    if (!player) return;
+    player.stop();
+    const playPromise = player.play();
+    if (playPromise && typeof playPromise.catch === "function") {
+      void playPromise.catch(() => {});
+    }
+  }
+
+  function setLoop(runtime, elements, loop) {
+    runtime.loop = loop;
+    elements.loop.setAttribute("aria-pressed", loop ? "true" : "false");
+    elements.loop.dataset.active = loop ? "true" : "false";
+
+    if (runtime.audio) runtime.audio.loop = loop;
+    if (!runtime.wavesurfer) return;
+
+    if (typeof runtime.wavesurfer.getMediaElement === "function") {
+      const media = runtime.wavesurfer.getMediaElement();
+      if (media) media.loop = loop;
+    }
+    if (typeof runtime.wavesurfer.setOptions === "function") {
+      try {
+        runtime.wavesurfer.setOptions({ loop });
+      } catch (error) {
+        // WaveSurfer versions differ here; finish handling above is the fallback.
+      }
+    }
   }
 
   function getPlayer(runtime) {
@@ -394,6 +433,7 @@
             <button type="button" data-command-interactive data-action="start">Start</button>
             <button type="button" data-command-interactive data-action="stop">Stop</button>
             <button type="button" data-command-interactive data-action="pause">Pause</button>
+            <button type="button" data-command-interactive data-action="loop" aria-pressed="false">Loop</button>
             <button type="button" data-command-interactive data-action="speed">1x</button>
             <button type="button" data-command-interactive data-action="download">Download</button>
           </div>
@@ -483,6 +523,8 @@
           white-space: nowrap;
         }
         .rec-card button:hover:not(:disabled) { background: #ddcbb5; }
+        .rec-card button[data-active="true"] { background: #40342b; color: #fffaf1; }
+        .rec-card button[data-active="true"]:hover:not(:disabled) { background: #332a23; }
         .rec-card button:disabled { cursor: default; opacity: 0.38; }
         .rec-card [data-action="record"] { background: #e36e54; color: white; }
         .rec-card [data-action="record"]:hover:not(:disabled) { background: #d85e45; }
@@ -501,6 +543,7 @@
         start: container.querySelector('[data-action="start"]'),
         stop: container.querySelector('[data-action="stop"]'),
         pause: container.querySelector('[data-action="pause"]'),
+        loop: container.querySelector('[data-action="loop"]'),
         speed: container.querySelector('[data-action="speed"]'),
         download: container.querySelector('[data-action="download"]'),
         record: container.querySelector('[data-action="record"]'),
@@ -520,6 +563,7 @@
         audioContext: null,
         analyser: null,
         mediaSource: null,
+        loop: false,
         liveFrame: null,
         animationFrame: null,
         uploading: false,
@@ -597,6 +641,9 @@
         elements.pause.addEventListener("click", () => {
           const player = getPlayer(runtime);
           if (player) player.pause();
+        });
+        elements.loop.addEventListener("click", () => {
+          setLoop(runtime, elements, !runtime.loop);
         });
         elements.stop.addEventListener("click", () => {
           const player = getPlayer(runtime);
