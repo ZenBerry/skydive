@@ -21,6 +21,14 @@
     return name || "Untitled file";
   }
 
+  function getExtension(state) {
+    const extension = typeof state.extension === "string" ? state.extension.trim().toLowerCase() : "";
+    if (extension) return extension;
+    const name = getFileName(state);
+    const dotIndex = name.lastIndexOf(".");
+    return dotIndex > 0 && dotIndex < name.length - 1 ? name.slice(dotIndex + 1).toLowerCase() : "";
+  }
+
   function getStatus(state) {
     const status = typeof state.status === "string" ? state.status : "";
     return status || (normalizeHref(state.url) ? "uploaded" : "empty");
@@ -52,10 +60,24 @@
     return mimeType.startsWith("image/") || resourceType === "image";
   }
 
+  function isEpubFile(state) {
+    const mimeType = typeof state.mimeType === "string" ? state.mimeType.toLowerCase() : "";
+    return mimeType === "application/epub+zip" || getExtension(state) === "epub";
+  }
+
   function openUrl(url) {
     const href = normalizeHref(url);
     if (!href) return;
     window.open(href, "_blank", "noopener,noreferrer");
+  }
+
+  function openBook(url, fileName) {
+    const href = normalizeHref(url);
+    if (!href) return;
+    const title = getFileName({ fileName });
+    const pathName = encodeURIComponent(title || "book.epub");
+    const readerUrl = `/book/${pathName}?src=${encodeURIComponent(href)}&name=${encodeURIComponent(title)}`;
+    window.open(readerUrl, "_blank", "noopener,noreferrer");
   }
 
   function downloadUrl(url, fileName) {
@@ -207,6 +229,7 @@
       const fileName = getFileName(state);
       const fileUrl = normalizeHref(state.url);
       const attachmentUrl = normalizeHref(state.downloadUrl) || fileUrl;
+      const isBook = isEpubFile(state);
 
       card.dataset.status = status;
       uploading.hidden = status !== "uploading";
@@ -232,7 +255,7 @@
       }
 
       const bytes = formatBytes(state.bytes);
-      const extension = typeof state.extension === "string" ? state.extension.trim().toUpperCase() : "";
+      const extension = getExtension(state).toUpperCase();
       meta.textContent = [extension, bytes].filter(Boolean).join(" - ");
 
       if (isImageFile(state) && fileUrl) {
@@ -245,13 +268,15 @@
 
       download.disabled = !attachmentUrl;
       open.disabled = !fileUrl;
+      open.textContent = isBook ? "Read" : "Open";
 
       download.addEventListener("click", () => {
         downloadUrl(attachmentUrl, fileName);
       });
 
       open.addEventListener("click", () => {
-        openUrl(fileUrl);
+        if (isBook) openBook(fileUrl, fileName);
+        else openUrl(fileUrl);
       });
     }
   });

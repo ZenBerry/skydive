@@ -123,6 +123,33 @@
       background: #fff;
     }
 
+    #attachment-tray {
+      grid-column: 2 / -1;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      min-height: 0;
+      margin-bottom: 8px;
+    }
+
+    #attachment-tray[hidden] {
+      display: none;
+    }
+
+    .attachment-chip {
+      max-width: min(100%, 320px);
+      overflow: hidden;
+      border: 1px solid #d7d7d7;
+      border-radius: 7px;
+      padding: 4px 8px 5px;
+      background: #fafafa;
+      color: #555;
+      font-size: 13px;
+      line-height: 1.15;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
     #current-user-bullet {
       width: 28px;
       height: 28px;
@@ -249,6 +276,7 @@
   <main id="chat">
     <section id="messages" aria-live="polite" aria-label="Conversation with Mark"></section>
     <form id="composer">
+      <div id="attachment-tray" aria-label="Pending attachments" hidden></div>
       <div id="current-user-bullet" aria-label="Current user" title="Logged out">?</div>
       <textarea id="prompt" rows="1" maxlength="8000" autocomplete="off" placeholder="Message Mark" aria-label="Message Mark"></textarea>
       <button id="visibility" type="button" aria-label="Hide input" aria-pressed="false" title="Hide input">
@@ -265,6 +293,7 @@
   <script>
     const messagesElement = document.getElementById("messages");
     const composer = document.getElementById("composer");
+    const attachmentTray = document.getElementById("attachment-tray");
     const currentUserBullet = document.getElementById("current-user-bullet");
     const prompt = document.getElementById("prompt");
     const visibility = document.getElementById("visibility");
@@ -274,6 +303,53 @@
     let secretExpected = false;
     let concealed = false;
     let currentUser = null;
+    let bookContext = null;
+    let pendingAttachments = [];
+
+    function boundedText(value, limit = 5000) {
+      const text = String(value || "").replace(/\s+/g, " ").trim();
+      return text.length > limit ? `${text.slice(0, limit).trim()}...` : text;
+    }
+
+    function normalizeBookContext(value) {
+      if (!value || typeof value !== "object") return null;
+      const title = boundedText(value.title || value.name || "Untitled book", 240);
+      return title ? { title } : null;
+    }
+
+    function renderAttachmentTray() {
+      attachmentTray.replaceChildren();
+      pendingAttachments.forEach((attachment) => {
+        const chip = document.createElement("div");
+        chip.className = "attachment-chip";
+        chip.textContent = attachment.title;
+        chip.title = attachment.title;
+        attachmentTray.append(chip);
+      });
+      attachmentTray.hidden = pendingAttachments.length === 0;
+    }
+
+    function addPendingAttachments(attachments) {
+      const next = Array.isArray(attachments) ? attachments : [];
+      const normalized = next.map((attachment) => {
+        const title = boundedText(attachment && attachment.title, 160);
+        const text = boundedText(attachment && attachment.text, 6000);
+        return title && text ? { title, text } : null;
+      }).filter(Boolean);
+      if (!normalized.length) return;
+      pendingAttachments = [...pendingAttachments, ...normalized].slice(-6);
+      renderAttachmentTray();
+      prompt.focus();
+    }
+
+    function buildContextualMessage(content, attachments) {
+      const sections = [];
+      if (bookContext && bookContext.title) sections.push(`Current book: ${bookContext.title}`);
+      attachments.forEach((attachment) => {
+        sections.push(`${attachment.title}:\n${attachment.text}`);
+      });
+      return sections.length ? `${sections.join("\n\n")}\n\nUser message:\n${content}` : content;
+    }
 
     function normalizeAvatarColor(value) {
       const match = String(value || "").trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
@@ -473,10 +549,14 @@
       if ((!submittedSecret && !content) || waiting) return;
 
       waiting = true;
+      const attachments = pendingAttachments;
+      pendingAttachments = [];
+      renderAttachmentTray();
       prompt.value = "";
       resizePrompt();
       addMessage("user", content, { secret: submittedSecret });
-      const requestHistory = [...history, { role: "user", content }];
+      const contextualContent = submittedSecret ? content : buildContextualMessage(content, attachments);
+      const requestHistory = [...history, { role: "user", content: contextualContent }];
       history.push({ role: "user", content: submittedSecret ? "[hidden input]" : content });
       const pending = addMessage("assistant", "…", { pending: true });
 
@@ -532,6 +612,21 @@
         submitMessage();
       }
     });
+
+    window.addEventListener("message", (event) => {
+      if (event.origin !== window.location.origin || !event.data || typeof event.data !== "object") return;
+      if (event.data.type === "skydive:book-context") {
+        bookContext = normalizeBookContext(event.data.book);
+        return;
+      }
+      if (event.data.type === "skydive:mark-attachments") {
+        bookContext = normalizeBookContext(event.data.book) || bookContext;
+        addPendingAttachments(event.data.attachments);
+      }
+    });
+
+    const params = new URLSearchParams(window.location.search);
+    bookContext = normalizeBookContext({ title: params.get("book") || "" });
 
     const greeting = "Hi. I’m Mark. Ask me anything—or ask me to work with a Skydive space.";
     renderCurrentUserBullet();

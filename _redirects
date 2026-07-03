@@ -2,6 +2,7 @@
 /agents/ /agents.html 200
 /mark /mark.html 200
 /mark/ /mark.html 200
+/book/* /book.html 200
 /api/agent /.netlify/functions/agent 200
 /api/mark /.netlify/functions/mark 200
 /* /index.html 200
