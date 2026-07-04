@@ -825,6 +825,17 @@
       -webkit-user-drag: none;
     }
 
+    .mobile-tool-btn svg {
+      display: block;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+
+    #mobile-delete-btn {
+      color: #991b1b;
+    }
+
     #mobile-redo-btn img {
       transform: scaleX(-1);
     }
@@ -859,6 +870,14 @@
     </button>
     <button id="mobile-redo-btn" class="mobile-tool-btn" type="button" aria-label="Redo" title="Redo" hidden>
       <img src="/assets/mobile/undo.png" alt="" draggable="false">
+    </button>
+    <button id="mobile-delete-btn" class="mobile-tool-btn" type="button" aria-label="Delete selected nodes" title="Delete selected nodes" disabled>
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M6 7h12" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
+        <path d="M9 7V5.8c0-.6.5-1.1 1.1-1.1h3.8c.6 0 1.1.5 1.1 1.1V7" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M8 9l.7 9.1c.1.7.6 1.2 1.3 1.2h4c.7 0 1.2-.5 1.3-1.2L16 9" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M11 11.5v5M13 11.5v5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
     </button>
   </div>
   <div id="fit-guide-left" class="fit-marker guide" aria-hidden="true" hidden></div>
@@ -949,6 +968,7 @@
     const mobileAttitudeBtn = document.getElementById("mobile-attitude-btn");
     const mobileUndoBtn = document.getElementById("mobile-undo-btn");
     const mobileRedoBtn = document.getElementById("mobile-redo-btn");
+    const mobileDeleteBtn = document.getElementById("mobile-delete-btn");
 
     const BASE_TEXT_PX = 28;
     const ZOOM_SENSITIVITY = 0.012;
@@ -986,7 +1006,7 @@
     const ZOOM_AFFORDANCE_FULL_FONT_SCREEN_PX = 14;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 86; // Increment once for each commit.
+    const APP_VERSION = 87; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -1177,6 +1197,11 @@
       mobileUndoBtn.disabled = undoStack.length <= 1 && historyTimer === null;
       mobileRedoBtn.hidden = redoStack.length === 0 || historyTimer !== null;
       mobileRedoBtn.disabled = mobileRedoBtn.hidden;
+    }
+
+    function updateMobileSelectionControls() {
+      if (!IS_MOBILE_DEVICE) return;
+      mobileDeleteBtn.disabled = selectedNodes.size === 0;
     }
 
     function clearPendingHistoryCommit() {
@@ -2729,6 +2754,17 @@
       updateDocumentTitle();
       scheduleAutosave();
       return true;
+    }
+
+    function deleteSelectedNodes() {
+      if (selectedNodes.size === 0) return false;
+      closeNodeContextMenu();
+      closeLineContextMenu();
+      closeCanvasContextMenu();
+      cancelNodeLayoutAnimation();
+      const deleted = softDeleteNodes(Array.from(selectedNodes));
+      clearSelection();
+      return deleted;
     }
 
     function requestLineRender() {
@@ -4859,6 +4895,7 @@
         selectionOverlayRotation = 0;
         setSelectionHandleMode("resize");
         renderGroupSelectionBox();
+        updateMobileSelectionControls();
         return;
       }
 
@@ -4886,6 +4923,7 @@
         selectionOverlayRotation = 0;
         applySelectionNodeClasses();
         renderGroupSelectionBox();
+        updateMobileSelectionControls();
         return;
       }
 
@@ -4898,6 +4936,7 @@
         height: Math.max(0.001, maxY - minY)
       };
       renderGroupSelectionBox();
+      updateMobileSelectionControls();
     }
 
     function setSelectedNodes(nodes) {
@@ -5548,12 +5587,14 @@
       mobileToolbar.hidden = false;
       updateMobileInteractionControls();
       updateMobileHistoryControls();
+      updateMobileSelectionControls();
 
       mobilePanBtn.addEventListener("click", () => setMobileInteractionMode("pan"));
       mobileSelectBtn.addEventListener("click", () => setMobileInteractionMode("select"));
       mobileAttitudeBtn.addEventListener("click", () => setMobileInteractionMode("attitude"));
       mobileUndoBtn.addEventListener("click", () => undoHistory());
       mobileRedoBtn.addEventListener("click", () => redoHistory());
+      mobileDeleteBtn.addEventListener("click", () => deleteSelectedNodes());
 
       window.addEventListener("pointerdown", recordMobileTouchPoint, { capture: true });
       window.addEventListener("pointermove", updateMobileTouchPoint, { capture: true });
@@ -7398,12 +7439,7 @@
       if (isSafeDeleteKey && selectedNodes.size > 0) {
         if (isEditableTarget(event.target)) return;
         event.preventDefault();
-        closeNodeContextMenu();
-        closeLineContextMenu();
-        closeCanvasContextMenu();
-        cancelNodeLayoutAnimation();
-        softDeleteNodes(Array.from(selectedNodes));
-        clearSelection();
+        deleteSelectedNodes();
         return;
       }
 
