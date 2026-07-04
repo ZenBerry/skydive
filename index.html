@@ -966,7 +966,7 @@
     const ZOOM_AFFORDANCE_FULL_FONT_SCREEN_PX = 14;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 81; // Increment once for each commit.
+    const APP_VERSION = 82; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -1054,6 +1054,11 @@
     let slashCommandSelectedIndex = 0;
     let externalLinkCardPointer = null;
     let loadingProgressValue = 0;
+    let loadingDisplayedProgress = 0;
+    let loadingProgressAnimationFrame = null;
+    let loadingProgressAnimationStart = 0;
+    let loadingProgressAnimationFrom = 0;
+    let loadingProgressAnimationDuration = 0;
     let lineConnections = [];
     let lineRenderRoot = lineLayer;
     let spaceMeta = {};
@@ -1463,7 +1468,53 @@
       const value = Math.max(0, Math.min(100, Math.round(percent)));
       if (value < loadingProgressValue) return;
       loadingProgressValue = value;
+      loadingProgressAnimationFrom = loadingDisplayedProgress;
+      loadingProgressAnimationStart = 0;
+      loadingProgressAnimationDuration = Math.max(
+        180,
+        Math.min(900, 180 + Math.abs(loadingProgressValue - loadingDisplayedProgress) * 18)
+      );
+      if (loadingProgressAnimationFrame === null) {
+        loadingProgressAnimationFrame = requestAnimationFrame(animateLoadingProgress);
+      }
+    }
+
+    function setLoadingProgressText(percent) {
+      if (!loadingScreen) return;
+      const value = Math.max(0, Math.min(100, Math.round(percent)));
       loadingScreen.textContent = `Loading... ${value}% done`;
+    }
+
+    function easeLoadingProgress(progress) {
+      const value = Math.max(0, Math.min(1, progress));
+      return value < 0.5
+        ? 4 * value * value * value
+        : 1 - Math.pow(-2 * value + 2, 3) / 2;
+    }
+
+    function animateLoadingProgress(timestamp) {
+      if (!loadingScreen) {
+        loadingProgressAnimationFrame = null;
+        return;
+      }
+      if (!loadingProgressAnimationStart) loadingProgressAnimationStart = timestamp;
+      const elapsed = timestamp - loadingProgressAnimationStart;
+      const progress = loadingProgressAnimationDuration > 0
+        ? Math.min(1, elapsed / loadingProgressAnimationDuration)
+        : 1;
+      const eased = easeLoadingProgress(progress);
+      loadingDisplayedProgress = loadingProgressAnimationFrom +
+        (loadingProgressValue - loadingProgressAnimationFrom) * eased;
+      if (loadingDisplayedProgress > loadingProgressValue) loadingDisplayedProgress = loadingProgressValue;
+      setLoadingProgressText(loadingDisplayedProgress);
+
+      if (progress < 1 && loadingDisplayedProgress < loadingProgressValue) {
+        loadingProgressAnimationFrame = requestAnimationFrame(animateLoadingProgress);
+      } else {
+        loadingDisplayedProgress = loadingProgressValue;
+        setLoadingProgressText(loadingDisplayedProgress);
+        loadingProgressAnimationFrame = null;
+      }
     }
 
     function createLoadingProgressRange(start, end, onProgress) {
@@ -1484,6 +1535,12 @@
 
     function hideLoadingScreen() {
       setLoadingProgress(100);
+      if (loadingProgressAnimationFrame !== null) {
+        cancelAnimationFrame(loadingProgressAnimationFrame);
+        loadingProgressAnimationFrame = null;
+      }
+      loadingDisplayedProgress = 100;
+      setLoadingProgressText(100);
       if (loadingScreen) loadingScreen.hidden = true;
     }
 
@@ -5707,8 +5764,41 @@
       return `/.netlify/functions/spaces?${params.toString()}`;
     }
 
+    async function readJsonResponse(response, onDownloadProgress) {
+      const reportProgress = typeof onDownloadProgress === "function" ? onDownloadProgress : null;
+      const contentLength = Number(response.headers.get("Content-Length")) || 0;
+      if (!response.body || typeof TextDecoder !== "function") {
+        const data = await response.json();
+        if (reportProgress) reportProgress(1);
+        return data;
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      const chunks = [];
+      let loaded = 0;
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(decoder.decode(value, { stream: true }));
+          loaded += value.byteLength;
+          if (reportProgress && contentLength > 0) {
+            reportProgress(Math.min(0.98, loaded / contentLength));
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+
+      chunks.push(decoder.decode());
+      if (reportProgress) reportProgress(1);
+      return JSON.parse(chunks.join(""));
+    }
+
     async function requestSharedSpace(options = {}) {
-      const { slug = SHARED_SPACE_SLUG, ...fetchOptions } = options;
+      const { slug = SHARED_SPACE_SLUG, onDownloadProgress = null, ...fetchOptions } = options;
       const response = await fetch(getSharedSpaceUrl(slug), {
         headers: {
           "Accept": "application/json",
@@ -5721,7 +5811,7 @@
         throw new Error(`Shared space request failed: ${response.status}`);
       }
 
-      return response.json();
+      return readJsonResponse(response, onDownloadProgress);
     }
 
     async function saveCurrentState() {
@@ -7268,8 +7358,10 @@
       if (!SHARED_SPACE_SLUG) return false;
       const reportProgress = typeof options.onProgress === "function" ? options.onProgress : null;
       if (reportProgress) reportProgress(0.05);
-      const data = await requestSharedSpace();
-      if (reportProgress) reportProgress(0.2);
+      const data = await requestSharedSpace({
+        onDownloadProgress: createLoadingProgressRange(0.05, 0.25, reportProgress)
+      });
+      if (reportProgress) reportProgress(0.25);
       if (Object.prototype.hasOwnProperty.call(data, "viewer")) setCurrentUser(data.viewer);
       if (!data.state) {
         latestSharedUpdatedAt = Number(data.updatedAt) || latestSharedUpdatedAt;
