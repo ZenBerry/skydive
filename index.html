@@ -40,6 +40,12 @@
       touch-action: none;
       background: #fff;
       cursor: default;
+      opacity: 0;
+      transition: opacity 520ms cubic-bezier(0.2, 0, 0, 1);
+    }
+
+    body.app-ready #viewport {
+      opacity: 1;
     }
 
     #viewport.panning,
@@ -140,10 +146,29 @@
       color: #111;
       font: 400 16px/1.4 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
       letter-spacing: 0;
+      opacity: 0;
+      animation: loading-screen-in 360ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      transition: opacity 620ms cubic-bezier(0.76, 0, 0.24, 1);
+      will-change: opacity;
+    }
+
+    #loading-screen.loading-complete {
+      opacity: 0;
+      pointer-events: none;
     }
 
     #loading-screen[hidden] {
       display: none;
+    }
+
+    @keyframes loading-screen-in {
+      from {
+        opacity: 0;
+      }
+
+      to {
+        opacity: 1;
+      }
     }
 
     .text-node {
@@ -966,7 +991,7 @@
     const ZOOM_AFFORDANCE_FULL_FONT_SCREEN_PX = 14;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 82; // Increment once for each commit.
+    const APP_VERSION = 83; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -1059,6 +1084,7 @@
     let loadingProgressAnimationStart = 0;
     let loadingProgressAnimationFrom = 0;
     let loadingProgressAnimationDuration = 0;
+    let loadingProgressResolvers = [];
     let lineConnections = [];
     let lineRenderRoot = lineLayer;
     let spaceMeta = {};
@@ -1488,13 +1514,21 @@
     function easeLoadingProgress(progress) {
       const value = Math.max(0, Math.min(1, progress));
       return value < 0.5
-        ? 4 * value * value * value
-        : 1 - Math.pow(-2 * value + 2, 3) / 2;
+        ? 16 * Math.pow(value, 5)
+        : 1 - Math.pow(-2 * value + 2, 5) / 2;
+    }
+
+    function resolveLoadingProgressAnimation() {
+      if (loadingProgressResolvers.length === 0) return;
+      const resolvers = loadingProgressResolvers;
+      loadingProgressResolvers = [];
+      resolvers.forEach((resolve) => resolve());
     }
 
     function animateLoadingProgress(timestamp) {
       if (!loadingScreen) {
         loadingProgressAnimationFrame = null;
+        resolveLoadingProgressAnimation();
         return;
       }
       if (!loadingProgressAnimationStart) loadingProgressAnimationStart = timestamp;
@@ -1514,7 +1548,15 @@
         loadingDisplayedProgress = loadingProgressValue;
         setLoadingProgressText(loadingDisplayedProgress);
         loadingProgressAnimationFrame = null;
+        resolveLoadingProgressAnimation();
       }
+    }
+
+    function waitForLoadingProgressAnimation() {
+      if (loadingProgressAnimationFrame === null) return Promise.resolve();
+      return new Promise((resolve) => {
+        loadingProgressResolvers.push(resolve);
+      });
     }
 
     function createLoadingProgressRange(start, end, onProgress) {
@@ -1533,14 +1575,29 @@
       });
     }
 
-    function hideLoadingScreen() {
+    function waitForLoadingTransition() {
+      return new Promise((resolve) => {
+        if (!loadingScreen) {
+          resolve();
+          return;
+        }
+
+        const timeout = setTimeout(resolve, 760);
+        loadingScreen.addEventListener("transitionend", (event) => {
+          if (event.target !== loadingScreen || event.propertyName !== "opacity") return;
+          clearTimeout(timeout);
+          resolve();
+        }, { once: true });
+      });
+    }
+
+    async function hideLoadingScreen() {
       setLoadingProgress(100);
-      if (loadingProgressAnimationFrame !== null) {
-        cancelAnimationFrame(loadingProgressAnimationFrame);
-        loadingProgressAnimationFrame = null;
-      }
-      loadingDisplayedProgress = 100;
-      setLoadingProgressText(100);
+      await waitForLoadingProgressAnimation();
+      document.body.classList.add("app-ready");
+      await waitForLoadingFrame();
+      if (loadingScreen) loadingScreen.classList.add("loading-complete");
+      await waitForLoadingTransition();
       if (loadingScreen) loadingScreen.hidden = true;
     }
 
@@ -7392,7 +7449,7 @@
           try {
             if (!await loadFromSharedSpace({
               incremental: true,
-              onProgress: (progress) => setLoadingProgress(35 + progress * 60)
+              onProgress: (progress) => setLoadingProgress(20 + progress * 75)
             })) {
               setLoadingProgress(90);
               render();
@@ -7417,7 +7474,7 @@
       } finally {
         initializeSessionViewport();
         resetHistoryToCurrentState();
-        hideLoadingScreen();
+        await hideLoadingScreen();
       }
     }
 
