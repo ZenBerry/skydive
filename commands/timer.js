@@ -166,6 +166,11 @@
       clearTimer(container);
     },
 
+    getTitle(state) {
+      const remainingMs = getRemainingMs(state || {});
+      return remainingMs <= 0 || (state && state.completed) ? "Done" : formatRemaining(remainingMs);
+    },
+
     render(container, state, updateState) {
       clearTimer(container);
 

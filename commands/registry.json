@@ -3,7 +3,7 @@
   "commands": [
     {
       "id": "stw",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "title": "Stopwatch",
       "description": "A tiny persistent stopwatch.",
       "aliases": ["stopwatch"],
@@ -20,7 +20,7 @@
     },
     {
       "id": "timer",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "title": "Timer",
       "description": "A tiny persistent countdown timer.",
       "aliases": ["countdown", "alarm"],
@@ -43,7 +43,7 @@
     },
     {
       "id": "file",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "title": "File",
       "description": "A draggable uploaded file attachment.",
       "aliases": ["upload", "attachment"],
@@ -71,7 +71,7 @@
     },
     {
       "id": "rec",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "title": "Recorder",
       "description": "Record a voice note and play its waveform.",
       "aliases": ["record", "audio", "voice", "voice-note"],

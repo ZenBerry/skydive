@@ -115,6 +115,13 @@
       };
     },
 
+    getTitle(state) {
+      const status = getStatus(state || {});
+      if (status === "uploading") return `Uploading ${getProgress(state || {})}%`;
+      if (status === "error") return "Upload failed";
+      return getFileName(state || {});
+    },
+
     render(container, state) {
       container.innerHTML = `
         <div class="file-card">

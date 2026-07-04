@@ -45,6 +45,10 @@
       };
     },
 
+    getTitle(state) {
+      return formatElapsed(getElapsedMs(state || {}));
+    },
+
     destroy(container) {
       clearTimer(container);
     },

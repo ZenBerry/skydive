@@ -867,6 +867,7 @@
   <div id="fit-target-right" class="fit-marker target" aria-hidden="true" hidden></div>
   <div id="node-context-menu" hidden>
     <button id="copy-node-id-btn" type="button">Copy node ID</button>
+    <button id="hook-title-btn" type="button">Hook node to window title</button>
     <button id="draw-line-btn" type="button">Line</button>
     <button id="link-selection-btn" type="button">Link selection to node ID...</button>
     <div id="widget-color-picker" role="radiogroup" aria-label="Widget color" hidden>
@@ -923,6 +924,7 @@
     const openFileInput = document.getElementById("open-file-input");
     const nodeContextMenu = document.getElementById("node-context-menu");
     const copyNodeIdBtn = document.getElementById("copy-node-id-btn");
+    const hookTitleBtn = document.getElementById("hook-title-btn");
     const drawLineBtn = document.getElementById("draw-line-btn");
     const linkSelectionBtn = document.getElementById("link-selection-btn");
     const widgetColorPicker = document.getElementById("widget-color-picker");
@@ -984,7 +986,7 @@
     const ZOOM_AFFORDANCE_FULL_FONT_SCREEN_PX = 14;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 84; // Increment once for each commit.
+    const APP_VERSION = 85; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -1013,6 +1015,7 @@
     const SHARED_POLL_MS = 2000;
     const HISTORY_LIMIT = 100;
     const HISTORY_COMMIT_DELAY_MS = 120;
+    const TITLE_HOOK_REFRESH_MS = 1000;
     const MOBILE_LONG_PRESS_MS = 550;
     const MOBILE_GESTURE_MOVE_TOLERANCE_PX = 10;
     const MOBILE_DOUBLE_TAP_MS = 350;
@@ -1048,6 +1051,8 @@
     let contextMenuWidget = null;
     let contextMenuLineId = null;
     let contextMenuSelectionRange = null;
+    let titleHookNodeId = "";
+    let titleHookTimer = null;
     let pendingLinkSourceNode = null;
     let pendingLinkSelectionRange = null;
     let linkDialogDrag = null;
@@ -1232,8 +1237,56 @@
       return `Skydive - ${SHARED_SPACE_SLUG}`;
     }
 
+    function normalizeTitleHookNodeId(value) {
+      return typeof value === "string" ? value.trim() : "";
+    }
+
+    function getTitleHookState() {
+      return titleHookNodeId ? { nodeId: titleHookNodeId } : null;
+    }
+
+    function getNodePlainTitleText(node, options = {}) {
+      if (!(node instanceof HTMLElement)) return "";
+      if (!options.cleanControls) return (node.textContent || "").trim();
+      const clone = node.cloneNode(true);
+      clone.querySelectorAll("style, script, button, input, textarea, select").forEach((element) => element.remove());
+      return (clone.textContent || "").replace(/\s+/g, " ").trim();
+    }
+
+    function getHookedNodeTitle(node) {
+      if (!(node instanceof HTMLElement) || isNodeDeleted(node)) return "";
+      if (isCommandNode(node)) {
+        const command = getCommand(node.dataset.commandId || "");
+        if (command && typeof command.getTitle === "function") {
+          const title = command.getTitle(readCommandState(node), getCommandRenderContext(node), node);
+          if (typeof title === "string" && title.trim()) return title.trim();
+        }
+        return getNodePlainTitleText(node, { cleanControls: true });
+      }
+      return getNodePlainTitleText(node);
+    }
+
+    function getHookedDocumentTitle() {
+      const nodeId = normalizeTitleHookNodeId(titleHookNodeId);
+      if (!nodeId) return "";
+      return getHookedNodeTitle(getNodeById(nodeId));
+    }
+
     function updateDocumentTitle() {
-      document.title = `${DELOREAN_SPACE_INFO.active && deloreanModified ? "*" : ""}${getBaseDocumentTitle()}`;
+      document.title = getHookedDocumentTitle() || `${DELOREAN_SPACE_INFO.active && deloreanModified ? "*" : ""}${getBaseDocumentTitle()}`;
+    }
+
+    function setTitleHookNode(node) {
+      if (!(node instanceof HTMLElement) || !world.contains(node)) return false;
+      titleHookNodeId = normalizeTitleHookNodeId(node.dataset.nodeId || "");
+      updateDocumentTitle();
+      scheduleAutosave();
+      return Boolean(titleHookNodeId);
+    }
+
+    function startTitleHookRefresh() {
+      if (titleHookTimer !== null) return;
+      titleHookTimer = setInterval(updateDocumentTitle, TITLE_HOOK_REFRESH_MS);
     }
 
     function cloneJson(value, fallback) {
@@ -2492,6 +2545,7 @@
       if (changed) {
         requestLineRender();
         refreshSelectionBounds();
+        updateDocumentTitle();
       }
       return changed;
     }
@@ -2651,6 +2705,7 @@
 
       refreshSelectionBounds();
       renderLineConnections();
+      updateDocumentTitle();
       scheduleAutosave();
       return true;
     }
@@ -4381,6 +4436,7 @@
         writeCommandState(node, preserveWidgetColor(node, nextState));
         renderCommandNodeContent(node);
         refreshSelectionBounds();
+        updateDocumentTitle();
         scheduleAutosave();
       }, getCommandRenderContext(node));
       applyWidgetColor(node);
@@ -4391,6 +4447,7 @@
       writeCommandState(node, preserveWidgetColor(node, nextState));
       renderCommandNodeContent(node);
       refreshSelectionBounds();
+      updateDocumentTitle();
       if (options.autosave !== false) scheduleAutosave();
     }
 
@@ -5811,6 +5868,8 @@
         nodes: Array.from(world.children).map(serializeNode),
         lines: lineConnections.map(serializeLineConnection)
       };
+      const titleHook = getTitleHookState();
+      if (titleHook) state.titleHook = titleHook;
       if (spaceMeta && typeof spaceMeta === "object" && Object.keys(spaceMeta).length > 0) {
         state.meta = cloneJson(spaceMeta, {});
       }
@@ -6131,6 +6190,9 @@
       const { autosave = true, onProgress = null } = options;
       const nextNodes = Array.isArray(state.nodes) ? state.nodes : [];
       const nextLines = Array.isArray(state.lines) ? state.lines : [];
+      const nextTitleHook = state.titleHook && typeof state.titleHook === "object"
+        ? normalizeTitleHookNodeId(state.titleHook.nodeId)
+        : "";
       const nextMeta = state.meta && typeof state.meta === "object" ? cloneJson(state.meta, {}) : {};
       const reportProgress = typeof onProgress === "function" ? onProgress : null;
 
@@ -6158,6 +6220,7 @@
       nextNodeNumber = 1;
       nextLineNumber = 1;
       lineConnections = [];
+      titleHookNodeId = nextTitleHook;
       spaceMeta = nextMeta;
       deloreanModified = Boolean(
         DELOREAN_SPACE_INFO.active &&
@@ -6173,6 +6236,7 @@
       });
 
       loadLineConnections(nextLines);
+      updateDocumentTitle();
 
       if (nextNodes.length === 0 && reportProgress) reportProgress(1);
 
@@ -6189,6 +6253,9 @@
       const { autosave = true, onProgress = null } = options;
       const nextNodes = Array.isArray(state.nodes) ? state.nodes : [];
       const nextLines = Array.isArray(state.lines) ? state.lines : [];
+      const nextTitleHook = state.titleHook && typeof state.titleHook === "object"
+        ? normalizeTitleHookNodeId(state.titleHook.nodeId)
+        : "";
       const nextMeta = state.meta && typeof state.meta === "object" ? cloneJson(state.meta, {}) : {};
       const reportProgress = typeof onProgress === "function" ? onProgress : null;
       const reportClearing = createLoadingProgressRange(0, 0.1, reportProgress);
@@ -6230,6 +6297,7 @@
         nextNodeNumber = 1;
         nextLineNumber = 1;
         lineConnections = [];
+        titleHookNodeId = nextTitleHook;
         spaceMeta = nextMeta;
         deloreanModified = Boolean(
           DELOREAN_SPACE_INFO.active &&
@@ -6248,6 +6316,7 @@
         await waitForLoadingFrame();
 
         loadLineConnections(nextLines, { onProgress: reportLines });
+        updateDocumentTitle();
         await waitForLoadingFrame();
 
         if (reportRender) reportRender(0.4);
@@ -6701,6 +6770,7 @@
         if (isCalcVariableNode(node)) return;
         autoLinkExternalUrls(node, { moveCaretToEnd: true });
         updateCalcVariables();
+        updateDocumentTitle();
         scheduleAutosave();
         updateSlashMenuForNode(node);
       });
@@ -6714,6 +6784,7 @@
         if (!insertSanitizedPaste(node, getSanitizedPasteHtml(event))) return;
         autoLinkExternalUrls(node, { force: true, moveCaretToEnd: true });
         updateCalcVariables();
+        updateDocumentTitle();
         scheduleAutosave();
         updateSlashMenuForNode(node);
       });
@@ -6725,6 +6796,7 @@
         stopEditing(node);
         updateCalcVariables();
         closeSlashCommandMenu();
+        updateDocumentTitle();
         scheduleAutosave();
       });
 
@@ -6880,6 +6952,13 @@
         console.error("Copy failed:", error);
         alert("Could not copy node ID.");
       }
+    });
+
+    hookTitleBtn.addEventListener("click", () => {
+      const node = contextMenuNode;
+      closeNodeContextMenu();
+      if (!node) return;
+      setTitleHookNode(node);
     });
 
     widgetColorPicker.addEventListener("click", (event) => {
@@ -7443,6 +7522,7 @@
     async function boot() {
       showLoadingScreen();
       updateDocumentTitle();
+      startTitleHookRefresh();
       setLoadingProgress(10);
       void requestPersistentStorage();
       try {

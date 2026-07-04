@@ -405,6 +405,22 @@
       };
     },
 
+    getTitle(state) {
+      const current = state && typeof state === "object" ? state : {};
+      const label = typeof current.label === "string" && current.label.trim()
+        ? current.label.trim()
+        : typeof current.fileName === "string" && current.fileName.trim()
+          ? current.fileName.trim()
+          : "Audio";
+      const status = typeof current.status === "string" ? current.status : "empty";
+      if (status === "uploading") {
+        const progress = Math.max(0, Math.min(100, Math.round(Number(current.progress) || 0)));
+        return `Uploading ${progress}%`;
+      }
+      if (status === "error") return "Audio upload failed";
+      return label;
+    },
+
     render(container, state, onState, context = {}) {
       const status = typeof state.status === "string" ? state.status : "empty";
       const audioUrl = normalizeHref(state.url);
