@@ -147,9 +147,12 @@
       font: 400 16px/1.4 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
       letter-spacing: 0;
       opacity: 0;
-      animation: loading-screen-in 360ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
-      transition: opacity 620ms cubic-bezier(0.76, 0, 0.24, 1);
+      transition: opacity 760ms cubic-bezier(0.9, 0, 0.1, 1);
       will-change: opacity;
+    }
+
+    #loading-screen.loading-visible {
+      opacity: 1;
     }
 
     #loading-screen.loading-complete {
@@ -159,16 +162,6 @@
 
     #loading-screen[hidden] {
       display: none;
-    }
-
-    @keyframes loading-screen-in {
-      from {
-        opacity: 0;
-      }
-
-      to {
-        opacity: 1;
-      }
     }
 
     .text-node {
@@ -991,7 +984,7 @@
     const ZOOM_AFFORDANCE_FULL_FONT_SCREEN_PX = 14;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 83; // Increment once for each commit.
+    const APP_VERSION = 84; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -1497,8 +1490,8 @@
       loadingProgressAnimationFrom = loadingDisplayedProgress;
       loadingProgressAnimationStart = 0;
       loadingProgressAnimationDuration = Math.max(
-        180,
-        Math.min(900, 180 + Math.abs(loadingProgressValue - loadingDisplayedProgress) * 18)
+        260,
+        Math.min(1800, 260 + Math.abs(loadingProgressValue - loadingDisplayedProgress) * 34)
       );
       if (loadingProgressAnimationFrame === null) {
         loadingProgressAnimationFrame = requestAnimationFrame(animateLoadingProgress);
@@ -1514,8 +1507,8 @@
     function easeLoadingProgress(progress) {
       const value = Math.max(0, Math.min(1, progress));
       return value < 0.5
-        ? 16 * Math.pow(value, 5)
-        : 1 - Math.pow(-2 * value + 2, 5) / 2;
+        ? Math.pow(2 * value, 10) / 2
+        : 1 - Math.pow(2 * (1 - value), 10) / 2;
     }
 
     function resolveLoadingProgressAnimation() {
@@ -1575,6 +1568,14 @@
       });
     }
 
+    function showLoadingScreen() {
+      if (!loadingScreen) return;
+      loadingScreen.hidden = false;
+      loadingScreen.classList.remove("loading-visible", "loading-complete");
+      void loadingScreen.offsetWidth;
+      loadingScreen.classList.add("loading-visible");
+    }
+
     function waitForLoadingTransition() {
       return new Promise((resolve) => {
         if (!loadingScreen) {
@@ -1582,7 +1583,7 @@
           return;
         }
 
-        const timeout = setTimeout(resolve, 760);
+        const timeout = setTimeout(resolve, 900);
         loadingScreen.addEventListener("transitionend", (event) => {
           if (event.target !== loadingScreen || event.propertyName !== "opacity") return;
           clearTimeout(timeout);
@@ -7440,6 +7441,7 @@
     }
 
     async function boot() {
+      showLoadingScreen();
       updateDocumentTitle();
       setLoadingProgress(10);
       void requestPersistentStorage();
