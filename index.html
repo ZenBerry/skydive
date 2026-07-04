@@ -966,7 +966,7 @@
     const ZOOM_AFFORDANCE_FULL_FONT_SCREEN_PX = 14;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 80; // Increment once for each commit.
+    const APP_VERSION = 81; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -1464,6 +1464,22 @@
       if (value < loadingProgressValue) return;
       loadingProgressValue = value;
       loadingScreen.textContent = `Loading... ${value}% done`;
+    }
+
+    function createLoadingProgressRange(start, end, onProgress) {
+      if (typeof onProgress !== "function") return null;
+      const from = Math.max(0, Math.min(1, Number(start) || 0));
+      const to = Math.max(from, Math.min(1, Number(end) || from));
+      return (progress) => {
+        const value = Math.max(0, Math.min(1, Number(progress) || 0));
+        onProgress(from + (to - from) * value);
+      };
+    }
+
+    function waitForLoadingFrame() {
+      return new Promise((resolve) => {
+        requestAnimationFrame(() => resolve());
+      });
     }
 
     function hideLoadingScreen() {
@@ -2425,18 +2441,23 @@
       return serialized;
     }
 
-    function loadLineConnections(entries) {
+    function loadLineConnections(entries, options = {}) {
+      const reportProgress = typeof options.onProgress === "function" ? options.onProgress : null;
       lineConnections = [];
       nextLineNumber = 1;
 
       if (!Array.isArray(entries)) {
         renderLineConnections();
+        if (reportProgress) reportProgress(1);
         return;
       }
 
       const seen = new Set();
-      for (const entry of entries) {
-        if (!entry || typeof entry !== "object") continue;
+      entries.forEach((entry, index) => {
+        if (!entry || typeof entry !== "object") {
+          if (reportProgress) reportProgress((index + 1) / Math.max(1, entries.length));
+          return;
+        }
         const from = normalizeLineEndpointId(entry.from);
         const to = normalizeLineEndpointId(entry.to);
         if (
@@ -2446,14 +2467,18 @@
           !getNodeById(from, { includeDeleted: true }) ||
           !getNodeById(to, { includeDeleted: true })
         ) {
-          continue;
+          if (reportProgress) reportProgress((index + 1) / Math.max(1, entries.length));
+          return;
         }
 
         const key = getLineConnectionKey(from, to);
         const createdAt = normalizeTimestamp(entry.createdAt);
         const deletedAt = normalizeTimestamp(entry.deletedAt);
         if (!deletedAt) {
-          if (seen.has(key)) continue;
+          if (seen.has(key)) {
+            if (reportProgress) reportProgress((index + 1) / Math.max(1, entries.length));
+            return;
+          }
           seen.add(key);
         }
 
@@ -2465,10 +2490,12 @@
           ...(createdAt ? { createdAt } : {}),
           ...(deletedAt ? { deletedAt } : {})
         });
-      }
+        if (reportProgress) reportProgress((index + 1) / Math.max(1, entries.length));
+      });
 
       renderLineConnections();
       updateCalcVariables();
+      if (reportProgress) reportProgress(1);
     }
 
     function removeLineConnectionsForNodes(nodes, deletedAt = Date.now()) {
@@ -5907,9 +5934,50 @@
       }
     }
 
+    function restoreStateNode(entry) {
+      const x = Number.isFinite(Number(entry.x)) ? Number(entry.x) : 0;
+      const y = Number.isFinite(Number(entry.y)) ? Number(entry.y) : 0;
+      const text = typeof entry.text === "string" ? entry.text : "";
+      const html = typeof entry.html === "string" ? sanitizeNodeHtml(entry.html) : null;
+      const id = typeof entry.id === "string" ? entry.id : "";
+      const baseFontSize = Number.isFinite(Number(entry.baseFontSize)) && Number(entry.baseFontSize) > 0
+        ? Number(entry.baseFontSize)
+        : BASE_TEXT_PX / camera.scale;
+      const rotation = Number.isFinite(Number(entry.rotation))
+        ? normalizeRotation(Number(entry.rotation))
+        : 0;
+      if (entry.kind === "command") {
+        const commandId = typeof entry.commandId === "string" ? entry.commandId : "";
+        const commandVersion = typeof entry.commandVersion === "string" ? entry.commandVersion : "";
+        const commandState = entry.commandState && typeof entry.commandState === "object"
+          ? entry.commandState
+          : {};
+        createCommandNode(x, y, commandId, commandState, baseFontSize, id, commandVersion, {
+          createdAt: entry.createdAt,
+          deletedAt: entry.deletedAt,
+          createdBy: entry.createdBy,
+          rotation,
+          preserveTimestamps: true
+        });
+      } else {
+        createTextNode(x, y, text, baseFontSize, id, html, {
+          createdAt: entry.createdAt,
+          deletedAt: entry.deletedAt,
+          createdBy: entry.createdBy,
+          rotation,
+          variable: entry.variable === true,
+          preserveTimestamps: true
+        });
+      }
+    }
+
     function loadState(state, options = {}) {
       if (!state || typeof state !== "object") {
         throw new Error("Invalid state file.");
+      }
+
+      if (options.incremental === true) {
+        return loadStateIncrementally(state, options);
       }
 
       const { autosave = true, onProgress = null } = options;
@@ -5952,40 +6020,7 @@
       updateDocumentTitle();
 
       nextNodes.forEach((entry, index) => {
-        const x = Number.isFinite(Number(entry.x)) ? Number(entry.x) : 0;
-        const y = Number.isFinite(Number(entry.y)) ? Number(entry.y) : 0;
-        const text = typeof entry.text === "string" ? entry.text : "";
-        const html = typeof entry.html === "string" ? sanitizeNodeHtml(entry.html) : null;
-        const id = typeof entry.id === "string" ? entry.id : "";
-        const baseFontSize = Number.isFinite(Number(entry.baseFontSize)) && Number(entry.baseFontSize) > 0
-          ? Number(entry.baseFontSize)
-          : BASE_TEXT_PX / camera.scale;
-        const rotation = Number.isFinite(Number(entry.rotation))
-          ? normalizeRotation(Number(entry.rotation))
-          : 0;
-        if (entry.kind === "command") {
-          const commandId = typeof entry.commandId === "string" ? entry.commandId : "";
-          const commandVersion = typeof entry.commandVersion === "string" ? entry.commandVersion : "";
-          const commandState = entry.commandState && typeof entry.commandState === "object"
-            ? entry.commandState
-            : {};
-          createCommandNode(x, y, commandId, commandState, baseFontSize, id, commandVersion, {
-            createdAt: entry.createdAt,
-            deletedAt: entry.deletedAt,
-            createdBy: entry.createdBy,
-            rotation,
-            preserveTimestamps: true
-          });
-        } else {
-          createTextNode(x, y, text, baseFontSize, id, html, {
-            createdAt: entry.createdAt,
-            deletedAt: entry.deletedAt,
-            createdBy: entry.createdBy,
-            rotation,
-            variable: entry.variable === true,
-            preserveTimestamps: true
-          });
-        }
+        restoreStateNode(entry);
         if (reportProgress) reportProgress((index + 1) / Math.max(1, nextNodes.length));
       });
 
@@ -5995,6 +6030,85 @@
 
       suppressAutosave = false;
       render();
+      if (autosave) scheduleAutosave();
+    }
+
+    async function loadStateIncrementally(state, options = {}) {
+      if (!state || typeof state !== "object") {
+        throw new Error("Invalid state file.");
+      }
+
+      const { autosave = true, onProgress = null } = options;
+      const nextNodes = Array.isArray(state.nodes) ? state.nodes : [];
+      const nextLines = Array.isArray(state.lines) ? state.lines : [];
+      const nextMeta = state.meta && typeof state.meta === "object" ? cloneJson(state.meta, {}) : {};
+      const reportProgress = typeof onProgress === "function" ? onProgress : null;
+      const reportClearing = createLoadingProgressRange(0, 0.1, reportProgress);
+      const reportNodes = createLoadingProgressRange(0.1, 0.76, reportProgress);
+      const reportLines = createLoadingProgressRange(0.76, 0.9, reportProgress);
+      const reportRender = createLoadingProgressRange(0.9, 1, reportProgress);
+      const yieldEvery = Math.max(1, Number(options.yieldEvery) || 40);
+
+      suppressAutosave = true;
+      try {
+        cancelCameraAnimation();
+        cancelNodeLayoutAnimation();
+        cancelLineDraft();
+        closeNodeContextMenu();
+        closeLineContextMenu();
+        closeCanvasContextMenu();
+        closeLinkNodeDialog();
+        closeSlashCommandMenu();
+        clearSelection();
+        hideMarqueeRect();
+        marqueeSession = null;
+        panSession = null;
+        viewport.classList.remove("panning");
+        groupTransform = null;
+        navigationFitTargetNode = null;
+
+        const currentNodes = Array.from(world.children);
+        for (let index = 0; index < currentNodes.length; index += 1) {
+          const node = currentNodes[index];
+          destroyCommandNodeContent(node);
+          unobserveNodeForLines(node);
+          if (reportClearing) reportClearing((index + 1) / Math.max(1, currentNodes.length));
+          if ((index + 1) % yieldEvery === 0) await waitForLoadingFrame();
+        }
+        world.innerHTML = "";
+        if (reportClearing) reportClearing(1);
+        await waitForLoadingFrame();
+
+        nextNodeNumber = 1;
+        nextLineNumber = 1;
+        lineConnections = [];
+        spaceMeta = nextMeta;
+        deloreanModified = Boolean(
+          DELOREAN_SPACE_INFO.active &&
+          spaceMeta.delorean &&
+          typeof spaceMeta.delorean === "object" &&
+          spaceMeta.delorean.modifiedAt
+        );
+        updateDocumentTitle();
+
+        for (let index = 0; index < nextNodes.length; index += 1) {
+          restoreStateNode(nextNodes[index]);
+          if (reportNodes) reportNodes((index + 1) / Math.max(1, nextNodes.length));
+          if ((index + 1) % yieldEvery === 0) await waitForLoadingFrame();
+        }
+        if (reportNodes) reportNodes(1);
+        await waitForLoadingFrame();
+
+        loadLineConnections(nextLines, { onProgress: reportLines });
+        await waitForLoadingFrame();
+
+        if (reportRender) reportRender(0.4);
+        render();
+        if (reportRender) reportRender(1);
+      } finally {
+        suppressAutosave = false;
+      }
+
       if (autosave) scheduleAutosave();
     }
 
@@ -7102,12 +7216,19 @@
       updateSlashMenuForNode(editingNode);
     });
 
-    function loadFromLocalStorage(options = {}) {
+    async function loadFromLocalStorage(options = {}) {
+      const reportProgress = typeof options.onProgress === "function" ? options.onProgress : null;
       const raw = localStorage.getItem(getStorageKey());
       if (!raw) return false;
+      if (reportProgress) reportProgress(0.15);
 
       try {
-        loadState(JSON.parse(raw), options);
+        const state = JSON.parse(raw);
+        if (reportProgress) reportProgress(0.25);
+        await loadState(state, {
+          ...options,
+          onProgress: createLoadingProgressRange(0.25, 1, reportProgress)
+        });
         return true;
       } catch (error) {
         console.error("Restore failed:", error);
@@ -7115,18 +7236,24 @@
       }
     }
 
-    function applySharedState(data, options = {}) {
+    async function applySharedState(data, options = {}) {
       if (!data) return false;
       if (Object.prototype.hasOwnProperty.call(data, "viewer")) setCurrentUser(data.viewer);
       if (!data.state) return false;
 
       const updatedAt = Number(data.updatedAt) || 1;
       if (updatedAt <= latestSharedUpdatedAt) return false;
+      const reportProgress = typeof options.onProgress === "function" ? options.onProgress : null;
+      if (reportProgress) reportProgress(0.25);
 
       try {
         applyingSharedState = true;
         latestSharedUpdatedAt = updatedAt;
-        loadState(data.state, { autosave: false, onProgress: options.onProgress });
+        await loadState(data.state, {
+          autosave: false,
+          incremental: options.incremental,
+          onProgress: createLoadingProgressRange(0.25, 1, reportProgress)
+        });
         resetHistoryToCurrentState();
         return true;
       } catch (error) {
@@ -7139,7 +7266,10 @@
 
     async function loadFromSharedSpace(options = {}) {
       if (!SHARED_SPACE_SLUG) return false;
+      const reportProgress = typeof options.onProgress === "function" ? options.onProgress : null;
+      if (reportProgress) reportProgress(0.05);
       const data = await requestSharedSpace();
+      if (reportProgress) reportProgress(0.2);
       if (Object.prototype.hasOwnProperty.call(data, "viewer")) setCurrentUser(data.viewer);
       if (!data.state) {
         latestSharedUpdatedAt = Number(data.updatedAt) || latestSharedUpdatedAt;
@@ -7169,24 +7299,27 @@
           setLoadingProgress(20);
           try {
             if (!await loadFromSharedSpace({
+              incremental: true,
               onProgress: (progress) => setLoadingProgress(35 + progress * 60)
             })) {
-              setLoadingProgress(80);
+              setLoadingProgress(90);
               render();
             }
             startSharedPolling();
           } catch (error) {
             console.error("Shared space load failed:", error);
+            setLoadingProgress(90);
             render();
           }
           return;
         }
 
         setLoadingProgress(20);
-        if (!loadFromLocalStorage({
+        if (!await loadFromLocalStorage({
+          incremental: true,
           onProgress: (progress) => setLoadingProgress(20 + progress * 75)
         })) {
-          setLoadingProgress(80);
+          setLoadingProgress(90);
           render();
         }
       } finally {
