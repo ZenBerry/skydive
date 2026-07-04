@@ -200,7 +200,7 @@
       place-items: center;
       border-radius: 50%;
       background: var(--creator-avatar-bg, #111);
-      border: calc(0.045em / var(--camera-scale, 1)) solid var(--creator-avatar-border, #111);
+      border: 0.045em solid var(--creator-avatar-border, #111);
       color: var(--creator-avatar-fg, #fff);
       font: 700 0.28em/1 "Roboto", "Helvetica Neue", Arial, sans-serif;
       letter-spacing: 0;
@@ -244,7 +244,7 @@
     .text-node.variable-node {
       box-sizing: border-box;
       padding: 0.18em 0.34em 0.16em;
-      border: calc(0.04em / var(--camera-scale, 1)) solid #93c5fd;
+      border: 0.04em solid #93c5fd;
       border-radius: 0.32em;
       background: #eaf4ff;
       color: #0f172a;
@@ -283,7 +283,6 @@
 
     .command-node > :first-child {
       background: var(--widget-color) !important;
-      border-width: calc(0.04em / var(--camera-scale, 1)) !important;
       border-color: var(--widget-border-color) !important;
       box-shadow: none !important;
     }
@@ -323,7 +322,7 @@
       max-width: 18em;
       margin: 0 0.12em;
       padding: 0.45em 0.52em 0.42em;
-      border: calc(0.04em / var(--camera-scale, 1)) solid var(--widget-border-color);
+      border: 0.04em solid var(--widget-border-color);
       border-radius: 0.55em;
       background: var(--widget-color);
       box-shadow: none;
@@ -383,7 +382,7 @@
       width: 17em;
       max-width: 100%;
       box-sizing: border-box;
-      border: calc(0.04em / var(--camera-scale, 1)) solid var(--widget-field-border-color);
+      border: 0.04em solid var(--widget-field-border-color);
       border-radius: 0.38em;
       background: var(--widget-field-color);
       padding: 0.28em 0.38em;
@@ -1007,7 +1006,7 @@
     const ZOOM_AFFORDANCE_FULL_FONT_SCREEN_PX = 14;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 88; // Increment once for each commit.
+    const APP_VERSION = 87; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -2393,14 +2392,6 @@
     }
 
     function getNodeWorldSize(node) {
-      const scale = getCameraScale();
-      if (!isCommandNode(node) && node.classList.contains("editing")) {
-        return {
-          width: Math.max(node.scrollWidth, node.offsetWidth, 1) / scale,
-          height: Math.max(node.scrollHeight, node.offsetHeight, 1) / scale
-        };
-      }
-
       return {
         width: Math.max(node.scrollWidth, node.offsetWidth, 1),
         height: Math.max(node.scrollHeight, node.offsetHeight, 1)
@@ -5829,20 +5820,13 @@
       const screenPoint = worldToScreen(worldX, worldY, scale, rotation);
       node.style.left = `${screenPoint.x}px`;
       node.style.top = `${screenPoint.y}px`;
+      node.style.setProperty("--camera-scale", String(scale));
       if (isCommandNode(node)) {
-        node.style.setProperty("--camera-scale", String(scale));
         node.style.fontSize = `${baseFontSize}px`;
         node.style.minWidth = "0px";
         node.style.transform = `rotate(${totalRotation}rad) scale(${scale})`;
         node.style.transformOrigin = "top left";
-      } else if (node.classList.contains("editing")) {
-        node.style.setProperty("--camera-scale", "1");
-        node.style.fontSize = `${renderedFontSize}px`;
-        node.style.minWidth = `${getTextNodeMinWidthScreenPx(renderedFontSize)}px`;
-        node.style.transform = `rotate(${totalRotation}rad)`;
-        node.style.transformOrigin = "top left";
       } else {
-        node.style.setProperty("--camera-scale", String(scale));
         node.style.fontSize = `${baseFontSize}px`;
         node.style.minWidth = `${getTextNodeMinWidthScreenPx(renderedFontSize) / scale}px`;
         node.style.transform = `rotate(${totalRotation}rad) scale(${scale})`;
@@ -5931,8 +5915,6 @@
       if (isCalcVariableNode(node)) return;
       node.classList.add("editing");
       node.contentEditable = "true";
-      renderNode(node);
-      requestLineRender();
       node.focus();
       if (selectAll) selectAllText(node);
     }
@@ -5940,8 +5922,6 @@
     function stopEditing(node) {
       node.contentEditable = "false";
       node.classList.remove("editing");
-      renderNode(node);
-      requestLineRender();
     }
 
     function serializeState() {
