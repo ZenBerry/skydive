@@ -8,8 +8,11 @@ const path = require("node:path");
 const skydiveUrl = cleanBaseUrl(process.env.SKYDIVE_URL || "http://localhost:8888");
 const bridgeToken = (process.env.SKYDIVE_OPENCLAW_BRIDGE_TOKEN || "").trim();
 const gatewayUrl = (process.env.OPENCLAW_GATEWAY_URL || "ws://127.0.0.1:18789").trim();
-const gatewayToken = (process.env.OPENCLAW_GATEWAY_TOKEN || "").trim();
-const gatewayPassword = (process.env.OPENCLAW_GATEWAY_PASSWORD || "").trim();
+const openClawConfigPath = process.env.OPENCLAW_CONFIG ||
+  path.join(os.homedir(), ".openclaw", "openclaw.json");
+const gatewayAuth = loadOpenClawGatewayAuth(openClawConfigPath);
+const gatewayToken = (process.env.OPENCLAW_GATEWAY_TOKEN || gatewayAuth.token || "").trim();
+const gatewayPassword = (process.env.OPENCLAW_GATEWAY_PASSWORD || gatewayAuth.password || "").trim();
 const sessionKey = (process.env.OPENCLAW_SESSION_KEY || "main").trim();
 const gatewayTimeoutMs = positiveInteger(process.env.OPENCLAW_BRIDGE_GATEWAY_TIMEOUT_MS, 120000);
 const deviceIdentityPath = process.env.SKYDIVE_OPENCLAW_DEVICE_IDENTITY ||
@@ -36,6 +39,21 @@ function positiveInteger(value, fallback) {
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function loadOpenClawGatewayAuth(filePath) {
+  try {
+    const config = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    const auth = config && config.gateway && config.gateway.auth && typeof config.gateway.auth === "object"
+      ? config.gateway.auth
+      : {};
+    return {
+      token: typeof auth.token === "string" ? auth.token : "",
+      password: typeof auth.password === "string" ? auth.password : ""
+    };
+  } catch (error) {
+    return { token: "", password: "" };
+  }
 }
 
 function requestHeaders() {
