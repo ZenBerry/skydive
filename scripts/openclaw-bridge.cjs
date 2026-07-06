@@ -94,7 +94,7 @@ function gatewayConnectParams() {
     minProtocol: 3,
     maxProtocol: 3,
     client: {
-      id: "skydive-openclaw-bridge",
+      id: "gateway-client",
       displayName: "Skydive",
       version: "dev",
       platform: process.platform,
