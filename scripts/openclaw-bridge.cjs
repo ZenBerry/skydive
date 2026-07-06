@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 
 const crypto = require("node:crypto");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
 const skydiveUrl = cleanBaseUrl(process.env.SKYDIVE_URL || "http://localhost:8888");
 const bridgeToken = (process.env.SKYDIVE_OPENCLAW_BRIDGE_TOKEN || "").trim();
@@ -9,6 +12,8 @@ const gatewayToken = (process.env.OPENCLAW_GATEWAY_TOKEN || "").trim();
 const gatewayPassword = (process.env.OPENCLAW_GATEWAY_PASSWORD || "").trim();
 const sessionKey = (process.env.OPENCLAW_SESSION_KEY || "main").trim();
 const gatewayTimeoutMs = positiveInteger(process.env.OPENCLAW_BRIDGE_GATEWAY_TIMEOUT_MS, 120000);
+const deviceIdentityPath = process.env.SKYDIVE_OPENCLAW_DEVICE_IDENTITY ||
+  path.join(os.homedir(), ".skydive", "openclaw-bridge-device.json");
 
 if (!bridgeToken) {
   console.error("SKYDIVE_OPENCLAW_BRIDGE_TOKEN is required.");
@@ -86,24 +91,123 @@ function extractText(value) {
   return "";
 }
 
-function gatewayConnectParams() {
+function ensureDir(filePath) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+}
+
+function base64UrlEncode(buffer) {
+  return Buffer.from(buffer).toString("base64").replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/g, "");
+}
+
+function derivePublicKeyRaw(publicKeyPem) {
+  const prefix = Buffer.from("302a300506032b6570032100", "hex");
+  const spki = crypto.createPublicKey(publicKeyPem).export({ type: "spki", format: "der" });
+  return spki.length === prefix.length + 32 && spki.subarray(0, prefix.length).equals(prefix)
+    ? spki.subarray(prefix.length)
+    : spki;
+}
+
+function fingerprintPublicKey(publicKeyPem) {
+  return crypto.createHash("sha256").update(derivePublicKeyRaw(publicKeyPem)).digest("hex");
+}
+
+function generateDeviceIdentity() {
+  const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
+  const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+  const privateKeyPem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+  return { deviceId: fingerprintPublicKey(publicKeyPem), publicKeyPem, privateKeyPem };
+}
+
+function loadOrCreateDeviceIdentity(filePath = deviceIdentityPath) {
+  try {
+    if (fs.existsSync(filePath)) {
+      const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      if (parsed && parsed.version === 1 && parsed.publicKeyPem && parsed.privateKeyPem) {
+        const deviceId = fingerprintPublicKey(parsed.publicKeyPem);
+        return { deviceId, publicKeyPem: parsed.publicKeyPem, privateKeyPem: parsed.privateKeyPem };
+      }
+    }
+  } catch (error) {
+    // Fall through and create a fresh local bridge identity.
+  }
+
+  const identity = generateDeviceIdentity();
+  ensureDir(filePath);
+  fs.writeFileSync(filePath, `${JSON.stringify({ version: 1, ...identity, createdAtMs: Date.now() }, null, 2)}\n`, { mode: 0o600 });
+  try {
+    fs.chmodSync(filePath, 0o600);
+  } catch (error) {
+    // Best effort on platforms without chmod semantics.
+  }
+  return identity;
+}
+
+function buildDeviceAuthPayload(params) {
+  const version = params.nonce ? "v2" : "v1";
+  const base = [
+    version,
+    params.deviceId,
+    params.clientId,
+    params.clientMode,
+    params.role,
+    params.scopes.join(","),
+    String(params.signedAtMs),
+    params.token || ""
+  ];
+  if (version === "v2") base.push(params.nonce || "");
+  return base.join("|");
+}
+
+function signDevicePayload(privateKeyPem, payload) {
+  return base64UrlEncode(crypto.sign(null, Buffer.from(payload, "utf8"), crypto.createPrivateKey(privateKeyPem)));
+}
+
+function publicKeyRawBase64UrlFromPem(publicKeyPem) {
+  return base64UrlEncode(derivePublicKeyRaw(publicKeyPem));
+}
+
+function gatewayConnectParams(nonce = "") {
+  const identity = loadOrCreateDeviceIdentity();
+  const clientId = "gateway-client";
+  const clientMode = "backend";
+  const role = "operator";
+  const scopes = ["operator.admin", "operator.approvals", "operator.pairing"];
+  const signedAtMs = Date.now();
+  const authToken = gatewayToken || "";
   const auth = gatewayToken || gatewayPassword
     ? { ...(gatewayToken ? { token: gatewayToken } : {}), ...(gatewayPassword ? { password: gatewayPassword } : {}) }
     : undefined;
+  const payload = buildDeviceAuthPayload({
+    deviceId: identity.deviceId,
+    clientId,
+    clientMode,
+    role,
+    scopes,
+    signedAtMs,
+    token: authToken || null,
+    nonce
+  });
   return {
     minProtocol: 3,
     maxProtocol: 3,
     client: {
-      id: "gateway-client",
+      id: clientId,
       displayName: "Skydive",
       version: "dev",
       platform: process.platform,
-      mode: "backend",
+      mode: clientMode,
       instanceId: crypto.randomUUID()
     },
     caps: [],
-    role: "operator",
-    scopes: ["operator.admin", "operator.approvals", "operator.pairing"],
+    role,
+    scopes,
+    device: {
+      id: identity.deviceId,
+      publicKey: publicKeyRawBase64UrlFromPem(identity.publicKeyPem),
+      signature: signDevicePayload(identity.privateKeyPem, payload),
+      signedAt: signedAtMs,
+      ...(nonce ? { nonce } : {})
+    },
     ...(auth ? { auth } : {})
   };
 }
@@ -139,11 +243,11 @@ async function runOpenClaw(message) {
       });
     }
 
-    async function sendConnect() {
+    async function sendConnect(nonce = "") {
       if (connectStarted) return;
       connectStarted = true;
       try {
-        await request("connect", gatewayConnectParams());
+        await request("connect", gatewayConnectParams(nonce));
         connected = true;
         await request("chat.send", {
           sessionKey,
@@ -171,7 +275,9 @@ async function runOpenClaw(message) {
       }
 
       if (frame.type === "event" && frame.event === "connect.challenge") {
-        if (!connected) sendConnect();
+        const payload = frame.payload || {};
+        const nonce = typeof payload.nonce === "string" ? payload.nonce : "";
+        if (!connected) sendConnect(nonce);
         return;
       }
 
