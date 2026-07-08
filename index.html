@@ -1004,9 +1004,11 @@
     const MIN_GROUP_SELECTION_HANDLE_SCREEN_PX = 2;
     const ZOOM_AFFORDANCE_MIN_FONT_SCREEN_PX = 2;
     const ZOOM_AFFORDANCE_FULL_FONT_SCREEN_PX = 14;
+    const MIN_NODE_LAYOUT_FONT_PX = 8;
+    const MAX_NODE_LAYOUT_FONT_PX = 192;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 87; // Increment once for each commit.
+    const APP_VERSION = 88; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -2392,9 +2394,10 @@
     }
 
     function getNodeWorldSize(node) {
+      const metrics = getNodeRenderMetrics(node);
       return {
-        width: Math.max(node.scrollWidth, node.offsetWidth, 1),
-        height: Math.max(node.scrollHeight, node.offsetHeight, 1)
+        width: Math.max(node.scrollWidth, node.offsetWidth, 1) * metrics.worldScale,
+        height: Math.max(node.scrollHeight, node.offsetHeight, 1) * metrics.worldScale
       };
     }
 
@@ -2804,6 +2807,21 @@
 
     function screenToWorldLength(value) {
       return value / getCameraScale();
+    }
+
+    function getNodeRenderMetrics(node) {
+      const baseFontSize = getNodeBaseFontSize(node);
+      const cameraScale = getCameraScale();
+      const visualFontPx = baseFontSize * cameraScale;
+      const layoutFontPx = clamp(visualFontPx, MIN_NODE_LAYOUT_FONT_PX, MAX_NODE_LAYOUT_FONT_PX);
+      return {
+        baseFontSize,
+        cameraScale,
+        visualFontPx,
+        layoutFontPx,
+        screenScale: visualFontPx / layoutFontPx,
+        worldScale: baseFontSize / layoutFontPx
+      };
     }
 
     function getScreenAffordanceScale(fontSize) {
@@ -5811,25 +5829,24 @@
     function renderNode(node) {
       const worldX = Number(node.dataset.x);
       const worldY = Number(node.dataset.y);
-      const baseFontSize = Number(node.dataset.baseFontSize);
-      const scale = getCameraScale();
+      const metrics = getNodeRenderMetrics(node);
+      const scale = metrics.cameraScale;
       const rotation = getCameraRotation();
       const nodeRotation = getNodeRotation(node);
       const totalRotation = normalizeRotation(rotation + nodeRotation);
-      const renderedFontSize = baseFontSize * scale;
       const screenPoint = worldToScreen(worldX, worldY, scale, rotation);
       node.style.left = `${screenPoint.x}px`;
       node.style.top = `${screenPoint.y}px`;
-      node.style.setProperty("--camera-scale", String(scale));
+      node.style.setProperty("--camera-scale", String(metrics.screenScale));
       if (isCommandNode(node)) {
-        node.style.fontSize = `${baseFontSize}px`;
+        node.style.fontSize = `${metrics.layoutFontPx}px`;
         node.style.minWidth = "0px";
-        node.style.transform = `rotate(${totalRotation}rad) scale(${scale})`;
+        node.style.transform = `rotate(${totalRotation}rad) scale(${metrics.screenScale})`;
         node.style.transformOrigin = "top left";
       } else {
-        node.style.fontSize = `${baseFontSize}px`;
-        node.style.minWidth = `${getTextNodeMinWidthScreenPx(renderedFontSize) / scale}px`;
-        node.style.transform = `rotate(${totalRotation}rad) scale(${scale})`;
+        node.style.fontSize = `${metrics.layoutFontPx}px`;
+        node.style.minWidth = `${getTextNodeMinWidthScreenPx(metrics.visualFontPx) / metrics.screenScale}px`;
+        node.style.transform = `rotate(${totalRotation}rad) scale(${metrics.screenScale})`;
         node.style.transformOrigin = "top left";
       }
     }
