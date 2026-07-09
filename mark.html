@@ -111,6 +111,25 @@
       animation: breathe 1.25s ease-in-out infinite alternate;
     }
 
+    #version-counter {
+      position: fixed;
+      top: calc(10px + env(safe-area-inset-top, 0px));
+      left: calc(10px + env(safe-area-inset-left, 0px));
+      z-index: 1000;
+      padding: 4px 7px;
+      border: 1px solid rgba(17, 24, 39, 0.12);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.9);
+      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+      color: #6b7280;
+      font: 500 12px/1 "Roboto", "Helvetica Neue", Arial, sans-serif;
+      pointer-events: none;
+    }
+
+    #version-counter[hidden] {
+      display: none;
+    }
+
     @keyframes breathe {
       to { opacity: 0.35; }
     }
@@ -329,6 +348,7 @@
   </style>
 </head>
 <body>
+  <div id="version-counter" aria-label="Application version" hidden></div>
   <main id="chat">
     <section id="messages" aria-live="polite" aria-label="Conversation with Mark"></section>
     <div id="agent-toolbar" aria-label="Agent mode">
@@ -360,9 +380,12 @@
     const agentModeButtons = Array.from(document.querySelectorAll(".agent-mode-button"));
     const pairOpenClaw = document.getElementById("pair-openclaw");
     const currentUserBullet = document.getElementById("current-user-bullet");
+    const versionCounter = document.getElementById("version-counter");
     const prompt = document.getElementById("prompt");
     const visibility = document.getElementById("visibility");
     const send = document.getElementById("send");
+    const params = new URLSearchParams(window.location.search);
+    const markDebug = params.get("debug") === "true";
     const history = [];
     let waiting = false;
     let secretExpected = false;
@@ -372,6 +395,21 @@
     let pendingAttachments = [];
     let agentMode = localStorage.getItem("skydive.agentMode") === "codex" ? "codex" : "mark";
     let openClawStatus = null;
+
+    async function loadAppVersion() {
+      try {
+        const response = await fetch("/", { headers: { "Accept": "text/html" }, cache: "no-store" });
+        const html = await response.text();
+        const match = html.match(/\bconst\s+APP_VERSION\s*=\s*(\d+)\b/);
+        if (response.ok && match) {
+          versionCounter.textContent = `v${match[1]}`;
+          return;
+        }
+      } catch (error) {
+        console.error("Version lookup failed:", error);
+      }
+      versionCounter.textContent = "v?";
+    }
 
     function boundedText(value, limit = 5000) {
       const text = String(value || "").replace(/\s+/g, " ").trim();
@@ -704,6 +742,7 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             messages: requestHistory.slice(-24),
+            debug: markDebug,
             secret: submittedSecret,
             timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
           })
@@ -755,6 +794,18 @@
         submitMessage();
       }
     });
+    window.addEventListener("keydown", (event) => {
+      if (
+        event.key === "Tab" &&
+        !event.altKey &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.shiftKey
+      ) {
+        event.preventDefault();
+        versionCounter.hidden = !versionCounter.hidden;
+      }
+    });
 
     window.addEventListener("message", (event) => {
       if (event.origin !== window.location.origin || !event.data || typeof event.data !== "object") return;
@@ -768,9 +819,9 @@
       }
     });
 
-    const params = new URLSearchParams(window.location.search);
     bookContext = normalizeBookContext({ title: params.get("book") || "" });
 
+    void loadAppVersion();
     updateAgentModeUi();
     const greeting = agentMode === "codex"
       ? "Hi. I’m Codex. Pair your OpenClaw bridge, then I can answer through your local agent."

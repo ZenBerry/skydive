@@ -41,6 +41,27 @@ class HttpError extends Error {
   }
 }
 
+function serializeError(error) {
+  if (!error || typeof error !== "object") return { value: String(error) };
+  const result = {
+    name: error.name || error.constructor && error.constructor.name || "Error",
+    message: error.message || String(error)
+  };
+  if (error.stack) result.stack = error.stack;
+  if (Number.isFinite(Number(error.statusCode))) result.statusCode = Number(error.statusCode);
+  if (error.details) result.details = error.details;
+  if (error.googleTransient) result.googleTransient = true;
+  if (error.googleModel) result.googleModel = error.googleModel;
+  if (Number.isFinite(Number(error.googleStatus))) result.googleStatus = Number(error.googleStatus);
+  if (error.googlePayload) result.googlePayload = error.googlePayload;
+  if (error.cause) result.cause = serializeError(error.cause);
+  return result;
+}
+
+function debugReply(message, error) {
+  return `${message}\n\nDebug error:\n${JSON.stringify(serializeError(error), null, 2)}`;
+}
+
 function json(statusCode, body, cookies = []) {
   const response = {
     statusCode,
@@ -153,6 +174,7 @@ async function requestGoogle(body, deadline) {
   }
 
   let lastMessage = "Google rejected the request.";
+  let lastError = null;
   const models = [...new Set([GEMMA_MODEL, GEMMA_FALLBACK_MODEL].filter(Boolean))];
   for (const model of models) {
     const remainingMs = deadline - Date.now();
@@ -170,6 +192,8 @@ async function requestGoogle(body, deadline) {
       });
     } catch (error) {
       lastMessage = "Google's model API could not be reached.";
+      if (error && typeof error === "object") error.googleModel = model;
+      lastError = error;
       if (error && error.name === "TimeoutError") break;
       continue;
     }
@@ -179,16 +203,31 @@ async function requestGoogle(body, deadline) {
 
     const googleMessage = payload && payload.error && payload.error.message ? payload.error.message : "Google rejected the request.";
     lastMessage = googleMessage;
+    lastError = new HttpError(response.status, googleMessage, payload);
+    lastError.googleModel = model;
+    lastError.googleStatus = response.status;
+    lastError.googlePayload = payload;
     if (response.status === 401 || response.status === 403) {
-      throw new HttpError(502, "Google rejected Mark's API key. Replace GEMINI_API_KEY in Netlify.", googleMessage);
+      const authError = new HttpError(502, "Google rejected Mark's API key. Replace GEMINI_API_KEY in Netlify.", googleMessage);
+      authError.cause = lastError;
+      authError.googleModel = model;
+      authError.googleStatus = response.status;
+      authError.googlePayload = payload;
+      throw authError;
     }
     if (response.status !== 429 && response.status < 500) {
-      throw new HttpError(502, "Google's model API rejected Mark's request.", googleMessage);
+      const requestError = new HttpError(502, "Google's model API rejected Mark's request.", googleMessage);
+      requestError.cause = lastError;
+      requestError.googleModel = model;
+      requestError.googleStatus = response.status;
+      requestError.googlePayload = payload;
+      throw requestError;
     }
   }
 
   const googleError = new HttpError(502, "Google's model API is temporarily unavailable.", lastMessage);
   googleError.googleTransient = true;
+  googleError.cause = lastError;
   throw googleError;
 }
 
@@ -530,7 +569,7 @@ function hasMatchingFreshRead(observations, parameters) {
   return read && Number.isFinite(Number(revision)) && Number(revision) === Number(parameters.baseRevision);
 }
 
-async function runPromptAgent(event, messages, manifest, systemInstruction, timeZone, deadline) {
+async function runPromptAgent(event, messages, manifest, systemInstruction, timeZone, deadline, debug = false) {
   const preloaded = await preloadReadObservation(event, messages, timeZone);
   const observations = preloaded ? [preloaded] : [];
   if (preloaded) {
@@ -549,7 +588,8 @@ async function runPromptAgent(event, messages, manifest, systemInstruction, time
       const deterministicReply = error.googleTransient ? deterministicObservationReply(observations) : "";
       if (deterministicReply) return deterministicReply;
       if (error.googleTransient) {
-        return "I’m here, but Google’s model service is having a flaky moment. Please try that once more.";
+        const message = "I’m here, but Google’s model service is having a flaky moment. Please try that once more.";
+        return debug ? debugReply(message, error) : message;
       }
       throw error;
     }
@@ -577,12 +617,12 @@ async function runPromptAgent(event, messages, manifest, systemInstruction, time
   return deterministicObservationReply(observations) || "I stopped before running too many actions. Please split that into a smaller request.";
 }
 
-async function runMark(event, messages, timeZone) {
+async function runMark(event, messages, timeZone, debug = false) {
   const deadline = Date.now() + REQUEST_BUDGET_MS;
   const manifestResult = await callSkydive(event, "/api/agent?manifest=1");
   const manifest = manifestResult.ok ? manifestResult.data : manifestResult;
   const systemInstruction = buildSystemInstruction(manifest);
-  return runPromptAgent(event, messages, manifest, systemInstruction, timeZone, deadline);
+  return runPromptAgent(event, messages, manifest, systemInstruction, timeZone, deadline, debug);
 }
 
 exports.handler = async (event) => {
@@ -598,12 +638,14 @@ exports.handler = async (event) => {
   }
   if (event.httpMethod !== "POST") return json(405, { error: "Method not allowed." });
 
+  let debug = false;
   try {
     if ((event.body || "").length > MAX_REQUEST_LENGTH) {
       throw new HttpError(413, "This conversation is too large. Start a fresh chat and try again.");
     }
     const payload = event.body ? JSON.parse(event.body) : {};
     const secret = payload.secret === true;
+    debug = payload.debug === true;
     const messages = cleanMessages(payload.messages, { preserveFinalWhitespace: secret });
     const timeZone = cleanTimeZone(payload.timeZone, "UTC");
     const latest = messages[messages.length - 1].content;
@@ -630,7 +672,7 @@ exports.handler = async (event) => {
       }, await sessionCookies(event, accountResult.cookies));
     }
 
-    const result = await runMark(event, messages, timeZone);
+    const result = await runMark(event, messages, timeZone, debug);
     if (result && typeof result === "object" && result.direct) {
       return json(200, {
         reply: result.reply,
@@ -644,7 +686,7 @@ exports.handler = async (event) => {
     if (error instanceof SyntaxError) return json(400, { error: "Request body must be valid JSON." });
     if (error instanceof HttpError) {
       if (error.statusCode >= 500) {
-        return json(200, { reply: error.message, model: GEMMA_MODEL });
+        return json(200, { reply: debug ? debugReply(error.message, error) : error.message, model: GEMMA_MODEL });
       }
       return json(error.statusCode, { error: error.message, ...(error.details ? { details: error.details } : {}) });
     }
