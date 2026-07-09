@@ -699,9 +699,26 @@
 
     function assistantHistoryContent(reply) {
       const withoutDebug = String(reply || "").replace(/\n\nDebug error:\n[\s\S]*$/, "").trim();
-      return withoutDebug.length > 2400
-        ? `${withoutDebug.slice(0, 2400).trim()}\n[Previous assistant reply truncated for context.]`
+      const bulletCount = (withoutDebug.match(/^• /gm) || []).length;
+      if (/^Here are your active Skydive spaces:/m.test(withoutDebug) && bulletCount) {
+        return `[Mark listed ${bulletCount} active Skydive spaces.]`;
+      }
+      if (/^Links from nodes created on /m.test(withoutDebug) && bulletCount) {
+        return `[Mark listed ${bulletCount} links from nodes created on the requested date.]`;
+      }
+      if (/^Nodes created on /m.test(withoutDebug) && bulletCount) {
+        return `[Mark listed ${bulletCount} nodes created on the requested date.]`;
+      }
+      return withoutDebug.length > 1200
+        ? `${withoutDebug.slice(0, 1200).trim()}\n[Previous assistant reply truncated for context.]`
         : withoutDebug;
+    }
+
+    function userHistoryContent(content) {
+      const text = String(content || "").trim();
+      return text.length > 2400
+        ? `${text.slice(0, 2400).trim()}\n[Previous user message truncated for context.]`
+        : text;
     }
 
     function resizePrompt() {
@@ -739,7 +756,7 @@
       addMessage("user", content, { secret: submittedSecret });
       const contextualContent = submittedSecret ? content : buildContextualMessage(content, attachments);
       const requestHistory = [...history, { role: "user", content: contextualContent }];
-      history.push({ role: "user", content: submittedSecret ? "[hidden input]" : content });
+      history.push({ role: "user", content: submittedSecret ? "[hidden input]" : userHistoryContent(content) });
       const assistantName = currentAssistantName();
       const pending = addMessage("assistant", "…", { pending: true, speaker: assistantName });
 
