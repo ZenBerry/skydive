@@ -697,6 +697,13 @@
       return article;
     }
 
+    function assistantHistoryContent(reply) {
+      const withoutDebug = String(reply || "").replace(/\n\nDebug error:\n[\s\S]*$/, "").trim();
+      return withoutDebug.length > 2400
+        ? `${withoutDebug.slice(0, 2400).trim()}\n[Previous assistant reply truncated for context.]`
+        : withoutDebug;
+    }
+
     function resizePrompt() {
       prompt.style.height = "auto";
       prompt.style.height = `${Math.min(prompt.scrollHeight, 150)}px`;
@@ -758,7 +765,7 @@
         const reply = typeof data.reply === "string" ? data.reply.trim() : "";
         if (!reply) throw new Error(`${assistantName} returned an empty response.`);
         if (Object.prototype.hasOwnProperty.call(data, "user")) setCurrentUser(data.user);
-        history.push({ role: "assistant", content: reply });
+        history.push({ role: "assistant", content: assistantHistoryContent(reply) });
         pending.remove();
         addMessage("assistant", reply, { speaker: assistantName });
         setSecretExpected(data.secretInput === true);

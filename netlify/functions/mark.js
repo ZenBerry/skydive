@@ -54,6 +54,7 @@ function serializeError(error) {
   if (error.googleModel) result.googleModel = error.googleModel;
   if (Number.isFinite(Number(error.googleStatus))) result.googleStatus = Number(error.googleStatus);
   if (error.googlePayload) result.googlePayload = error.googlePayload;
+  if (Array.isArray(error.googleAttempts)) result.googleAttempts = error.googleAttempts.map(serializeError);
   if (error.cause) result.cause = serializeError(error.cause);
   return result;
 }
@@ -175,6 +176,7 @@ async function requestGoogle(body, deadline) {
 
   let lastMessage = "Google rejected the request.";
   let lastError = null;
+  const attemptErrors = [];
   const models = [...new Set([GEMMA_MODEL, GEMMA_FALLBACK_MODEL].filter(Boolean))];
   for (const model of models) {
     const remainingMs = deadline - Date.now();
@@ -194,6 +196,7 @@ async function requestGoogle(body, deadline) {
       lastMessage = "Google's model API could not be reached.";
       if (error && typeof error === "object") error.googleModel = model;
       lastError = error;
+      attemptErrors.push(error);
       if (error && error.name === "TimeoutError") break;
       continue;
     }
@@ -207,12 +210,14 @@ async function requestGoogle(body, deadline) {
     lastError.googleModel = model;
     lastError.googleStatus = response.status;
     lastError.googlePayload = payload;
+    attemptErrors.push(lastError);
     if (response.status === 401 || response.status === 403) {
       const authError = new HttpError(502, "Google rejected Mark's API key. Replace GEMINI_API_KEY in Netlify.", googleMessage);
       authError.cause = lastError;
       authError.googleModel = model;
       authError.googleStatus = response.status;
       authError.googlePayload = payload;
+      authError.googleAttempts = attemptErrors;
       throw authError;
     }
     if (response.status !== 429 && response.status < 500) {
@@ -221,6 +226,7 @@ async function requestGoogle(body, deadline) {
       requestError.googleModel = model;
       requestError.googleStatus = response.status;
       requestError.googlePayload = payload;
+      requestError.googleAttempts = attemptErrors;
       throw requestError;
     }
   }
@@ -228,6 +234,7 @@ async function requestGoogle(body, deadline) {
   const googleError = new HttpError(502, "Google's model API is temporarily unavailable.", lastMessage);
   googleError.googleTransient = true;
   googleError.cause = lastError;
+  googleError.googleAttempts = attemptErrors;
   throw googleError;
 }
 
@@ -558,6 +565,37 @@ function deterministicObservationReply(observations) {
   return "";
 }
 
+function latestUserContent(messages) {
+  const latest = [...messages].reverse().find((message) => message.role === "user");
+  return latest && typeof latest.content === "string" ? latest.content.toLowerCase() : "";
+}
+
+function deterministicTransientReply(messages) {
+  const latest = latestUserContent(messages);
+  if (
+    /\b(what can you do|what do you do|help|capabilit|able to do)\b/.test(latest) &&
+    /\b(skydive|space|spaces|node|nodes|map|maps)\b/.test(latest)
+  ) {
+    return [
+      "I can work with Skydive spaces in a few practical ways:",
+      "",
+      "- list your spaces",
+      "- read a specific space",
+      "- find links from nodes created today",
+      "- create, update, move, resize, align, link, or delete nodes",
+      "- apply edits only after reading the current space revision, so I do not overwrite newer changes",
+      "",
+      "Google's model endpoint is overloaded right now, but those are the Skydive tools I am wired to use."
+    ].join("\n");
+  }
+
+  if (/\b(are you ok|are you okay|you ok|you okay|what happened)\b/.test(latest)) {
+    return "I am okay, but Google's model endpoint is currently overloaded. I can still answer some Skydive lookup requests directly, like listing spaces or finding links from today. Please try the chatty parts again in a moment.";
+  }
+
+  return "";
+}
+
 function hasMatchingFreshRead(observations, parameters) {
   const read = [...observations].reverse().find((observation) => (
     observation.name === "skydive_read_space" &&
@@ -588,6 +626,8 @@ async function runPromptAgent(event, messages, manifest, systemInstruction, time
       const deterministicReply = error.googleTransient ? deterministicObservationReply(observations) : "";
       if (deterministicReply) return deterministicReply;
       if (error.googleTransient) {
+        const transientReply = deterministicTransientReply(messages);
+        if (transientReply) return debug ? debugReply(transientReply, error) : transientReply;
         const message = "I’m here, but Google’s model service is having a flaky moment. Please try that once more.";
         return debug ? debugReply(message, error) : message;
       }

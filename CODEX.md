@@ -1,6 +1,7 @@
 # Codex Notes
 
 - Global instruction: Increment `APP_VERSION` in `index.html` by 1 for every commit.
+- 2026-07-09: Made Mark debug output preserve every Google model attempt, added deterministic recovery replies for capability/status questions during transient Google failures, stripped debug JSON from future Mark history, and bumped `APP_VERSION` to 92.
 - 2026-07-09: Added Mark debug mode at `/mark?debug=true` so flaky Google-model failures can include the serialized underlying error, displayed the shared `APP_VERSION` in Mark with Tab, and bumped `APP_VERSION` to 91.
 - 2026-07-09: Disabled native browser zoom across Skydive pages, including mobile double-tap zoom, Safari native gestures, and desktop browser zoom shortcuts. Bumps `APP_VERSION` to 90.
 - 2026-07-04: Added a mobile toolbar delete button for selected nodes. It reuses the existing soft-delete/autosave/history path, disables itself when the mobile selection is empty, and bumps `APP_VERSION` to 87.
