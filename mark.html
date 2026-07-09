@@ -418,7 +418,7 @@
 
     function normalizeBookContext(value) {
       if (!value || typeof value !== "object") return null;
-      const title = boundedText(value.title || value.name || "Untitled book", 240);
+      const title = boundedText(value.title || value.name || "", 240);
       return title ? { title } : null;
     }
 
@@ -861,7 +861,9 @@
       }
     });
 
-    bookContext = normalizeBookContext({ title: params.get("book") || "" });
+    if (params.has("book")) {
+      bookContext = normalizeBookContext({ title: params.get("book") || "" });
+    }
 
     void loadAppVersion();
     updateAgentModeUi();

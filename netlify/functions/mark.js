@@ -120,6 +120,13 @@ function cleanMessages(value, options = {}) {
   return messages;
 }
 
+function unwrapContextualUserMessage(content) {
+  const marker = "\n\nUser message:\n";
+  const markerIndex = String(content || "").lastIndexOf(marker);
+  if (markerIndex === -1) return content;
+  return content.slice(markerIndex + marker.length);
+}
+
 function getOrigin(event) {
   const headers = event.headers || {};
   const host = headers["x-forwarded-host"] || headers.host || headers.Host;
@@ -1162,7 +1169,8 @@ exports.handler = async (event) => {
     const messages = cleanMessages(payload.messages, { preserveFinalWhitespace: secret });
     const timeZone = cleanTimeZone(payload.timeZone, "UTC");
     const latest = messages[messages.length - 1].content;
-    const activeFlow = await handleActiveFlow(event, latest, secret);
+    const latestUserText = unwrapContextualUserMessage(latest);
+    const activeFlow = await handleActiveFlow(event, latestUserText, secret);
     if (activeFlow) {
       return json(200, {
         reply: activeFlow.reply,
@@ -1172,7 +1180,7 @@ exports.handler = async (event) => {
       }, await sessionCookies(event, activeFlow.cookies));
     }
 
-    const accountIntent = matchAccountIntent(latest);
+    const accountIntent = matchAccountIntent(latestUserText);
     if (accountIntent) {
       const accountName = typeof accountIntent === "string" ? accountIntent : accountIntent.name;
       const accountArgs = accountIntent && typeof accountIntent === "object" ? accountIntent.args || {} : {};
