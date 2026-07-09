@@ -10,6 +10,13 @@ const {
   runAccountAction
 } = require("./lib/users");
 
+let staticCommandRegistry = { commands: [] };
+try {
+  staticCommandRegistry = require("../../commands/registry.json");
+} catch (error) {
+  console.error("Could not load Mark command registry:", error);
+}
+
 const MAX_HISTORY_MESSAGES = 24;
 const MAX_MESSAGE_LENGTH = 8000;
 const MAX_REQUEST_LENGTH = 120000;
@@ -327,6 +334,89 @@ function boundedToolResult(result) {
   return text.length <= MAX_ACTION_RESULT_LENGTH
     ? result
     : { truncated: true, json: `${text.slice(0, MAX_ACTION_RESULT_LENGTH)}…` };
+}
+
+function quotedText(value) {
+  const match = String(value || "").match(/["'“‘]([^"'”’]{1,4000})["'”’]/);
+  return match ? match[1].trim() : "";
+}
+
+function cleanSpaceSlug(value) {
+  const slug = String(value || "").trim().replace(/^\/+/, "").replace(/\/+$/, "");
+  return slug && slug.length <= 500 && !slug.includes("//") ? slug : "";
+}
+
+function extractSpaceSlug(value) {
+  const text = String(value || "");
+  const explicit = text.match(/(?:^|\s)\/([a-zA-Z0-9_.:-]+(?:\/[a-zA-Z0-9_.:-]+)*)\b/);
+  if (explicit) return cleanSpaceSlug(explicit[1]);
+  const preposition = text.match(/\b(?:in|inside|to|from|space)\s+([a-zA-Z0-9_.:-]+(?:\/[a-zA-Z0-9_.:-]+)*)\b/i);
+  return preposition ? cleanSpaceSlug(preposition[1]) : "";
+}
+
+function extractNodeIds(value) {
+  const ids = new Set();
+  for (const match of String(value || "").matchAll(/\b(?:node|nodes|id|ids)\s+([a-zA-Z0-9_.:-]+)\b/gi)) {
+    ids.add(match[1]);
+  }
+  for (const match of String(value || "").matchAll(/\bnode-[a-zA-Z0-9_.:-]+\b/g)) {
+    ids.add(match[0]);
+  }
+  return [...ids];
+}
+
+function activeNodes(state) {
+  return state && Array.isArray(state.nodes) ? state.nodes.filter((node) => !node.deletedAt) : [];
+}
+
+function nextNodePosition(state) {
+  const nodes = activeNodes(state);
+  if (!nodes.length) return { x: 0, y: 0 };
+  const x = nodes.reduce((sum, node) => sum + (Number(node.x) || 0), 0) / nodes.length;
+  const y = Math.max(...nodes.map((node) => Number(node.y) || 0)) + 90;
+  return { x: Math.round(x), y: Math.round(y) };
+}
+
+function commandDefinitionFor(text) {
+  const normalized = String(text || "").toLowerCase();
+  return (staticCommandRegistry.commands || []).find((command) => {
+    const names = [command.id, command.title, ...(command.aliases || [])].map((name) => String(name || "").toLowerCase());
+    return names.some((name) => name && new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(normalized));
+  }) || null;
+}
+
+function defaultCommandState(commandId, text) {
+  if (commandId === "stw") return { running: false, startedAt: null, elapsedMs: 0 };
+  if (commandId === "timer") return { durationMs: 0, remainingMs: 0, running: false, startedAt: null, completed: false, completedAt: null, alarmed: false, input: quotedText(text) };
+  if (commandId === "today") return {};
+  if (commandId === "delorean") return { status: "idle", input: quotedText(text), durationMs: 0, label: "", createdAt: Date.now(), targetAt: null, targetSlug: "", targetUrl: "", sourceSlug: "", error: "" };
+  return {};
+}
+
+async function readSpace(event, space) {
+  const result = await callSkydive(event, `/api/agent?space=${encodeURIComponent(space)}`);
+  if (!result.ok) return result;
+  return {
+    ok: true,
+    status: result.status,
+    space,
+    revision: Number(result.data && result.data.revision) || 0,
+    state: result.data && result.data.state ? result.data.state : { version: 1, nodes: [], lines: [] },
+    data: result.data
+  };
+}
+
+async function applyOpsWithFreshRead(event, space, makeOps) {
+  const read = await readSpace(event, space);
+  if (!read.ok) return read;
+  const ops = makeOps(read.state, read);
+  if (!Array.isArray(ops) || !ops.length) return { ok: false, status: 400, error: "No Skydive edits were produced." };
+  const applied = await callSkydive(event, "/api/agent", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ space, baseRevision: read.revision, ops })
+  });
+  return { ...applied, space, baseRevision: read.revision, ops };
 }
 
 function cleanTimeZone(value, fallback = "UTC") {
@@ -763,6 +853,191 @@ function deterministicObservationReply(observations) {
   return "";
 }
 
+function formatSpaceSummary(space, read) {
+  if (!read.ok) return `I couldn’t read ${space}: ${read.error || "Skydive returned an error."}`;
+  const nodes = activeNodes(read.state);
+  const lines = Array.isArray(read.state.lines) ? read.state.lines.filter((line) => !line.deletedAt) : [];
+  const sample = nodes.slice(0, 24).map((node) => {
+    const label = node.kind === "command"
+      ? `/${node.commandId || "command"}`
+      : String(node.text || "").replace(/\s+/g, " ").trim() || "(text node)";
+    return `• ${node.id}: ${label.slice(0, 180)}`;
+  });
+  return [
+    `${space} has ${nodes.length} active node(s), ${lines.length} active line(s), revision ${read.revision}.`,
+    sample.length ? sample.join("\n") : "It has no active nodes."
+  ].join("\n");
+}
+
+function formatApplyResult(action, result) {
+  if (!result.ok) return `I couldn’t ${action}: ${result.error || "Skydive returned an error."}`;
+  const data = result.data || result;
+  return `Done — ${action}. Skydive applied ${data.appliedOps || result.ops.length} operation(s) to ${result.space}.`;
+}
+
+function skydiveCapabilitiesReply() {
+  return [
+    "Skydive's Agent Interface can do these things:",
+    "",
+    "- fetch the manifest",
+    "- list spaces",
+    "- read a space",
+    "- create text nodes",
+    "- create command nodes",
+    "- update node text/html, position, size, or command state",
+    "- move, resize, or delete nodes",
+    "- align or distribute nodes",
+    "- link text in one node to another node",
+    "- replace a whole space state from a structured payload",
+    "",
+    "For safety, I handle broad searches and explicit node edits directly. For replace_state, I need a structured state payload rather than guessing from chat."
+  ].join("\n");
+}
+
+function parseCoordinatePair(text) {
+  const named = String(text || "").match(/\bx\s*(-?\d+(?:\.\d+)?)[\s,;]+y\s*(-?\d+(?:\.\d+)?)/i);
+  if (named) return { x: Number(named[1]), y: Number(named[2]) };
+  const pair = String(text || "").match(/\bto\s+(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\b/i);
+  return pair ? { x: Number(pair[1]), y: Number(pair[2]) } : null;
+}
+
+function parseAlignment(text) {
+  const match = String(text || "").toLowerCase().match(/\b(left|right|center|top|bottom|middle)\b/);
+  return match ? match[1] : "";
+}
+
+function parseDistribution(text) {
+  const match = String(text || "").toLowerCase().match(/\b(horizontal|horizontally|vertical|vertically)\b/);
+  if (!match) return "";
+  return match[1].startsWith("h") ? "horizontal" : "vertical";
+}
+
+function directSkydiveReplaceStateReply(text, space) {
+  if (/\b(replace state|replace_state)\b/i.test(text)) {
+    return space
+      ? `I can call replace_state for ${space}, but I need a structured state payload. I won’t infer a whole replacement state from chat.`
+      : "I can call replace_state, but I need a structured state payload and an explicit target space. I won’t infer a whole replacement state from chat.";
+  }
+  return "";
+}
+
+async function handleDeterministicSkydiveIntent(event, messages, timeZone) {
+  const latestRaw = messages[messages.length - 1].content;
+  const latest = latestRaw.toLowerCase();
+
+  if (/\b(agent interface|manifest|api capabilities|what can .*api|what can .*skydive)\b/.test(latest)) {
+    return skydiveCapabilitiesReply();
+  }
+
+  const space = extractSpaceSlug(latestRaw);
+  const replaceStateReply = directSkydiveReplaceStateReply(latestRaw, space);
+  if (replaceStateReply) return replaceStateReply;
+
+  if (space && /\b(read|summari[sz]e|show|inspect)\b/.test(latest) && (/\b(space|nodes?|contents?)\b/.test(latest) || latest.includes(`/${space.toLowerCase()}`))) {
+    return formatSpaceSummary(space, await readSpace(event, space));
+  }
+
+  const isExplicitEdit = /\b(update|edit|change|rename|move|position|resize|size|delete|remove|align|distribute|link)\b/.test(latest);
+  if (space && !isExplicitEdit && /\b(create|add|make|insert|new)\b/.test(latest) && /\b(item|node|note|text)\b/.test(latest)) {
+    const text = quotedText(latestRaw);
+    if (!text) return "I can create a text node, but I need the text in quotes.";
+    const result = await applyOpsWithFreshRead(event, space, (state) => {
+      const position = nextNodePosition(state);
+      return [{ op: "create_text_node", text, ...position }];
+    });
+    return formatApplyResult(`created "${text}"`, result);
+  }
+
+  if (space && /\b(create|add|make|insert|new)\b/.test(latest) && /\b(command|timer|stopwatch|recorder|file|today|date|delorean)\b/.test(latest)) {
+    const command = commandDefinitionFor(latestRaw);
+    if (!command) return "I can create a command node, but I need a known command name like timer, stopwatch, recorder, file, delorean, or today.";
+    const result = await applyOpsWithFreshRead(event, space, (state) => {
+      const position = nextNodePosition(state);
+      return [{
+        op: "create_command_node",
+        commandId: command.id,
+        commandVersion: command.version,
+        commandState: defaultCommandState(command.id, latestRaw),
+        ...position
+      }];
+    });
+    return formatApplyResult(`created a ${command.title || command.id} command`, result);
+  }
+
+  if (space && /\b(update|edit|change|rename)\b/.test(latest) && /\bnode\b/.test(latest)) {
+    const id = extractNodeIds(latestRaw)[0];
+    const text = quotedText(latestRaw) || (latestRaw.match(/\bto\s+(.{1,4000})$/i) || [])[1];
+    if (!id) return "I can update a node, but I need its node id.";
+    if (!text) return "I can update that node, but I need the new text in quotes.";
+    const cleanText = text.trim().replace(/[?.!]+$/, "");
+    const result = await applyOpsWithFreshRead(event, space, () => [{ op: "update_node", id, text: cleanText }]);
+    return formatApplyResult(`updated ${id}`, result);
+  }
+
+  if (space && /\b(move|position)\b/.test(latest) && /\bnode\b/.test(latest)) {
+    const id = extractNodeIds(latestRaw)[0];
+    const point = parseCoordinatePair(latestRaw);
+    if (!id) return "I can move a node, but I need its node id.";
+    if (!point) return "I can move that node, but I need coordinates like `x 100 y 200`.";
+    const result = await applyOpsWithFreshRead(event, space, () => [{ op: "move_node", id, ...point }]);
+    return formatApplyResult(`moved ${id} to x ${point.x}, y ${point.y}`, result);
+  }
+
+  if (space && /\b(resize|size)\b/.test(latest) && /\bnode\b/.test(latest)) {
+    const id = extractNodeIds(latestRaw)[0];
+    const match = latestRaw.match(/\b(?:to|size)\s+(\d+(?:\.\d+)?)\b/i);
+    if (!id) return "I can resize a node, but I need its node id.";
+    if (!match) return "I can resize that node, but I need a font size like `to 36`.";
+    const baseFontSize = Number(match[1]);
+    const result = await applyOpsWithFreshRead(event, space, () => [{ op: "resize_node", id, baseFontSize }]);
+    return formatApplyResult(`resized ${id} to ${baseFontSize}`, result);
+  }
+
+  if (space && /\b(delete|remove)\b/.test(latest) && /\bnode\b/.test(latest)) {
+    const id = extractNodeIds(latestRaw)[0];
+    if (!id) return "I can delete a node, but I need its node id.";
+    const result = await applyOpsWithFreshRead(event, space, () => [{ op: "delete_node", id }]);
+    return formatApplyResult(`deleted ${id}`, result);
+  }
+
+  if (space && /\balign\b/.test(latest) && /\bnodes?\b/.test(latest)) {
+    const ids = extractNodeIds(latestRaw);
+    const alignment = parseAlignment(latestRaw);
+    if (ids.length < 2) return "I can align nodes, but I need at least two node ids.";
+    if (!alignment) return "I can align nodes left, right, center, top, bottom, or middle. Which alignment should I use?";
+    const result = await applyOpsWithFreshRead(event, space, () => [{ op: "align_nodes", ids, alignment }]);
+    return formatApplyResult(`aligned ${ids.length} node(s) ${alignment}`, result);
+  }
+
+  if (space && /\bdistribute\b/.test(latest) && /\bnodes?\b/.test(latest)) {
+    const ids = extractNodeIds(latestRaw);
+    const direction = parseDistribution(latestRaw);
+    if (ids.length < 3) return "I can distribute nodes, but I need at least three node ids.";
+    if (!direction) return "I can distribute nodes horizontally or vertically. Which direction should I use?";
+    const result = await applyOpsWithFreshRead(event, space, () => [{ op: "distribute_nodes", ids, direction }]);
+    return formatApplyResult(`distributed ${ids.length} node(s) ${direction}`, result);
+  }
+
+  if (space && /\blink\b/.test(latest) && /\btext\b/.test(latest)) {
+    const ids = extractNodeIds(latestRaw);
+    const text = quotedText(latestRaw);
+    if (ids.length < 2) return "I can link text, but I need a source node id and a target node id.";
+    if (!text) return "I can link text, but I need the source text in quotes.";
+    const occurrence = Number((latestRaw.match(/\boccurrence\s+(\d+)\b/i) || [])[1]) || 1;
+    const result = await applyOpsWithFreshRead(event, space, () => [{
+      op: "link_text",
+      sourceId: ids[0],
+      targetId: ids[1],
+      text,
+      label: text,
+      occurrence
+    }]);
+    return formatApplyResult(`linked "${text}" from ${ids[0]} to ${ids[1]}`, result);
+  }
+
+  return null;
+}
+
 function latestUserContent(messages) {
   const latest = [...messages].reverse().find((message) => message.role === "user");
   return latest && typeof latest.content === "string" ? latest.content.toLowerCase() : "";
@@ -857,6 +1132,8 @@ async function runPromptAgent(event, messages, systemInstruction, timeZone, dead
 
 async function runMark(event, messages, timeZone, debug = false) {
   const deadline = Date.now() + REQUEST_BUDGET_MS;
+  const deterministic = await handleDeterministicSkydiveIntent(event, messages, timeZone);
+  if (deterministic) return deterministic;
   const systemInstruction = buildSystemInstruction();
   return runPromptAgent(event, messages, systemInstruction, timeZone, deadline, debug);
 }

@@ -1,6 +1,7 @@
 # Codex Notes
 
 - Global instruction: Increment `APP_VERSION` in `index.html` by 1 for every commit.
+- 2026-07-09: Added a deterministic Mark router for the full Skydive Agent Interface surface: manifest/capabilities, read, create text/command nodes, update/move/resize/delete, align/distribute, link text, and safe replace-state refusal. Bumped `APP_VERSION` to 95.
 - 2026-07-09: Added deterministic Mark node text search for queries like "items that say 'test'", surfaced non-JSON HTTP errors in `/mark?debug=true`, compacted search result history, and bumped `APP_VERSION` to 94.
 - 2026-07-09: Slimmed Mark's model prompt by removing always-included Agent manifest JSON, added deterministic routing for nodes created today, compacted Skydive result history before sending future model context, and bumped `APP_VERSION` to 93.
 - 2026-07-09: Made Mark debug output preserve every Google model attempt, added deterministic recovery replies for capability/status questions during transient Google failures, stripped debug JSON from future Mark history, and bumped `APP_VERSION` to 92.
