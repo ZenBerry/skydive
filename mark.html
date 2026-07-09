@@ -709,6 +709,9 @@
       if (/^Nodes created on /m.test(withoutDebug) && bulletCount) {
         return `[Mark listed ${bulletCount} nodes created on the requested date.]`;
       }
+      if (/^Nodes containing /m.test(withoutDebug) && bulletCount) {
+        return `[Mark listed ${bulletCount} nodes matching the requested search.]`;
+      }
       return withoutDebug.length > 1200
         ? `${withoutDebug.slice(0, 1200).trim()}\n[Previous assistant reply truncated for context.]`
         : withoutDebug;
@@ -719,6 +722,23 @@
       return text.length > 2400
         ? `${text.slice(0, 2400).trim()}\n[Previous user message truncated for context.]`
         : text;
+    }
+
+    function parseResponseBody(text) {
+      try {
+        return text ? JSON.parse(text) : {};
+      } catch (error) {
+        return {};
+      }
+    }
+
+    function httpErrorMessage(response, data, rawText, assistantName) {
+      const base = data.error || data.reply || (response.status === 504
+        ? `${assistantName}’s request took too long. Please try a narrower question.`
+        : `${assistantName} could not answer right now.`);
+      if (!markDebug) return base;
+      const details = rawText && !data.error && !data.reply ? `\n\nResponse body:\n${rawText.slice(0, 4000)}` : "";
+      return `${base}\n\nHTTP debug:\nstatus=${response.status} ${response.statusText || ""}${details}`;
     }
 
     function resizePrompt() {
@@ -771,12 +791,10 @@
             timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
           })
         });
-        const data = await response.json().catch(() => ({}));
+        const rawResponseText = await response.text();
+        const data = parseResponseBody(rawResponseText);
         if (!response.ok) {
-          const message = data.error || (response.status === 504
-            ? `${assistantName}’s request took too long. Please try a narrower question.`
-            : `${assistantName} could not answer right now.`);
-          throw new Error(message);
+          throw new Error(httpErrorMessage(response, data, rawResponseText, assistantName));
         }
 
         const reply = typeof data.reply === "string" ? data.reply.trim() : "";

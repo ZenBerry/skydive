@@ -22,6 +22,7 @@ const ACTION_NAMES = new Set([
   "skydive_read_space",
   "skydive_find_links",
   "skydive_find_created_today",
+  "skydive_search_nodes",
   "skydive_apply_ops",
   "user_begin_registration",
   "user_begin_login",
@@ -250,6 +251,7 @@ Do not wrap the line in Markdown and do not add any other text. The server execu
 - skydive_read_space {"space":"slug"}
 - skydive_find_links {"date":"YYYY-MM-DD","timeZone":"IANA time zone","includeArchives":false}
 - skydive_find_created_today {"date":"YYYY-MM-DD","timeZone":"IANA time zone","includeArchives":false}
+- skydive_search_nodes {"query":"text to search for","includeArchives":false}
 - skydive_apply_ops {"space":"slug","baseRevision":number,"ops":[...]}
 - user_begin_registration {}
 - user_begin_login {}
@@ -263,6 +265,7 @@ Do not wrap the line in Markdown and do not add any other text. The server execu
 
 skydive_find_links scans every active space in one bounded operation. Use it for "links added today" instead of reading spaces one by one.
 skydive_find_created_today scans every active space for nodes created on a date. Use it for "everything I added today" or "what did I create today". Include archives only when explicitly requested.
+skydive_search_nodes scans every active space for nodes containing text. Use it for "find all items that say X". Include archives only when explicitly requested.
 
 User registration, login, logout, password changes, accent color, renaming, status, and deletion happen only through these user actions. The server handles private follow-up dialogs. Never ask the user to put a password in ordinary visible chat and never request a password as an action parameter.
 
@@ -397,6 +400,16 @@ function extractNodeLinks(node) {
   return links;
 }
 
+function nodeSearchText(node) {
+  const html = typeof node.html === "string" ? node.html.replace(/<[^>]*>/g, " ") : "";
+  const text = typeof node.text === "string" ? node.text : "";
+  const commandId = typeof node.commandId === "string" ? node.commandId : "";
+  const commandState = node.commandState && typeof node.commandState === "object"
+    ? JSON.stringify(node.commandState)
+    : "";
+  return decodeHtmlEntities(`${text}\n${html}\n${commandId}\n${commandState}`).replace(/\s+/g, " ").trim();
+}
+
 async function mapWithConcurrency(items, limit, worker) {
   const results = new Array(items.length);
   let nextIndex = 0;
@@ -527,6 +540,73 @@ async function findCreatedToday(event, args, defaultTimeZone) {
   };
 }
 
+async function searchNodes(event, args) {
+  const query = args && typeof args.query === "string" ? args.query.trim() : "";
+  if (!query) return { ok: false, status: 400, error: "skydive_search_nodes requires a query." };
+
+  const listResult = await callSkydive(event, "/api/agent?spaces=1");
+  if (!listResult.ok) return listResult;
+
+  const includeArchives = args && args.includeArchives === true;
+  const normalizedQuery = query.toLowerCase();
+  const wholeWordQuery = /^[\p{L}\p{N}_-]+$/u.test(query);
+  const wordPattern = wholeWordQuery
+    ? new RegExp(`(^|[^\\p{L}\\p{N}_-])(${query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})(?=$|[^\\p{L}\\p{N}_-])`, "iu")
+    : null;
+  const spaces = Array.isArray(listResult.data && listResult.data.spaces)
+    ? listResult.data.spaces.filter((space) => includeArchives || !String(space.slug).startsWith("delorean/")).slice(0, 500)
+    : [];
+  const reads = await mapWithConcurrency(spaces, 16, async (space) => ({
+    slug: space.slug,
+    result: await callSkydive(event, `/api/agent?space=${encodeURIComponent(space.slug)}`)
+  }));
+
+  const matches = [];
+  const failedSpaces = [];
+  for (const read of reads) {
+    if (!read.result.ok) {
+      failedSpaces.push(read.slug);
+      continue;
+    }
+    const state = read.result.data && read.result.data.state;
+    const nodes = state && Array.isArray(state.nodes) ? state.nodes : [];
+    for (const node of nodes) {
+      if (node.deletedAt) continue;
+      const haystack = nodeSearchText(node);
+      const wordMatch = wordPattern ? wordPattern.exec(haystack) : null;
+      const matchIndex = wordMatch
+        ? wordMatch.index + wordMatch[1].length
+        : wholeWordQuery
+          ? -1
+          : haystack.toLowerCase().indexOf(normalizedQuery);
+      if (matchIndex === -1) continue;
+      const start = Math.max(0, matchIndex - 70);
+      const end = Math.min(haystack.length, matchIndex + query.length + 120);
+      const snippet = haystack.slice(start, end).trim();
+      matches.push({
+        space: read.slug,
+        nodeId: String(node.id || ""),
+        kind: node.kind === "command" ? "command" : "text",
+        createdAt: Number(node.createdAt) || 0,
+        text: snippet || haystack.slice(0, 240)
+      });
+      if (matches.length >= 500) break;
+    }
+    if (matches.length >= 500) break;
+  }
+
+  matches.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  return {
+    ok: true,
+    query,
+    includeArchives,
+    spacesScanned: reads.length - failedSpaces.length,
+    failedSpaces,
+    matches,
+    truncated: matches.length >= 500
+  };
+}
+
 async function executeAction(event, name, args, defaultTimeZone) {
   if (name.startsWith("user_")) {
     return runAccountAction(event, name, args || {});
@@ -548,6 +628,9 @@ async function executeAction(event, name, args, defaultTimeZone) {
   if (name === "skydive_find_created_today") {
     return findCreatedToday(event, args || {}, defaultTimeZone);
   }
+  if (name === "skydive_search_nodes") {
+    return searchNodes(event, args || {});
+  }
   if (name === "skydive_apply_ops") {
     const space = args && typeof args.space === "string" ? args.space.trim() : "";
     if (!space || !Number.isFinite(Number(args.baseRevision)) || !Array.isArray(args.ops)) {
@@ -563,7 +646,8 @@ async function executeAction(event, name, args, defaultTimeZone) {
 }
 
 async function preloadReadObservation(event, messages, timeZone) {
-  const latest = messages[messages.length - 1].content.toLowerCase();
+  const latestRaw = messages[messages.length - 1].content;
+  const latest = latestRaw.toLowerCase();
   if (/\blinks?\b/.test(latest) && /\btoday\b/.test(latest)) {
     const includeArchives = /\b(delorean|archives?|snapshots?)\b/.test(latest);
     return {
@@ -583,6 +667,22 @@ async function preloadReadObservation(event, messages, timeZone) {
       arguments: { timeZone, includeArchives },
       result: boundedToolResult(await findCreatedToday(event, { timeZone, includeArchives }, timeZone))
     };
+  }
+  const searchIntent = /\b(find|search|show|list)\b/.test(latest) && /\b(items?|nodes?|things?|cards?)\b/.test(latest);
+  if (searchIntent && /\b(say|says|said|contain|contains|containing|mention|mentions|with)\b/.test(latest)) {
+    const quoted = latestRaw.match(/["'“‘]([^"'”’]{1,120})["'”’]/);
+    const fallback = latestRaw.match(/\b(?:say|says|said|contain|contains|containing|mention|mentions|with)\s+(.{1,120})$/i);
+    const query = (quoted && quoted[1] || fallback && fallback[1] || "")
+      .replace(/[?.!]+$/, "")
+      .trim();
+    if (query) {
+      const includeArchives = /\b(delorean|archives?|snapshots?)\b/.test(latest);
+      return {
+        name: "skydive_search_nodes",
+        arguments: { query, includeArchives },
+        result: boundedToolResult(await searchNodes(event, { query, includeArchives }))
+      };
+    }
   }
   if (/\b(list|show)\b[\s\S]*\bspaces\b/.test(latest)) {
     return {
@@ -635,6 +735,20 @@ function deterministicObservationReply(observations) {
     });
     const suffix = result.truncated ? "\n\nShowing the first 500 matching nodes." : "";
     return `Nodes created on ${result.date} (${result.timeZone}):\n${lines.join("\n")}${suffix}\n\n${result.limitation}`;
+  }
+
+  if (observation.name === "skydive_search_nodes") {
+    const result = observation.result;
+    const matches = Array.isArray(result.matches) ? result.matches : [];
+    if (!matches.length) {
+      return `I found no nodes containing "${result.query}".`;
+    }
+    const lines = matches.map((match) => {
+      const label = match.text || `(${match.kind} node)`;
+      return `• ${match.space}: ${label}`;
+    });
+    const suffix = result.truncated ? "\n\nShowing the first 500 matching nodes." : "";
+    return `Nodes containing "${result.query}":\n${lines.join("\n")}${suffix}`;
   }
 
   if (observation.name === "skydive_apply_ops") {
