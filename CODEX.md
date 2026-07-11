@@ -1,6 +1,9 @@
 # Codex Notes
 
+- 2026-07-11: Added a short human-facing `README.md` describing the app, repo layout, local Netlify Dev flow, main environment variables, and lightweight development conventions.
+- 2026-07-11: Clarified the README intro around Skydive's core ZUI idea: an unlimited-feeling zoomable canvas for moving between details and large thought maps.
 - Global instruction: Increment `APP_VERSION` in `index.html` by 1 for every commit.
+- 2026-07-11: Kept `package-lock.json` as the canonical dependency lockfile and ignored local dependency artifacts: `node_modules/`, `.pnpm-store/`, and fallback-generated `pnpm-lock.yaml`.
 - 2026-07-09: Added a deterministic Mark router for the full Skydive Agent Interface surface: manifest/capabilities, read, create text/command nodes, update/move/resize/delete, align/distribute, link text, and safe replace-state refusal. Bumped `APP_VERSION` to 95.
 - 2026-07-09: Added deterministic Mark node text search for queries like "items that say 'test'", surfaced non-JSON HTTP errors in `/mark?debug=true`, compacted search result history, and bumped `APP_VERSION` to 94.
 - 2026-07-09: Slimmed Mark's model prompt by removing always-included Agent manifest JSON, added deterministic routing for nodes created today, compacted Skydive result history before sending future model context, and bumped `APP_VERSION` to 93.
