@@ -1,5 +1,6 @@
 # Codex Notes
 
+- 2026-07-11: Reduced `/chord` zoom jitter by replacing the string strip's CSS grid with fixed-width flex cells and rendering plain text instead of native inputs outside edit mode. Bumped `APP_VERSION` to 102 and `chord` to 1.0.2.
 - 2026-07-11: Refined `/chord` editing UX: added title, Save label while editing, same-size fret/tuning inputs, left-to-right keyboard traversal, arrow-key navigation/value stepping, and removed nested active-string transform to reduce zoom flicker. Bumped `APP_VERSION` to 101 and `chord` to 1.0.1.
 - 2026-07-11: Added isolated `/chord` command widget in `commands/chord.js`: parses six guitar-tab fret values, uses editable E A D G B E tuning, plays a lightweight Web Audio strum with active-string highlighting, and bumps `APP_VERSION` to 100.
 - 2026-07-11: Replaced fixed shared-space polling with adaptive polling: idle spaces back off from 2s to 30s, hidden tabs stop polling, and focus/visibility resumes with an immediate refresh. Bumped `APP_VERSION` to 99.

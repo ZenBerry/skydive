@@ -101,7 +101,7 @@
     },
     {
       "id": "chord",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "title": "Chord",
       "description": "Play a small guitar-tab chord.",
       "aliases": ["guitar", "tab"],

@@ -205,7 +205,7 @@
         .chord-card {
           display: grid;
           gap: 0.42em;
-          min-width: 7.6em;
+          min-width: 8.05em;
           padding: 0.55em 0.62em 0.52em;
           border: 0.04em solid #e0d2be;
           border-radius: 0.55em;
@@ -223,14 +223,20 @@
         }
 
         .chord-strings {
-          display: grid;
-          grid-template-columns: repeat(6, minmax(0, 1fr));
+          display: flex;
           gap: 0.22em;
+          inline-size: 6.92em;
+          contain: layout paint style;
         }
 
         .chord-string {
-          display: grid;
-          grid-template-rows: 1.6em;
+          display: flex;
+          flex: 0 0 0.97em;
+          flex-direction: column;
+          justify-content: center;
+          align-items: center;
+          block-size: 1.6em;
+          box-sizing: border-box;
           place-items: center;
           border-radius: 0.38em;
           background: rgba(63, 51, 40, 0.07);
@@ -238,7 +244,7 @@
         }
 
         .chord-card[data-editing="true"] .chord-string {
-          grid-template-rows: 1.45em 1.15em;
+          block-size: 2.72em;
           gap: 0.13em;
           padding: 0.08em 0;
         }
@@ -254,8 +260,10 @@
 
         .chord-value,
         .chord-tuning {
-          width: 100%;
-          min-width: 0;
+          display: block;
+          inline-size: 100%;
+          min-inline-size: 0;
+          box-sizing: border-box;
           border: 0;
           background: transparent;
           color: inherit;
@@ -265,12 +273,7 @@
         }
 
         .chord-tuning {
-          display: none;
           color: #76614d;
-        }
-
-        .chord-card[data-editing="true"] .chord-tuning {
-          display: block;
         }
 
         .chord-value:read-only,
@@ -320,34 +323,46 @@
         string.dataset.index = String(index);
         string.dataset.muted = fret === "x" ? "true" : "false";
 
-        const fretInput = document.createElement("input");
-        fretInput.className = "chord-value";
-        fretInput.value = fret;
-        fretInput.maxLength = 2;
-        fretInput.readOnly = !editing;
-        fretInput.tabIndex = editing ? index + 1 : -1;
-        fretInput.setAttribute("aria-label", `String ${index + 1} fret`);
-        fretInput.setAttribute("data-command-interactive", "");
+        if (editing) {
+          const fretInput = document.createElement("input");
+          fretInput.className = "chord-value";
+          fretInput.value = fret;
+          fretInput.maxLength = 2;
+          fretInput.tabIndex = index + 1;
+          fretInput.setAttribute("aria-label", `String ${index + 1} fret`);
+          fretInput.setAttribute("data-command-interactive", "");
 
-        const tuningInput = document.createElement("input");
-        tuningInput.className = "chord-tuning";
-        tuningInput.value = tuning[index];
-        tuningInput.maxLength = 3;
-        tuningInput.readOnly = !editing;
-        tuningInput.tabIndex = editing ? index + 7 : -1;
-        tuningInput.setAttribute("aria-label", `String ${index + 1} tuning`);
-        tuningInput.setAttribute("data-command-interactive", "");
+          const tuningInput = document.createElement("input");
+          tuningInput.className = "chord-tuning";
+          tuningInput.value = tuning[index];
+          tuningInput.maxLength = 3;
+          tuningInput.tabIndex = index + 7;
+          tuningInput.setAttribute("aria-label", `String ${index + 1} tuning`);
+          tuningInput.setAttribute("data-command-interactive", "");
 
-        string.append(fretInput, tuningInput);
+          string.append(fretInput, tuningInput);
+        } else {
+          const fretText = document.createElement("span");
+          fretText.className = "chord-value";
+          fretText.textContent = fret;
+          fretText.dataset.value = fret;
+          string.appendChild(fretText);
+        }
+
         strings.appendChild(string);
       });
 
       function readInputs() {
+        const fretValues = Array.from(card.querySelectorAll(".chord-value")).map((element) => {
+          return normalizeFret(element instanceof HTMLInputElement ? element.value : element.dataset.value || element.textContent);
+        });
+        const tuningValues = Array.from(card.querySelectorAll(".chord-tuning")).map((input, index) => {
+          return normalizeTuningNote(input.value, DEFAULT_TUNING[index]);
+        });
+
         return {
-          frets: Array.from(card.querySelectorAll(".chord-value")).map((input) => normalizeFret(input.value)).join(" "),
-          tuning: Array.from(card.querySelectorAll(".chord-tuning")).map((input, index) => {
-            return normalizeTuningNote(input.value, DEFAULT_TUNING[index]);
-          })
+          frets: fretValues.join(" "),
+          tuning: editing ? tuningValues : tuning
         };
       }
 
