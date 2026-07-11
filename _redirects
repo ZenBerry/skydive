@@ -5,6 +5,6 @@
 /book/* /book.html 200
 /api/agent /.netlify/functions/agent 200
 /api/mark /.netlify/functions/mark 200
-/api/openclaw /.netlify/functions/openclaw 200
-/api/openclaw/* /.netlify/functions/openclaw 200
+/api/openclaw /disabled.txt 404
+/api/openclaw/* /disabled.txt 404
 /* /index.html 200

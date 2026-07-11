@@ -13,8 +13,8 @@ The repo is intentionally plain: mostly static HTML, handwritten browser JavaScr
 - `agents.html` documents the JSON agent API for external tools.
 - `book.html` is the isolated EPUB reader route.
 - `commands/` contains static slash-command widgets such as stopwatch, timer, file upload, recorder, Delorean, and today.
-- `netlify/functions/` contains the persistence, auth, upload signing, Mark, agent API, and OpenClaw endpoints.
-- `assets/` and `scripts/` hold small shared browser/runtime helpers.
+- `netlify/functions/` contains the persistence, auth, upload signing, Mark, and agent API endpoints.
+- `assets/` holds small shared browser helpers and mobile UI images.
 
 ## Local development
 
@@ -111,8 +111,6 @@ Optional variables used by specific features:
 - `GEMINI_API_KEY`, `GEMMA_MODEL`, `GEMMA_FALLBACK_MODEL`
 - `SKYDIVE_AGENT_AUTH_MODE`, `SKYDIVE_AGENT_TOKEN`
 - `SKYDIVE_SESSION_SECONDS`, `SKYDIVE_SESSION_REFRESH_SECONDS`
-- `SKYDIVE_OPENCLAW_*` and `OPENCLAW_*` for the OpenClaw bridge
-
 Most of the app can be inspected as static files, but persistence, uploads, Mark, and the agent API depend on the Netlify Functions environment.
 
 ## Development notes
