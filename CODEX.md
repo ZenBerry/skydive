@@ -1,5 +1,6 @@
 # Codex Notes
 
+- 2026-07-11: Replaced fixed shared-space polling with adaptive polling: idle spaces back off from 2s to 30s, hidden tabs stop polling, and focus/visibility resumes with an immediate refresh. Bumped `APP_VERSION` to 99.
 - 2026-07-11: Disabled OpenClaw completely to stop function overuse: removed its Mark UI path, route rewrites, bridge npm script, function, bridge script, and README configuration mentions; `/api/openclaw` now returns a cheap static 404. Bumped `APP_VERSION` to 98.
 - 2026-07-11: Added a short human-facing `README.md` describing the app, repo layout, local Netlify Dev flow, main environment variables, and lightweight development conventions.
 - 2026-07-11: Clarified the README intro around Skydive's core ZUI idea: an unlimited-feeling zoomable canvas for moving between details and large thought maps.
