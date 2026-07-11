@@ -145,55 +145,6 @@
       background: #fff;
     }
 
-    #agent-toolbar {
-      flex: none;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      border-top: 1px solid #dedede;
-      padding: 12px 0;
-      background: #fff;
-    }
-
-    #agent-mode {
-      display: inline-grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 2px;
-      padding: 2px;
-      border: 1px solid #dedede;
-      border-radius: 8px;
-      background: #f7f7f7;
-    }
-
-    .agent-mode-button,
-    #pair-openclaw {
-      height: 30px;
-      border: 0;
-      border-radius: 6px;
-      padding: 0 11px;
-      background: transparent;
-      color: #555;
-      font-family: inherit;
-      font-size: 14px;
-      cursor: pointer;
-    }
-
-    .agent-mode-button[aria-pressed="true"] {
-      background: #111;
-      color: #fff;
-    }
-
-    #pair-openclaw {
-      border: 1px solid #dedede;
-      background: #fff;
-      color: #111;
-    }
-
-    #pair-openclaw[hidden] {
-      display: none;
-    }
-
     #attachment-tray {
       grid-column: 2 / -1;
       display: flex;
@@ -336,9 +287,6 @@
         width: 86%;
       }
 
-      #agent-toolbar {
-        gap: 8px;
-      }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -351,13 +299,6 @@
   <div id="version-counter" aria-label="Application version" hidden></div>
   <main id="chat">
     <section id="messages" aria-live="polite" aria-label="Conversation with Mark"></section>
-    <div id="agent-toolbar" aria-label="Agent mode">
-      <div id="agent-mode" role="group" aria-label="Agent mode">
-        <button class="agent-mode-button" type="button" data-agent-mode="mark" aria-pressed="true">Mark</button>
-        <button class="agent-mode-button" type="button" data-agent-mode="codex" aria-pressed="false">Codex</button>
-      </div>
-      <button id="pair-openclaw" type="button" hidden>Pair</button>
-    </div>
     <form id="composer">
       <div id="attachment-tray" aria-label="Pending attachments" hidden></div>
       <div id="current-user-bullet" aria-label="Current user" title="Logged out">?</div>
@@ -377,8 +318,6 @@
     const messagesElement = document.getElementById("messages");
     const composer = document.getElementById("composer");
     const attachmentTray = document.getElementById("attachment-tray");
-    const agentModeButtons = Array.from(document.querySelectorAll(".agent-mode-button"));
-    const pairOpenClaw = document.getElementById("pair-openclaw");
     const currentUserBullet = document.getElementById("current-user-bullet");
     const versionCounter = document.getElementById("version-counter");
     const prompt = document.getElementById("prompt");
@@ -393,8 +332,6 @@
     let currentUser = null;
     let bookContext = null;
     let pendingAttachments = [];
-    let agentMode = localStorage.getItem("skydive.agentMode") === "codex" ? "codex" : "mark";
-    let openClawStatus = null;
 
     async function loadAppVersion() {
       try {
@@ -598,73 +535,7 @@
     }
 
     function currentAssistantName() {
-      return agentMode === "codex" ? "Codex" : "Mark";
-    }
-
-    function updateAgentModeUi() {
-      agentModeButtons.forEach((button) => {
-        button.setAttribute("aria-pressed", String(button.dataset.agentMode === agentMode));
-      });
-      pairOpenClaw.hidden = agentMode !== "codex";
-      prompt.placeholder = agentMode === "codex" ? "Message Codex" : "Message Mark";
-      prompt.setAttribute("aria-label", prompt.placeholder);
-      if (agentMode === "codex") loadOpenClawStatus();
-    }
-
-    function setAgentMode(nextMode) {
-      agentMode = nextMode === "codex" ? "codex" : "mark";
-      localStorage.setItem("skydive.agentMode", agentMode);
-      updateAgentModeUi();
-      prompt.focus();
-    }
-
-    async function loadOpenClawStatus() {
-      try {
-        const response = await fetch("/api/openclaw", { method: "GET", headers: { "Accept": "application/json" } });
-        const data = await response.json().catch(() => ({}));
-        if (response.ok) openClawStatus = data;
-        if (Object.prototype.hasOwnProperty.call(data, "user")) setCurrentUser(data.user);
-        const device = data && data.device;
-        pairOpenClaw.textContent = device && device.connected ? "Paired" : "Pair";
-        pairOpenClaw.disabled = Boolean(device && device.connected);
-      } catch (error) {
-        openClawStatus = null;
-        pairOpenClaw.textContent = "Pair";
-        pairOpenClaw.disabled = false;
-      }
-    }
-
-    async function pairOpenClawBridge() {
-      if (waiting) return;
-      pairOpenClaw.disabled = true;
-      try {
-        const response = await fetch("/api/openclaw", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "pair" })
-        });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(data.error || "OpenClaw pairing failed.");
-        if (Object.prototype.hasOwnProperty.call(data, "user")) setCurrentUser(data.user);
-        const origin = window.location.origin;
-        const bridgeNote = [
-          "Bridge token created.",
-          "",
-          `Token: ${data.bridgeToken}`,
-          `Jobs: ${origin}${data.bridgeEndpoint}`,
-          `Results: ${origin}${data.resultEndpoint}`,
-          "",
-          "Keep this token on the device running OpenClaw."
-        ].join("\n");
-        addMessage("assistant", bridgeNote, { speaker: "Codex" });
-        await loadOpenClawStatus();
-      } catch (error) {
-        addMessage("assistant", error.message || "OpenClaw pairing failed.", { speaker: "Codex" });
-      } finally {
-        if (!openClawStatus || !openClawStatus.device || !openClawStatus.device.connected) {
-          pairOpenClaw.disabled = false;
-        }
-      }
+      return "Mark";
     }
 
     function addMessage(role, content, options = {}) {
@@ -781,7 +652,7 @@
       const pending = addMessage("assistant", "…", { pending: true, speaker: assistantName });
 
       try {
-        const response = await fetch(agentMode === "codex" ? "/api/openclaw" : "/api/mark", {
+        const response = await fetch("/api/mark", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -804,7 +675,6 @@
         pending.remove();
         addMessage("assistant", reply, { speaker: assistantName });
         setSecretExpected(data.secretInput === true);
-        if (agentMode === "codex") loadOpenClawStatus();
       } catch (error) {
         pending.classList.remove("pending");
         pending.querySelector(".content").textContent = error.message || `${assistantName} could not answer right now.`;
@@ -820,10 +690,6 @@
       submitMessage();
     });
 
-    agentModeButtons.forEach((button) => {
-      button.addEventListener("click", () => setAgentMode(button.dataset.agentMode));
-    });
-    pairOpenClaw.addEventListener("click", pairOpenClawBridge);
     prompt.addEventListener("input", resizePrompt);
     visibility.addEventListener("click", () => {
       setConcealed(!concealed);
@@ -866,10 +732,7 @@
     }
 
     void loadAppVersion();
-    updateAgentModeUi();
-    const greeting = agentMode === "codex"
-      ? "Hi. I’m Codex. Pair your OpenClaw bridge, then I can answer through your local agent."
-      : "Hi. I’m Mark. Ask me anything—or ask me to work with a Skydive space.";
+    const greeting = "Hi. I’m Mark. Ask me anything—or ask me to work with a Skydive space.";
     renderCurrentUserBullet();
     addMessage("assistant", greeting, { speaker: currentAssistantName() });
     void loadCurrentUser();

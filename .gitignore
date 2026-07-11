@@ -1,6 +1,13 @@
 # Local Netlify folder
 .netlify
 
+# Local dependencies and package-manager caches
+node_modules/
+.pnpm-store/
+
+# package-lock.json is the canonical lockfile for this repo.
+pnpm-lock.yaml
+
 # Local secrets
 .env
 .env.*

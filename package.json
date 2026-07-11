@@ -1,7 +1,6 @@
 {
   "scripts": {
-    "dev": "npx netlify dev",
-    "bridge:openclaw": "node scripts/openclaw-bridge.cjs"
+    "dev": "npx netlify dev"
   },
   "dependencies": {
     "mongodb": "^6.21.0"

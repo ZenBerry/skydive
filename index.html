@@ -1009,7 +1009,7 @@
     const MAX_NODE_LAYOUT_FONT_PX = 192;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 97; // Increment once for each commit.
+    const APP_VERSION = 99; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -1035,7 +1035,7 @@
     const SHARED_SPACE_PARTS = getSharedSpacePathParts();
     const SHARED_SPACE_SLUG = getSharedSpaceSlug();
     const DELOREAN_SPACE_INFO = getDeloreanSpaceInfo();
-    const SHARED_POLL_MS = 2000;
+    const SHARED_POLL_DELAYS_MS = [2000, 5000, 10000, 30000];
     const HISTORY_LIMIT = 100;
     const HISTORY_COMMIT_DELAY_MS = 120;
     const TITLE_HOOK_REFRESH_MS = 1000;
@@ -1097,6 +1097,8 @@
     let applyingSharedState = false;
     let savingSharedState = false;
     let sharedPollTimer = null;
+    let sharedPollDelayIndex = 0;
+    let sharedPollInFlight = false;
     let slashCommandSession = null;
     let slashCommandSelectedIndex = 0;
     let externalLinkCardPointer = null;
@@ -6024,6 +6026,8 @@
           });
           latestSharedUpdatedAt = Number(data.updatedAt) || latestSharedUpdatedAt;
           if (Object.prototype.hasOwnProperty.call(data, "viewer")) setCurrentUser(data.viewer);
+          resetSharedPollingCadence();
+          scheduleSharedPoll(getSharedPollDelay());
         } finally {
           savingSharedState = false;
         }
@@ -7519,8 +7523,15 @@
       updateSlashMenuForNode(editingNode);
     });
 
-    document.addEventListener("visibilitychange", updateDocumentTitle);
-    window.addEventListener("focus", updateDocumentTitle);
+    document.addEventListener("visibilitychange", () => {
+      updateDocumentTitle();
+      if (document.hidden) clearSharedPollTimer();
+      else refreshSharedSpaceSoon();
+    });
+    window.addEventListener("focus", () => {
+      updateDocumentTitle();
+      refreshSharedSpaceSoon();
+    });
 
     async function loadFromLocalStorage(options = {}) {
       const reportProgress = typeof options.onProgress === "function" ? options.onProgress : null;
@@ -7586,16 +7597,65 @@
       return applySharedState(data, options);
     }
 
+    function getSharedPollDelay() {
+      return SHARED_POLL_DELAYS_MS[Math.min(sharedPollDelayIndex, SHARED_POLL_DELAYS_MS.length - 1)];
+    }
+
+    function clearSharedPollTimer() {
+      if (!sharedPollTimer) return;
+      clearTimeout(sharedPollTimer);
+      sharedPollTimer = null;
+    }
+
+    function resetSharedPollingCadence() {
+      sharedPollDelayIndex = 0;
+    }
+
+    function slowSharedPollingCadence() {
+      sharedPollDelayIndex = Math.min(sharedPollDelayIndex + 1, SHARED_POLL_DELAYS_MS.length - 1);
+    }
+
+    function scheduleSharedPoll(delayMs = getSharedPollDelay()) {
+      if (!SHARED_SPACE_SLUG || document.hidden) {
+        clearSharedPollTimer();
+        return;
+      }
+      clearSharedPollTimer();
+      sharedPollTimer = setTimeout(runSharedPoll, Math.max(0, delayMs));
+    }
+
+    async function runSharedPoll() {
+      sharedPollTimer = null;
+      if (!SHARED_SPACE_SLUG || document.hidden) return;
+      if (savingSharedState || sharedPollInFlight) {
+        scheduleSharedPoll(getSharedPollDelay());
+        return;
+      }
+
+      sharedPollInFlight = true;
+      try {
+        const changed = await requestSharedSpace().then(applySharedState);
+        if (changed) resetSharedPollingCadence();
+        else slowSharedPollingCadence();
+      } catch (error) {
+        slowSharedPollingCadence();
+        console.error("Shared space refresh failed:", error);
+      } finally {
+        sharedPollInFlight = false;
+        scheduleSharedPoll();
+      }
+    }
+
+    function refreshSharedSpaceSoon() {
+      if (!SHARED_SPACE_SLUG || document.hidden || sharedPollInFlight) return;
+      resetSharedPollingCadence();
+      scheduleSharedPoll(0);
+    }
+
     function startSharedPolling() {
-      if (!SHARED_SPACE_SLUG || sharedPollTimer) return;
-      sharedPollTimer = setInterval(() => {
-        if (savingSharedState) return;
-        void requestSharedSpace()
-          .then(applySharedState)
-          .catch((error) => {
-            console.error("Shared space refresh failed:", error);
-          });
-      }, SHARED_POLL_MS);
+      if (!SHARED_SPACE_SLUG) return;
+      resetSharedPollingCadence();
+      scheduleSharedPoll(getSharedPollDelay());
     }
 
     async function boot() {
