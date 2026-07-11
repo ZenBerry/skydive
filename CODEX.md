@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-07-11: Refined `/chord` editing UX: added title, Save label while editing, same-size fret/tuning inputs, left-to-right keyboard traversal, arrow-key navigation/value stepping, and removed nested active-string transform to reduce zoom flicker. Bumped `APP_VERSION` to 101 and `chord` to 1.0.1.
+- 2026-07-11: Added isolated `/chord` command widget in `commands/chord.js`: parses six guitar-tab fret values, uses editable E A D G B E tuning, plays a lightweight Web Audio strum with active-string highlighting, and bumps `APP_VERSION` to 100.
 - 2026-07-11: Replaced fixed shared-space polling with adaptive polling: idle spaces back off from 2s to 30s, hidden tabs stop polling, and focus/visibility resumes with an immediate refresh. Bumped `APP_VERSION` to 99.
 - 2026-07-11: Disabled OpenClaw completely to stop function overuse: removed its Mark UI path, route rewrites, bridge npm script, function, bridge script, and README configuration mentions; `/api/openclaw` now returns a cheap static 404. Bumped `APP_VERSION` to 98.
 - 2026-07-11: Added a short human-facing `README.md` describing the app, repo layout, local Netlify Dev flow, main environment variables, and lightweight development conventions.

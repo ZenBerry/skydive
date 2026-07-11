@@ -100,6 +100,27 @@
       }
     },
     {
+      "id": "chord",
+      "version": "1.0.1",
+      "title": "Chord",
+      "description": "Play a small guitar-tab chord.",
+      "aliases": ["guitar", "tab"],
+      "acceptsArgs": true,
+      "source": "static",
+      "dynamicExecutable": false,
+      "stateSchema": {
+        "type": "object",
+        "properties": {
+          "frets": { "type": "string" },
+          "tuning": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "editing": { "type": "boolean" }
+        }
+      }
+    },
+    {
       "id": "delorean",
       "version": "1.0.0",
       "title": "Delorean",
