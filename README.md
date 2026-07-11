@@ -44,6 +44,58 @@ Useful local routes:
 - `/book/...` EPUB reader
 - `/api/agent?manifest=1` machine-readable agent manifest
 
+## User accounts
+
+Users are created through Mark rather than a separate signup page. Open `/mark` and ask to register, sign up, or create an account. Mark asks for a nickname, creates the user, logs them in, and then offers an optional password using hidden input.
+
+Logged-in users are stored in MongoDB-backed sessions and are used to attribute newly created nodes.
+
+## Canvas features
+
+Skydive is built around a few direct primitives:
+
+- Text nodes: editable blocks that can be moved, resized, selected, linked, and styled.
+- Natural lines: right-click a node, choose `Line`, then connect it to another node.
+- Math lines: right-click a line and mark it as `+`, `-`, `*`, `÷`, or `=`. Number nodes can form small calculation chains, and `=` writes the result into its target node.
+- Internal links: copy a node ID, select text inside another node, then link that selection to the target node.
+- Files: drag files onto the canvas to upload them. File widgets can open, download, preview images, and send EPUBs to the separate reader.
+- Audio: drop audio files or use `/rec` to record a voice note with playback, speed, loop, and download controls.
+- Widgets: slash commands create persistent nodes for stopwatch, timer, file, recorder, Delorean time-travel spaces, and today's date.
+- Mark: `/mark` can chat, manage accounts, list/read spaces, and apply supported Skydive edits through the agent API.
+- Agent API: `/agents` documents the JSON API for external tools that need to inspect or edit spaces safely.
+
+## Using the app
+
+Open `/` for a local-only canvas, or open any path such as `/research/ideas` to create/read that shared space. Named spaces autosave through MongoDB and poll for remote updates.
+
+Basic canvas controls:
+
+- Double-click empty canvas space to create a text node.
+- Drag the canvas to pan; use the wheel/trackpad to move around.
+- Use `Ctrl`/`Cmd` + wheel or pinch gestures to zoom.
+- Use `Alt` + wheel to rotate the canvas.
+- Drag files onto the canvas to create upload widgets.
+- Type `/` inside a text node to search and insert commands.
+
+Keyboard shortcuts:
+
+
+- Number keys `1` to `9` resize selected nodes.
+- `=` aligns selected nodes into a column.
+- `Shift` + `Enter` creates a new line.
+- `Ctrl`/`Cmd` + `S` exports a `.mind.json` file.
+- `Ctrl`/`Cmd` + `O` imports a saved `.mind.json` file.
+- `Ctrl`/`Cmd` + `Z` undo; `Ctrl`/`Cmd` + `Y` or `Ctrl`/`Cmd` + `Shift` + `Z` redo.
+- `Delete` or `Shift` + `Backspace` deletes selected nodes.
+- `Tab` toggles the app version counter.
+
+
+Context menus:
+
+- Node menu: copy node ID, hook the node to the browser title, start a line, link selected text to another node ID, and recolor widgets.
+- Line menu: choose a math operation or delete the line.
+- Canvas menu: use Bird's eye view to zoom out to the whole space.
+
 ## Configuration
 
 Shared spaces need MongoDB:

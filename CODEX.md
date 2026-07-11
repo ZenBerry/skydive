@@ -2,6 +2,8 @@
 
 - 2026-07-11: Added a short human-facing `README.md` describing the app, repo layout, local Netlify Dev flow, main environment variables, and lightweight development conventions.
 - 2026-07-11: Clarified the README intro around Skydive's core ZUI idea: an unlimited-feeling zoomable canvas for moving between details and large thought maps.
+- 2026-07-11: Added a brief README note that user accounts are created through Mark at `/mark`, with nickname-first registration, optional hidden password input, MongoDB-backed sessions, and node attribution.
+- 2026-07-11: Expanded the README with short newcomer sections for canvas features, slash-command widgets, files/audio, math lines, Mark/agent capabilities, shared-space URLs, shortcuts, and context menus.
 - Global instruction: Increment `APP_VERSION` in `index.html` by 1 for every commit.
 - 2026-07-11: Kept `package-lock.json` as the canonical dependency lockfile and ignored local dependency artifacts: `node_modules/`, `.pnpm-store/`, and fallback-generated `pnpm-lock.yaml`.
 - 2026-07-09: Added a deterministic Mark router for the full Skydive Agent Interface surface: manifest/capabilities, read, create text/command nodes, update/move/resize/delete, align/distribute, link text, and safe replace-state refusal. Bumped `APP_VERSION` to 95.
