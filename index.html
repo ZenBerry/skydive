@@ -1,6 +1,5 @@
 <!doctype html>
 <html lang="en">
-<quico>S</quico>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
@@ -843,6 +842,7 @@
   </style>
 </head>
 <body>
+  <quico hidden>S</quico>
   <div id="loading-screen" role="status" aria-live="polite">Loading... 0% done</div>
   <div id="version-counter" aria-label="Application version" hidden></div>
   <div id="viewport">
@@ -930,7 +930,6 @@
   <script src="/commands/timer.js"></script>
   <script src="/commands/file.js"></script>
   <script src="/commands/rec.js"></script>
-  <script src="/commands/chord.js"></script>
   <script src="/commands/delorean.js"></script>
   <script src="/commands/today.js"></script>
   <script>
@@ -1010,7 +1009,7 @@
     const MAX_NODE_LAYOUT_FONT_PX = 192;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 103; // Increment once for each commit.
+    const APP_VERSION = 100; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
