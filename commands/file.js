@@ -71,13 +71,78 @@
     window.open(href, "_blank", "noopener,noreferrer");
   }
 
+  const BOOKS_KEY = "skydive:book-reader:books";
+
+  function readBookRegistry() {
+    try {
+      const books = JSON.parse(localStorage.getItem(BOOKS_KEY) || "[]");
+      return Array.isArray(books) ? books.filter((book) => book && normalizeHref(book.src)) : [];
+    } catch (error) {
+      return [];
+    }
+  }
+
+  function writeBookRegistry(books) {
+    try {
+      localStorage.setItem(BOOKS_KEY, JSON.stringify(books));
+    } catch (error) {
+      console.warn("Could not save book registry:", error);
+    }
+  }
+
+  function registerBookLocally(src, name) {
+    const href = normalizeHref(src);
+    if (!href) return null;
+    const books = readBookRegistry();
+    const existingIndex = books.findIndex((book) => normalizeHref(book.src) === href);
+    const entry = {
+      src: href,
+      name: name || "Book",
+      openedAt: new Date().toISOString()
+    };
+    if (existingIndex !== -1) {
+      books[existingIndex] = { ...books[existingIndex], ...entry };
+      writeBookRegistry(books);
+      return existingIndex + 1;
+    }
+    books.push(entry);
+    writeBookRegistry(books);
+    return books.length;
+  }
+
+  async function registerBook(src, name) {
+    const href = normalizeHref(src);
+    if (!href) return null;
+    try {
+      const response = await fetch("/api/books", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ src: href, name })
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data && data.book && data.book.id) {
+          registerBookLocally(data.book.src, data.book.name);
+          return data.book.id;
+        }
+      }
+    } catch (error) {
+      console.warn("Could not register book globally:", error);
+    }
+    return registerBookLocally(href, name);
+  }
+
   function openBook(url, fileName) {
     const href = normalizeHref(url);
     if (!href) return;
     const title = getFileName({ fileName });
-    const pathName = encodeURIComponent(title || "book.epub");
-    const readerUrl = `/book/${pathName}?src=${encodeURIComponent(href)}&name=${encodeURIComponent(title)}`;
-    window.open(readerUrl, "_blank", "noopener,noreferrer");
+    const readerWindow = window.open("about:blank", "_blank");
+    if (readerWindow) readerWindow.opener = null;
+    registerBook(href, title).then((bookId) => {
+      const readerUrl = bookId ? `/book/${bookId}` : `/book?src=${encodeURIComponent(href)}&name=${encodeURIComponent(title)}`;
+      if (readerWindow) readerWindow.location.href = readerUrl;
+      else window.open(readerUrl, "_blank", "noopener,noreferrer");
+    });
   }
 
   function downloadUrl(url, fileName) {

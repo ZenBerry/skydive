@@ -20,7 +20,7 @@
     },
     {
       "id": "timer",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "title": "Timer",
       "description": "A tiny persistent countdown timer.",
       "aliases": ["countdown", "alarm"],

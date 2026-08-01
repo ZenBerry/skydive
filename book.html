@@ -101,6 +101,8 @@
     }
 
     #page {
+      --page-gap: 44px;
+      --page-width: 100%;
       width: min(640px, 100%);
       height: min(860px, 100%);
       outline: none;
@@ -108,20 +110,65 @@
       color: #111;
       font-size: clamp(19px, 2vw, 23px);
       line-height: 1.48;
-      white-space: pre-wrap;
       user-select: text;
       -webkit-user-select: text;
+      contain: layout paint style;
+    }
+
+    #book-flow {
+      width: var(--page-width);
+      height: 100%;
+      column-fill: auto;
+      column-gap: var(--page-gap);
+      column-width: var(--page-width);
+      orphans: 2;
+      widows: 2;
       transition: opacity 160ms ease, transform 180ms ease;
     }
 
-    #page.turning {
+    #book-flow.turning {
       opacity: 0;
-      transform: translateY(4px);
     }
 
     #page::selection,
     #page *::selection {
       background: #cfe0ff;
+    }
+
+    .epub-chapter {
+      break-after: column;
+      margin: 0;
+      padding: 0;
+    }
+
+    .epub-chapter > :first-child {
+      margin-top: 0;
+    }
+
+    .epub-chapter h1,
+    .epub-chapter h2,
+    .epub-chapter h3,
+    .epub-chapter h4,
+    .epub-chapter h5,
+    .epub-chapter h6 {
+      break-after: avoid;
+      line-height: 1.15;
+    }
+
+    .epub-chapter p,
+    .epub-chapter blockquote,
+    .epub-chapter figure,
+    .epub-chapter ul,
+    .epub-chapter ol,
+    .epub-chapter pre {
+      break-inside: avoid;
+    }
+
+    .epub-chapter img,
+    .epub-chapter svg,
+    .epub-chapter video {
+      max-width: 100%;
+      height: auto;
     }
 
     #status {
@@ -201,7 +248,9 @@
         <button id="next" class="nav" type="button" aria-label="Next page">&rsaquo;</button>
       </div>
       <div id="page-wrap">
-        <article id="page" tabindex="0" aria-live="polite"></article>
+        <article id="page" tabindex="0" aria-live="polite">
+          <div id="book-flow"></div>
+        </article>
       </div>
       <div id="status"></div>
     </section>
@@ -212,11 +261,11 @@
   </div>
 
   <script>
+    const BOOKS_KEY = "skydive:book-reader:books";
     const params = new URLSearchParams(window.location.search);
-    const sourceUrl = params.get("src") || "";
-    const requestedName = params.get("name") || decodeURIComponent(location.pathname.split("/").pop() || "Book");
     const titleElement = document.getElementById("title");
     const pageElement = document.getElementById("page");
+    const flowElement = document.getElementById("book-flow");
     const statusElement = document.getElementById("status");
     const prevButton = document.getElementById("prev");
     const nextButton = document.getElementById("next");
@@ -224,16 +273,143 @@
     const menu = document.getElementById("menu");
     const discussButton = document.getElementById("discuss");
 
-    let bookTitle = cleanText(requestedName.replace(/\.epub$/i, "")) || "Book";
-    let pages = [];
+    let sourceUrl = "";
+    let requestedName = "Book";
+    let bookTitle = "Book";
+    let pageCount = 0;
     let pageIndex = 0;
     let lastSelection = "";
-
-    titleElement.textContent = bookTitle;
-    document.title = `${bookTitle} - Skydive`;
+    let resizeTimer = 0;
+    const objectUrls = new Map();
 
     function cleanText(value) {
       return String(value || "").replace(/\s+/g, " ").trim();
+    }
+
+    function cleanName(value) {
+      return cleanText(String(value || "").replace(/\.epub$/i, "")) || "Book";
+    }
+
+    function normalizeUrl(value) {
+      const raw = typeof value === "string" ? value.trim() : "";
+      if (!raw) return "";
+      try {
+        const url = new URL(raw, window.location.href);
+        if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+        return url.href;
+      } catch (error) {
+        return "";
+      }
+    }
+
+    function readBookRegistry() {
+      try {
+        const books = JSON.parse(localStorage.getItem(BOOKS_KEY) || "[]");
+        return Array.isArray(books) ? books.filter((book) => book && normalizeUrl(book.src)) : [];
+      } catch (error) {
+        return [];
+      }
+    }
+
+    function writeBookRegistry(books) {
+      try {
+        localStorage.setItem(BOOKS_KEY, JSON.stringify(books));
+      } catch (error) {
+        console.warn("Could not save book registry:", error);
+      }
+    }
+
+    function registerBook(src, name) {
+      const href = normalizeUrl(src);
+      if (!href) return null;
+      const books = readBookRegistry();
+      const existingIndex = books.findIndex((book) => normalizeUrl(book.src) === href);
+      const entry = {
+        src: href,
+        name: name || "Book",
+        openedAt: new Date().toISOString()
+      };
+      if (existingIndex !== -1) {
+        books[existingIndex] = { ...books[existingIndex], ...entry };
+        writeBookRegistry(books);
+        return { id: existingIndex + 1, book: books[existingIndex] };
+      }
+      books.push(entry);
+      writeBookRegistry(books);
+      return { id: books.length, book: entry };
+    }
+
+    async function registerBookGlobally(src, name) {
+      const href = normalizeUrl(src);
+      if (!href) return null;
+      try {
+        const response = await fetch("/api/books", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ src: href, name })
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (data && data.book && data.book.id && normalizeUrl(data.book.src)) {
+            registerBook(data.book.src, data.book.name);
+            return data;
+          }
+        }
+      } catch (error) {
+        console.warn("Could not register book globally:", error);
+      }
+      const local = registerBook(href, name);
+      return local ? { book: { id: local.id, src: local.book.src, name: local.book.name } } : null;
+    }
+
+    async function getGlobalBook(id) {
+      if (!Number.isInteger(id) || id < 1) return null;
+      try {
+        const response = await fetch(`/api/books?id=${encodeURIComponent(id)}`);
+        if (response.ok) {
+          const data = await response.json();
+          if (data && data.book && normalizeUrl(data.book.src)) {
+            registerBook(data.book.src, data.book.name);
+            return data.book;
+          }
+        }
+      } catch (error) {
+        console.warn("Could not load global book:", error);
+      }
+      const local = readBookRegistry()[id - 1];
+      return local ? { id, src: local.src, name: local.name } : null;
+    }
+
+    function getPathBookId() {
+      const match = location.pathname.match(/^\/book\/(\d+)\/?$/);
+      return match ? Number(match[1]) : 0;
+    }
+
+    async function initializeBookLocation() {
+      const querySource = normalizeUrl(params.get("src") || "");
+      const queryName = params.get("name") || decodeURIComponent(location.pathname.split("/").pop() || "Book");
+      const id = getPathBookId();
+
+      if (querySource) {
+        const registered = await registerBookGlobally(querySource, queryName);
+        sourceUrl = registered ? registered.book.src : querySource;
+        requestedName = registered ? registered.book.name : queryName;
+        if (registered && registered.book.id && location.pathname !== `/book/${registered.book.id}`) {
+          history.replaceState(null, "", `/book/${registered.book.id}`);
+        }
+      } else if (id) {
+        const entry = await getGlobalBook(id);
+        if (entry) {
+          sourceUrl = normalizeUrl(entry.src);
+          requestedName = entry.name || "Book";
+        }
+      } else {
+        requestedName = queryName;
+      }
+
+      bookTitle = cleanName(requestedName);
+      titleElement.textContent = bookTitle;
+      document.title = `${bookTitle} - Skydive`;
     }
 
     function joinPath(base, href) {
@@ -255,6 +431,24 @@
 
     function textFromBytes(bytes) {
       return new TextDecoder("utf-8").decode(bytes);
+    }
+
+    function mimeFromPath(path) {
+      const extension = path.split("?")[0].split("#")[0].split(".").pop().toLowerCase();
+      const types = {
+        css: "text/css",
+        gif: "image/gif",
+        jpeg: "image/jpeg",
+        jpg: "image/jpeg",
+        otf: "font/otf",
+        png: "image/png",
+        svg: "image/svg+xml",
+        ttf: "font/ttf",
+        webp: "image/webp",
+        woff: "font/woff",
+        woff2: "font/woff2"
+      };
+      return types[extension] || "application/octet-stream";
     }
 
     function readUint16(view, offset) {
@@ -351,44 +545,159 @@
       return elementsByLocalName(root, name)[0] || null;
     }
 
-    function htmlToReadableText(html) {
-      const doc = new DOMParser().parseFromString(html, "text/html");
-      doc.querySelectorAll("script, style, svg, nav").forEach((node) => node.remove());
-      const blocks = [];
-      const walker = document.createTreeWalker(doc.body || doc, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
-      let line = "";
-
-      function flush() {
-        const text = cleanText(line);
-        if (text) blocks.push(text);
-        line = "";
-      }
-
-      while (walker.nextNode()) {
-        const node = walker.currentNode;
-        if (node.nodeType === Node.TEXT_NODE) {
-          line += ` ${node.nodeValue}`;
-          continue;
-        }
-        const tag = node.nodeName.toLowerCase();
-        if (/^(p|div|section|article|header|footer|h[1-6]|li|blockquote|pre|br)$/i.test(tag)) flush();
-      }
-      flush();
-      return blocks.join("\n\n");
+    function makeResourceUrl(path, zip) {
+      if (!path || !zip.entries.has(path)) return "";
+      if (objectUrls.has(path)) return objectUrls.get(path);
+      const placeholder = `skydive-epub-resource:${objectUrls.size}`;
+      objectUrls.set(path, placeholder);
+      zip.read(path).then((bytes) => {
+        const blobUrl = URL.createObjectURL(new Blob([bytes], { type: mimeFromPath(path) }));
+        objectUrls.set(path, blobUrl);
+        flowElement.querySelectorAll(`[src="${placeholder}"], [href="${placeholder}"]`).forEach((node) => {
+          if (node.hasAttribute("src")) node.setAttribute("src", blobUrl);
+          if (node.hasAttribute("href")) node.setAttribute("href", blobUrl);
+        });
+        flowElement.querySelectorAll("style").forEach((style) => {
+          if (style.textContent.includes(placeholder)) {
+            style.textContent = style.textContent.split(placeholder).join(blobUrl);
+          }
+        });
+      }).catch((error) => {
+        console.warn("Could not load EPUB resource:", path, error);
+      });
+      return placeholder;
     }
 
-    function paginateText(text) {
-      const words = cleanText(text).split(" ").filter(Boolean);
-      const target = Math.max(360, Math.min(760, Math.round((pageElement.clientWidth * pageElement.clientHeight) / 760)));
-      const nextPages = [];
-      for (let offset = 0; offset < words.length; offset += target) {
-        nextPages.push(words.slice(offset, offset + target).join(" "));
+    function rewriteCssUrls(css, base, zip) {
+      return String(css || "").replace(/url\((['"]?)([^'")]+)\1\)/gi, (match, quote, rawUrl) => {
+        const value = rawUrl.trim();
+        if (!value || /^(data:|blob:|https?:|about:|#)/i.test(value)) return match;
+        const resourcePath = joinPath(base, value);
+        const url = makeResourceUrl(resourcePath, zip);
+        return url ? `url("${url}")` : match;
+      });
+    }
+
+    function scopeCss(css) {
+      const scoped = [];
+      let buffer = "";
+      let depth = 0;
+      for (const char of css) {
+        buffer += char;
+        if (char === "{") depth += 1;
+        else if (char === "}") {
+          depth -= 1;
+          if (depth === 0) {
+            scoped.push(scopeCssRule(buffer));
+            buffer = "";
+          }
+        }
       }
-      return nextPages.length ? nextPages : ["This book has no readable text."];
+      if (buffer.trim()) scoped.push(scopeCssRule(buffer));
+      return scoped.join("\n");
+    }
+
+    function scopeCssRule(rule) {
+      const index = rule.indexOf("{");
+      if (index === -1) return rule;
+      const selector = rule.slice(0, index).trim();
+      const body = rule.slice(index);
+      if (!selector) return rule;
+      if (/^@(media|supports|container)\b/i.test(selector)) {
+        return `${selector} {${scopeCss(body.slice(1, -1))}}`;
+      }
+      if (selector.startsWith("@")) return rule;
+      const scopedSelectors = selector.split(",").map((part) => {
+        const trimmed = part.trim();
+        if (!trimmed) return "";
+        if (/^(html|body)([\s.#:[>+~]|$)/i.test(trimmed)) {
+          return trimmed.replace(/^(html|body)/i, ".epub-chapter");
+        }
+        return `.epub-chapter ${trimmed}`;
+      }).filter(Boolean);
+      return scopedSelectors.length ? `${scopedSelectors.join(", ")} ${body}` : rule;
+    }
+
+    function rewriteSrcset(value, base, zip) {
+      return String(value || "").split(",").map((part) => {
+        const pieces = part.trim().split(/\s+/);
+        const url = pieces.shift();
+        if (!url || /^(data:|blob:|https?:|about:|#)/i.test(url)) return part.trim();
+        const resourceUrl = makeResourceUrl(joinPath(base, url), zip);
+        return [resourceUrl || url, ...pieces].join(" ");
+      }).join(", ");
+    }
+
+    function sanitizeChapterHtml(html, path, zip, cssByPath) {
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      const base = dirname(path);
+      const chapter = document.createElement("section");
+      chapter.className = "epub-chapter";
+
+      doc.querySelectorAll("script, object, embed, iframe").forEach((node) => node.remove());
+      doc.querySelectorAll("*").forEach((node) => {
+        Array.from(node.attributes).forEach((attribute) => {
+          if (/^on/i.test(attribute.name)) node.removeAttribute(attribute.name);
+        });
+      });
+
+      doc.querySelectorAll("link[rel~='stylesheet']").forEach((link) => {
+        const href = attr(link, "href");
+        const cssPath = href ? joinPath(base, href) : "";
+        if (cssPath && cssByPath.has(cssPath)) {
+          const style = document.createElement("style");
+          style.textContent = scopeCss(rewriteCssUrls(cssByPath.get(cssPath), dirname(cssPath), zip));
+          chapter.appendChild(style);
+        }
+        link.remove();
+      });
+
+      doc.querySelectorAll("style").forEach((styleNode) => {
+        styleNode.textContent = scopeCss(rewriteCssUrls(styleNode.textContent, base, zip));
+      });
+
+      doc.querySelectorAll("img, image, source").forEach((node) => {
+        const src = attr(node, "src") || attr(node, "href") || attr(node, "xlink:href");
+        if (src && !/^(data:|blob:|https?:|about:|#)/i.test(src)) {
+          const url = makeResourceUrl(joinPath(base, src), zip);
+          if (node.hasAttribute("src")) node.setAttribute("src", url);
+          else node.setAttribute("href", url);
+        }
+        if (node.hasAttribute("srcset")) node.setAttribute("srcset", rewriteSrcset(node.getAttribute("srcset"), base, zip));
+      });
+
+      doc.querySelectorAll("a[href]").forEach((link) => {
+        const href = attr(link, "href");
+        if (/^(javascript:|data:)/i.test(href)) link.removeAttribute("href");
+      });
+
+      const body = doc.body || doc.documentElement;
+      Array.from(body.childNodes).forEach((node) => chapter.appendChild(document.importNode(node, true)));
+      chapter.querySelectorAll("img").forEach((image) => {
+        image.addEventListener("load", recalculatePages, { once: true });
+      });
+      return chapter;
+    }
+
+    function setError(message) {
+      flowElement.textContent = message || "Could not open this book.";
+      statusElement.textContent = "";
+      pageCount = 0;
+      prevButton.disabled = true;
+      nextButton.disabled = true;
+    }
+
+    function recalculatePages() {
+      const width = pageElement.clientWidth || 1;
+      const gap = Number.parseFloat(getComputedStyle(pageElement).getPropertyValue("--page-gap")) || 44;
+      pageElement.style.setProperty("--page-width", `${width}px`);
+      pageCount = Math.max(1, Math.ceil((flowElement.scrollWidth + gap) / (width + gap)));
+      pageIndex = Math.max(0, Math.min(pageIndex, pageCount - 1));
+      renderPage();
     }
 
     async function loadBook() {
-      if (!sourceUrl) throw new Error("Missing book URL.");
+      if (!sourceUrl) throw new Error("Missing book URL. Open an EPUB from a Skydive file card first so the reader can assign it a /book/number address.");
       statusElement.textContent = "Opening...";
       const response = await fetch(sourceUrl);
       if (!response.ok) throw new Error("Could not download this EPUB.");
@@ -406,10 +715,16 @@
       document.title = `${bookTitle} - Skydive`;
 
       const manifest = new Map();
+      const cssPaths = [];
       elementsByLocalName(packageDoc, "item").forEach((item) => {
         const id = attr(item, "id");
         const href = attr(item, "href");
-        if (id && href) manifest.set(id, joinPath(packageDir, href));
+        const mediaType = attr(item, "media-type").toLowerCase();
+        if (id && href) {
+          const path = joinPath(packageDir, href);
+          manifest.set(id, path);
+          if (mediaType === "text/css" || /\.css(?:$|[?#])/i.test(path)) cssPaths.push(path);
+        }
       });
 
       const spine = elementsByLocalName(packageDoc, "itemref")
@@ -417,34 +732,46 @@
         .filter(Boolean);
       if (!spine.length) throw new Error("This EPUB has no readable spine.");
 
-      const chapters = [];
+      const cssByPath = new Map();
+      for (const path of cssPaths) {
+        try {
+          cssByPath.set(path, await zip.text(path));
+        } catch (error) {
+          console.warn("Skipping EPUB stylesheet:", path, error);
+        }
+      }
+
+      flowElement.textContent = "";
       for (const path of spine) {
         try {
-          chapters.push(htmlToReadableText(await zip.text(path)));
+          flowElement.appendChild(sanitizeChapterHtml(await zip.text(path), path, zip, cssByPath));
         } catch (error) {
           console.warn("Skipping EPUB chapter:", path, error);
         }
       }
 
-      pages = paginateText(chapters.join("\n\n"));
+      if (!cleanText(flowElement.textContent)) throw new Error("This book has no readable text.");
       pageIndex = 0;
-      renderPage();
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      recalculatePages();
       sendBookContext();
     }
 
     function renderPage() {
-      pageElement.classList.add("turning");
+      flowElement.classList.add("turning");
       window.setTimeout(() => {
-        pageElement.textContent = pages[pageIndex] || "";
-        statusElement.textContent = pages.length ? `${pageIndex + 1} / ${pages.length}` : "";
+        const width = pageElement.clientWidth || 1;
+        const gap = Number.parseFloat(getComputedStyle(pageElement).getPropertyValue("--page-gap")) || 44;
+        flowElement.style.transform = `translateX(${-pageIndex * (width + gap)}px)`;
+        statusElement.textContent = pageCount ? `${pageIndex + 1} / ${pageCount}` : "";
         prevButton.disabled = pageIndex <= 0;
-        nextButton.disabled = pageIndex >= pages.length - 1;
-        pageElement.classList.remove("turning");
+        nextButton.disabled = pageIndex >= pageCount - 1;
+        flowElement.classList.remove("turning");
       }, 80);
     }
 
     function movePage(delta) {
-      const nextIndex = Math.max(0, Math.min(pages.length - 1, pageIndex + delta));
+      const nextIndex = Math.max(0, Math.min(pageCount - 1, pageIndex + delta));
       if (nextIndex === pageIndex) return;
       pageIndex = nextIndex;
       hideMenu();
@@ -459,7 +786,24 @@
     }
 
     function currentPageText() {
-      return cleanText(pages[pageIndex] || pageElement.textContent || "");
+      const pageRect = pageElement.getBoundingClientRect();
+      const visible = [];
+      const walker = document.createTreeWalker(flowElement, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (!cleanText(node.nodeValue)) continue;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        const intersects = Array.from(range.getClientRects()).some((rect) => (
+          rect.right > pageRect.left &&
+          rect.left < pageRect.right &&
+          rect.bottom > pageRect.top &&
+          rect.top < pageRect.bottom
+        ));
+        range.detach();
+        if (intersects) visible.push(node.nodeValue);
+      }
+      return cleanText(visible.join(" ")) || cleanText(pageElement.textContent || "");
     }
 
     function hideMenu() {
@@ -512,13 +856,14 @@
     });
 
     markFrame.addEventListener("load", sendBookContext);
+    window.addEventListener("resize", () => {
+      window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(recalculatePages, 140);
+    });
 
-    loadBook().catch((error) => {
+    initializeBookLocation().then(loadBook).catch((error) => {
       console.error(error);
-      pageElement.textContent = error.message || "Could not open this book.";
-      statusElement.textContent = "";
-      prevButton.disabled = true;
-      nextButton.disabled = true;
+      setError(error.message || "Could not open this book.");
     });
   </script>
 </body>
