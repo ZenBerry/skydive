@@ -184,6 +184,34 @@
       -webkit-box-decoration-break: clone;
     }
 
+    ::highlight(epub-highlight-peach) {
+      background-color: #f4cbb9;
+    }
+
+    ::highlight(epub-highlight-beige) {
+      background-color: #fff8ed;
+    }
+
+    ::highlight(epub-highlight-green) {
+      background-color: #c9e1ce;
+    }
+
+    ::highlight(epub-highlight-blue) {
+      background-color: #c8def1;
+    }
+
+    ::highlight(epub-highlight-purple) {
+      background-color: #ddcfed;
+    }
+
+    ::highlight(epub-highlight-gray) {
+      background-color: #dfddd9;
+    }
+
+    ::highlight(epub-highlight-yellow) {
+      background-color: #fff3a3;
+    }
+
     #status {
       min-height: 34px;
       padding: 0 20px max(14px, env(safe-area-inset-bottom, 0));
@@ -316,7 +344,15 @@
     const discussButton = document.getElementById("discuss");
     const highlightColors = document.getElementById("highlight-colors");
 
-    const HIGHLIGHT_COLORS = new Set(["#f4cbb9", "#fff8ed", "#c9e1ce", "#c8def1", "#ddcfed", "#dfddd9", "#fff3a3"]);
+    const HIGHLIGHT_COLORS = new Map([
+      ["#f4cbb9", "epub-highlight-peach"],
+      ["#fff8ed", "epub-highlight-beige"],
+      ["#c9e1ce", "epub-highlight-green"],
+      ["#c8def1", "epub-highlight-blue"],
+      ["#ddcfed", "epub-highlight-purple"],
+      ["#dfddd9", "epub-highlight-gray"],
+      ["#fff3a3", "epub-highlight-yellow"]
+    ]);
     let sourceUrl = "";
     let requestedName = "Book";
     let bookTitle = "Book";
@@ -493,11 +529,27 @@
     async function saveBookSessionNow() {
       if (!bookId || suppressSessionSave) return;
       try {
-        await fetch("/api/books", {
+        const response = await fetch("/api/books", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(sessionPayload())
         });
+        if (!response.ok) console.warn("Could not save book session:", await response.text());
+      } catch (error) {
+        console.warn("Could not save book session:", error);
+      }
+    }
+
+    function saveBookSessionOnExit() {
+      if (!bookId || suppressSessionSave) return;
+      window.clearTimeout(saveTimer);
+      try {
+        fetch("/api/books", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(sessionPayload()),
+          keepalive: true
+        }).catch((error) => console.warn("Could not save book session:", error));
       } catch (error) {
         console.warn("Could not save book session:", error);
       }
@@ -841,7 +893,13 @@
 
     function textNodesInFlow() {
       const nodes = [];
-      const walker = document.createTreeWalker(flowElement, NodeFilter.SHOW_TEXT);
+      const walker = document.createTreeWalker(flowElement, NodeFilter.SHOW_TEXT, {
+        acceptNode(node) {
+          const parent = node.parentElement;
+          if (!parent || parent.closest("style, script")) return NodeFilter.FILTER_REJECT;
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      });
       while (walker.nextNode()) nodes.push(walker.currentNode);
       return nodes;
     }
@@ -886,28 +944,71 @@
       return range;
     }
 
-    function applyHighlight(highlight) {
-      const range = rangeFromOffsets(highlight.start, highlight.end);
-      if (!range || range.collapsed) return false;
-      const span = document.createElement("span");
-      span.className = "epub-highlight";
-      span.dataset.highlightId = highlight.id;
-      span.style.backgroundColor = highlight.color;
-      try {
-        range.surroundContents(span);
-      } catch (error) {
+    function clearFallbackHighlights() {
+      flowElement.querySelectorAll(".epub-highlight").forEach((node) => node.replaceWith(...node.childNodes));
+      flowElement.normalize();
+    }
+
+    function highlightParts(start, end) {
+      const parts = [];
+      let offset = 0;
+      for (const node of textNodesInFlow()) {
+        const nextOffset = offset + node.nodeValue.length;
+        const partStart = Math.max(start, offset);
+        const partEnd = Math.min(end, nextOffset);
+        if (partEnd > partStart) {
+          const range = document.createRange();
+          range.setStart(node, partStart - offset);
+          range.setEnd(node, partEnd - offset);
+          parts.push(range);
+        }
+        offset = nextOffset;
+        if (offset >= end) break;
+      }
+      return parts;
+    }
+
+    function applyFallbackHighlight(highlight) {
+      const parts = highlightParts(highlight.start, highlight.end).reverse();
+      parts.forEach((range) => {
+        const span = document.createElement("span");
+        span.className = "epub-highlight";
+        span.dataset.highlightId = highlight.id;
+        span.style.backgroundColor = highlight.color;
         const fragment = range.extractContents();
         span.appendChild(fragment);
         range.insertNode(span);
+      });
+      return parts.length > 0;
+    }
+
+    function applyHighlight(highlight) {
+      const range = rangeFromOffsets(highlight.start, highlight.end);
+      if (!range || range.collapsed) return false;
+      if (!("CSS" in window) || !CSS.highlights || !("Highlight" in window)) {
+        return applyFallbackHighlight(highlight);
       }
       return true;
     }
 
     function applySavedHighlights() {
-      flowElement.querySelectorAll(".epub-highlight").forEach((node) => node.replaceWith(...node.childNodes));
+      clearFallbackHighlights();
+      if ("CSS" in window && CSS.highlights && "Highlight" in window) {
+        for (const name of HIGHLIGHT_COLORS.values()) CSS.highlights.delete(name);
+        const rangesByName = new Map();
+        normalizeHighlights(highlights).forEach((highlight) => {
+          const name = HIGHLIGHT_COLORS.get(highlight.color);
+          const range = rangeFromOffsets(highlight.start, highlight.end);
+          if (!name || !range || range.collapsed) return;
+          if (!rangesByName.has(name)) rangesByName.set(name, []);
+          rangesByName.get(name).push(range);
+        });
+        rangesByName.forEach((ranges, name) => CSS.highlights.set(name, new Highlight(...ranges)));
+        return;
+      }
       normalizeHighlights(highlights)
         .sort((left, right) => right.start - left.start)
-        .forEach(applyHighlight);
+        .forEach(applyFallbackHighlight);
     }
 
     function createHighlight(color) {
@@ -924,7 +1025,7 @@
         text: cleanText(range.toString()).slice(0, 500)
       };
       highlights = [...highlights, highlight].slice(-500);
-      applyHighlight(highlight);
+      applySavedHighlights();
       if (selection) selection.removeAllRanges();
       lastSelectionRange = null;
       hideMenu();
@@ -1108,6 +1209,10 @@
     window.addEventListener("resize", () => {
       window.clearTimeout(resizeTimer);
       resizeTimer = window.setTimeout(recalculatePages, 140);
+    });
+    window.addEventListener("pagehide", saveBookSessionOnExit);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") saveBookSessionOnExit();
     });
 
     initializeBookLocation().then(loadBook).catch((error) => {

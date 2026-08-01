@@ -150,7 +150,10 @@ exports.handler = async (event) => {
       const id = Number(event.queryStringParameters && event.queryStringParameters.id);
       if (!Number.isInteger(id) || id < 1) return json(400, { error: "A valid book id is required." });
       const collection = await getCollection();
-      const book = await collection.findOne({ kind: "book", id }, { projection: { _id: 0, id: 1, src: 1, name: 1 } });
+      const book = await collection.findOne(
+        { kind: "book", id },
+        { projection: { _id: 0, id: 1, src: 1, name: 1, position: 1, highlights: 1, markHistory: 1 } }
+      );
       if (!book) return json(404, { error: "Book not found." });
       return json(200, { book: publicBook(book) });
     }
