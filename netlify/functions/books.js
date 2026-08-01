@@ -71,6 +71,7 @@ function normalizePosition(value) {
   const pageIndex = Number(value.pageIndex);
   return {
     pageIndex: Number.isInteger(pageIndex) && pageIndex >= 0 ? Math.min(pageIndex, 100000) : 0,
+    progress: Number.isFinite(Number(value.progress)) ? Math.max(0, Math.min(1, Number(value.progress))) : 0,
     updatedAt: Number.isFinite(Number(value.updatedAt)) ? Number(value.updatedAt) : Date.now()
   };
 }

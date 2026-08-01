@@ -101,27 +101,22 @@
     }
 
     #page {
-      --page-gap: 44px;
-      --page-width: 100%;
       width: min(640px, 100%);
       height: min(860px, 100%);
       outline: none;
-      overflow: hidden;
+      overflow: auto;
       color: #111;
       font-size: clamp(19px, 2vw, 23px);
       line-height: 1.48;
       user-select: text;
       -webkit-user-select: text;
       contain: layout paint style;
+      scroll-behavior: smooth;
     }
 
     #book-flow {
-      width: var(--page-width);
-      height: 100%;
-      column-fill: auto;
-      column-gap: var(--page-gap);
-      column-width: var(--page-width);
       orphans: 2;
+      padding-bottom: 1px;
       widows: 2;
       transition: opacity 160ms ease, transform 180ms ease;
     }
@@ -136,10 +131,9 @@
     }
 
     .epub-chapter {
-      break-after: column;
       color: inherit !important;
       font-family: inherit !important;
-      margin: 0;
+      margin: 0 0 2.2em;
       padding: 0;
     }
 
@@ -359,6 +353,7 @@
     let bookId = 0;
     let pageCount = 0;
     let pageIndex = 0;
+    let bookProgress = 0;
     let lastSelection = "";
     let lastSelectionRange = null;
     let resizeTimer = 0;
@@ -382,9 +377,13 @@
     }
 
     function normalizePosition(value) {
-      if (!value || typeof value !== "object") return { pageIndex: 0 };
+      if (!value || typeof value !== "object") return { pageIndex: 0, progress: 0 };
       const index = Number(value.pageIndex);
-      return { pageIndex: Number.isInteger(index) && index >= 0 ? index : 0 };
+      const progress = Number(value.progress);
+      return {
+        pageIndex: Number.isInteger(index) && index >= 0 ? index : 0,
+        progress: Number.isFinite(progress) && progress >= 0 ? Math.min(progress, 1) : 0
+      };
     }
 
     function normalizeHighlights(value) {
@@ -423,6 +422,7 @@
       markHistory = normalizeMarkHistory(book.markHistory);
       const position = normalizePosition(book.position);
       pageIndex = position.pageIndex;
+      bookProgress = position.progress;
     }
 
     function normalizeUrl(value) {
@@ -520,7 +520,7 @@
     function sessionPayload() {
       return {
         id: bookId,
-        position: { pageIndex, updatedAt: Date.now() },
+        position: { pageIndex, progress: currentProgress(), updatedAt: Date.now() },
         highlights,
         markHistory
       };
@@ -893,12 +893,24 @@
     }
 
     function recalculatePages() {
-      const width = pageElement.clientWidth || 1;
-      const gap = Number.parseFloat(getComputedStyle(pageElement).getPropertyValue("--page-gap")) || 44;
-      pageElement.style.setProperty("--page-width", `${width}px`);
-      pageCount = Math.max(1, Math.ceil((flowElement.scrollWidth + gap) / (width + gap)));
+      pageCount = Math.max(1, Math.ceil(pageElement.scrollHeight / Math.max(1, pageElement.clientHeight)));
+      pageIndex = Math.round(pageElement.scrollTop / Math.max(1, pageElement.clientHeight));
       pageIndex = Math.max(0, Math.min(pageIndex, pageCount - 1));
       renderPage();
+    }
+
+    function currentProgress() {
+      const maxScroll = Math.max(0, pageElement.scrollHeight - pageElement.clientHeight);
+      return maxScroll ? Math.max(0, Math.min(1, pageElement.scrollTop / maxScroll)) : 0;
+    }
+
+    function restorePosition() {
+      const maxScroll = Math.max(0, pageElement.scrollHeight - pageElement.clientHeight);
+      const target = bookProgress > 0
+        ? bookProgress * maxScroll
+        : pageIndex * pageElement.clientHeight;
+      pageElement.scrollTop = Math.max(0, Math.min(maxScroll, target));
+      recalculatePages();
     }
 
     function textNodesInFlow() {
@@ -1068,7 +1080,7 @@
       flowElement.textContent = "";
       for (const path of spine) {
         try {
-          flowElement.appendChild(sanitizeChapterHtml(await zip.text(path), path, zip, cssByPath));
+          flowElement.appendChild(await sanitizeChapterHtml(await zip.text(path), path, zip, cssByPath));
         } catch (error) {
           console.warn("Skipping EPUB chapter:", path, error);
         }
@@ -1077,21 +1089,14 @@
       if (!cleanText(flowElement.textContent)) throw new Error("This book has no readable text.");
       applySavedHighlights();
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-      recalculatePages();
+      restorePosition();
       sendBookContext();
     }
 
     function renderPage() {
-      flowElement.classList.add("turning");
-      window.setTimeout(() => {
-        const width = pageElement.clientWidth || 1;
-        const gap = Number.parseFloat(getComputedStyle(pageElement).getPropertyValue("--page-gap")) || 44;
-        flowElement.style.transform = `translateX(${-pageIndex * (width + gap)}px)`;
-        statusElement.textContent = pageCount ? `${pageIndex + 1} / ${pageCount}` : "";
-        prevButton.disabled = pageIndex <= 0;
-        nextButton.disabled = pageIndex >= pageCount - 1;
-        flowElement.classList.remove("turning");
-      }, 80);
+      statusElement.textContent = pageCount ? `${pageIndex + 1} / ${pageCount}` : "";
+      prevButton.disabled = pageIndex <= 0;
+      nextButton.disabled = pageIndex >= pageCount - 1;
     }
 
     function movePage(delta) {
@@ -1099,6 +1104,7 @@
       if (nextIndex === pageIndex) return;
       pageIndex = nextIndex;
       hideMenu();
+      pageElement.scrollTo({ top: pageIndex * pageElement.clientHeight, behavior: "smooth" });
       renderPage();
       void saveBookSessionNow();
     }
@@ -1198,6 +1204,10 @@
       window.clearTimeout(resizeTimer);
       resizeTimer = window.setTimeout(recalculatePages, 140);
     });
+    pageElement.addEventListener("scroll", () => {
+      recalculatePages();
+      queueBookSessionSave();
+    }, { passive: true });
     window.addEventListener("pagehide", saveBookSessionOnExit);
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "hidden") saveBookSessionOnExit();
