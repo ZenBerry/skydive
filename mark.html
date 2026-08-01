@@ -338,6 +338,7 @@
     let currentUser = null;
     let bookContext = null;
     let pendingAttachments = [];
+    let restoredBookHistory = false;
 
     async function loadAppVersion() {
       try {
@@ -362,7 +363,44 @@
     function normalizeBookContext(value) {
       if (!value || typeof value !== "object") return null;
       const title = boundedText(value.title || value.name || "", 240);
-      return title ? { title } : null;
+      const id = Number(value.id);
+      return title ? {
+        title,
+        ...(Number.isInteger(id) && id > 0 ? { id } : {}),
+        markHistory: normalizeBookHistory(value.markHistory)
+      } : null;
+    }
+
+    function normalizeBookHistory(value) {
+      const list = Array.isArray(value) ? value : [];
+      return list.map((message) => {
+        if (!message || typeof message !== "object") return null;
+        const role = message.role === "assistant" ? "assistant" : message.role === "user" ? "user" : "";
+        const content = String(message.content || "").trim();
+        return role && content ? { role, content } : null;
+      }).filter(Boolean).slice(-80);
+    }
+
+    function notifyBookHistoryChanged() {
+      if (!bookContext || !bookContext.id || window.parent === window) return;
+      window.parent.postMessage({
+        type: "skydive:mark-history",
+        book: { id: bookContext.id, title: bookContext.title },
+        history: normalizeBookHistory(history)
+      }, window.location.origin);
+    }
+
+    function restoreBookHistory(nextHistory) {
+      const normalized = normalizeBookHistory(nextHistory);
+      if (!normalized.length || restoredBookHistory) return;
+      restoredBookHistory = true;
+      history.splice(0, history.length, ...normalized);
+      messagesElement.replaceChildren();
+      normalized.forEach((message) => {
+        addMessage(message.role, message.content, {
+          speaker: message.role === "assistant" ? currentAssistantName() : undefined
+        });
+      });
     }
 
     function renderAttachmentTray() {
@@ -618,6 +656,13 @@
         : text;
     }
 
+    function messageForRequest(message) {
+      if (!message || typeof message !== "object") return null;
+      if (message.role === "assistant") return { role: "assistant", content: assistantHistoryContent(message.content) };
+      if (message.role === "user") return { role: "user", content: userHistoryContent(message.content) };
+      return null;
+    }
+
     function parseResponseBody(text) {
       try {
         return text ? JSON.parse(text) : {};
@@ -669,8 +714,12 @@
       resizePrompt();
       addMessage("user", content, { secret: submittedSecret });
       const contextualContent = submittedSecret ? content : buildContextualMessage(content, attachments);
-      const requestHistory = [...history, { role: "user", content: contextualContent }];
-      history.push({ role: "user", content: submittedSecret ? "[hidden input]" : userHistoryContent(content) });
+      const requestHistory = [
+        ...history.map(messageForRequest).filter(Boolean),
+        { role: "user", content: contextualContent }
+      ];
+      history.push({ role: "user", content: submittedSecret ? "[hidden input]" : content });
+      notifyBookHistoryChanged();
       const assistantName = currentAssistantName();
       const pending = addMessage("assistant", "…", { pending: true, speaker: assistantName });
 
@@ -694,15 +743,18 @@
         const reply = typeof data.reply === "string" ? data.reply.trim() : "";
         if (!reply) throw new Error(`${assistantName} returned an empty response.`);
         if (Object.prototype.hasOwnProperty.call(data, "user")) setCurrentUser(data.user);
-        history.push({ role: "assistant", content: assistantHistoryContent(reply) });
+        history.push({ role: "assistant", content: reply });
         pending.remove();
         addMessage("assistant", reply, { speaker: assistantName });
+        notifyBookHistoryChanged();
         setSecretExpected(data.secretInput === true);
       } catch (error) {
         pending.classList.remove("pending");
         const pendingContent = pending.querySelector(".content");
         pendingContent.replaceChildren();
         pendingContent.textContent = error.message || `${assistantName} could not answer right now.`;
+        history.push({ role: "assistant", content: pendingContent.textContent });
+        notifyBookHistoryChanged();
       } finally {
         waiting = false;
         resizePrompt();
@@ -744,6 +796,7 @@
       if (event.origin !== window.location.origin || !event.data || typeof event.data !== "object") return;
       if (event.data.type === "skydive:book-context") {
         bookContext = normalizeBookContext(event.data.book);
+        if (bookContext) restoreBookHistory(bookContext.markHistory);
         return;
       }
       if (event.data.type === "skydive:mark-attachments") {

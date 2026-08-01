@@ -137,8 +137,15 @@
 
     .epub-chapter {
       break-after: column;
+      color: inherit !important;
+      font-family: inherit !important;
       margin: 0;
       padding: 0;
+    }
+
+    .epub-chapter * {
+      color: inherit !important;
+      font-family: inherit !important;
     }
 
     .epub-chapter > :first-child {
@@ -171,6 +178,12 @@
       height: auto;
     }
 
+    .epub-highlight {
+      border-radius: 2px;
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
+    }
+
     #status {
       min-height: 34px;
       padding: 0 20px max(14px, env(safe-area-inset-bottom, 0));
@@ -196,6 +209,26 @@
       padding: 4px;
       background: rgba(255, 255, 255, 0.96);
       box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+    }
+
+    #highlight-colors {
+      display: grid;
+      grid-template-columns: repeat(7, 22px);
+      gap: 5px;
+      padding: 5px;
+    }
+
+    .highlight-swatch {
+      width: 22px;
+      height: 22px;
+      border: 1px solid rgba(0, 0, 0, 0.22);
+      border-radius: 999px;
+      background: var(--swatch-color);
+      cursor: pointer;
+    }
+
+    .highlight-swatch:hover {
+      box-shadow: 0 0 0 2px rgba(17, 17, 17, 0.12);
     }
 
     #discuss {
@@ -257,6 +290,15 @@
     <iframe id="mark" title="Mark" src="/mark"></iframe>
   </main>
   <div id="menu" hidden>
+    <div id="highlight-colors" role="group" aria-label="Highlight color">
+      <button class="highlight-swatch" type="button" aria-label="Highlight peach" data-highlight-color="#f4cbb9" style="--swatch-color: #f4cbb9"></button>
+      <button class="highlight-swatch" type="button" aria-label="Highlight beige" data-highlight-color="#fff8ed" style="--swatch-color: #fff8ed"></button>
+      <button class="highlight-swatch" type="button" aria-label="Highlight green" data-highlight-color="#c9e1ce" style="--swatch-color: #c9e1ce"></button>
+      <button class="highlight-swatch" type="button" aria-label="Highlight blue" data-highlight-color="#c8def1" style="--swatch-color: #c8def1"></button>
+      <button class="highlight-swatch" type="button" aria-label="Highlight purple" data-highlight-color="#ddcfed" style="--swatch-color: #ddcfed"></button>
+      <button class="highlight-swatch" type="button" aria-label="Highlight gray" data-highlight-color="#dfddd9" style="--swatch-color: #dfddd9"></button>
+      <button class="highlight-swatch" type="button" aria-label="Highlight yellow" data-highlight-color="#fff3a3" style="--swatch-color: #fff3a3"></button>
+    </div>
     <button id="discuss" type="button">Discuss with Mark</button>
   </div>
 
@@ -272,14 +314,22 @@
     const markFrame = document.getElementById("mark");
     const menu = document.getElementById("menu");
     const discussButton = document.getElementById("discuss");
+    const highlightColors = document.getElementById("highlight-colors");
 
+    const HIGHLIGHT_COLORS = new Set(["#f4cbb9", "#fff8ed", "#c9e1ce", "#c8def1", "#ddcfed", "#dfddd9", "#fff3a3"]);
     let sourceUrl = "";
     let requestedName = "Book";
     let bookTitle = "Book";
+    let bookId = 0;
     let pageCount = 0;
     let pageIndex = 0;
     let lastSelection = "";
+    let lastSelectionRange = null;
     let resizeTimer = 0;
+    let saveTimer = 0;
+    let suppressSessionSave = false;
+    let markHistory = [];
+    let highlights = [];
     const objectUrls = new Map();
 
     function cleanText(value) {
@@ -288,6 +338,55 @@
 
     function cleanName(value) {
       return cleanText(String(value || "").replace(/\.epub$/i, "")) || "Book";
+    }
+
+    function normalizeHighlightColor(value) {
+      const color = String(value || "").trim().toLowerCase();
+      return HIGHLIGHT_COLORS.has(color) ? color : "";
+    }
+
+    function normalizePosition(value) {
+      if (!value || typeof value !== "object") return { pageIndex: 0 };
+      const index = Number(value.pageIndex);
+      return { pageIndex: Number.isInteger(index) && index >= 0 ? index : 0 };
+    }
+
+    function normalizeHighlights(value) {
+      const list = Array.isArray(value) ? value : [];
+      return list.map((highlight) => {
+        if (!highlight || typeof highlight !== "object") return null;
+        const id = String(highlight.id || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 80);
+        const start = Number(highlight.start);
+        const end = Number(highlight.end);
+        const color = normalizeHighlightColor(highlight.color);
+        if (!id || !Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end <= start || !color) return null;
+        return {
+          id,
+          start,
+          end,
+          color,
+          text: cleanText(highlight.text || "")
+        };
+      }).filter(Boolean);
+    }
+
+    function normalizeMarkHistory(value) {
+      const list = Array.isArray(value) ? value : [];
+      return list.map((message) => {
+        if (!message || typeof message !== "object") return null;
+        const role = message.role === "assistant" ? "assistant" : message.role === "user" ? "user" : "";
+        const content = String(message.content || "").trim();
+        return role && content ? { role, content } : null;
+      }).filter(Boolean).slice(-80);
+    }
+
+    function applyBookSession(book) {
+      if (!book || typeof book !== "object") return;
+      bookId = Number.isInteger(Number(book.id)) ? Number(book.id) : bookId;
+      highlights = normalizeHighlights(book.highlights);
+      markHistory = normalizeMarkHistory(book.markHistory);
+      const position = normalizePosition(book.position);
+      pageIndex = position.pageIndex;
     }
 
     function normalizeUrl(value) {
@@ -352,6 +451,7 @@
           const data = await response.json();
           if (data && data.book && data.book.id && normalizeUrl(data.book.src)) {
             registerBook(data.book.src, data.book.name);
+            applyBookSession(data.book);
             return data;
           }
         }
@@ -370,6 +470,7 @@
           const data = await response.json();
           if (data && data.book && normalizeUrl(data.book.src)) {
             registerBook(data.book.src, data.book.name);
+            applyBookSession(data.book);
             return data.book;
           }
         }
@@ -378,6 +479,34 @@
       }
       const local = readBookRegistry()[id - 1];
       return local ? { id, src: local.src, name: local.name } : null;
+    }
+
+    function sessionPayload() {
+      return {
+        id: bookId,
+        position: { pageIndex, updatedAt: Date.now() },
+        highlights,
+        markHistory
+      };
+    }
+
+    async function saveBookSessionNow() {
+      if (!bookId || suppressSessionSave) return;
+      try {
+        await fetch("/api/books", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(sessionPayload())
+        });
+      } catch (error) {
+        console.warn("Could not save book session:", error);
+      }
+    }
+
+    function queueBookSessionSave() {
+      if (!bookId || suppressSessionSave) return;
+      window.clearTimeout(saveTimer);
+      saveTimer = window.setTimeout(saveBookSessionNow, 500);
     }
 
     function getPathBookId() {
@@ -394,6 +523,7 @@
         const registered = await registerBookGlobally(querySource, queryName);
         sourceUrl = registered ? registered.book.src : querySource;
         requestedName = registered ? registered.book.name : queryName;
+        if (registered) applyBookSession(registered.book);
         if (registered && registered.book.id && location.pathname !== `/book/${registered.book.id}`) {
           history.replaceState(null, "", `/book/${registered.book.id}`);
         }
@@ -402,6 +532,7 @@
         if (entry) {
           sourceUrl = normalizeUrl(entry.src);
           requestedName = entry.name || "Book";
+          applyBookSession(entry);
         }
       } else {
         requestedName = queryName;
@@ -578,6 +709,14 @@
       });
     }
 
+    function stripReaderOverrides(css) {
+      return String(css || "").replace(/(^|[;{])\s*(font-family|color)\s*:[^;{}]+;?/gi, "$1");
+    }
+
+    function prepareChapterCss(css, base, zip) {
+      return scopeCss(stripReaderOverrides(rewriteCssUrls(css, base, zip)));
+    }
+
     function scopeCss(css) {
       const scoped = [];
       let buffer = "";
@@ -639,6 +778,10 @@
         Array.from(node.attributes).forEach((attribute) => {
           if (/^on/i.test(attribute.name)) node.removeAttribute(attribute.name);
         });
+        if (node.hasAttribute("style")) {
+          node.style.removeProperty("font-family");
+          node.style.removeProperty("color");
+        }
       });
 
       doc.querySelectorAll("link[rel~='stylesheet']").forEach((link) => {
@@ -646,14 +789,14 @@
         const cssPath = href ? joinPath(base, href) : "";
         if (cssPath && cssByPath.has(cssPath)) {
           const style = document.createElement("style");
-          style.textContent = scopeCss(rewriteCssUrls(cssByPath.get(cssPath), dirname(cssPath), zip));
+          style.textContent = prepareChapterCss(cssByPath.get(cssPath), dirname(cssPath), zip);
           chapter.appendChild(style);
         }
         link.remove();
       });
 
       doc.querySelectorAll("style").forEach((styleNode) => {
-        styleNode.textContent = scopeCss(rewriteCssUrls(styleNode.textContent, base, zip));
+        styleNode.textContent = prepareChapterCss(styleNode.textContent, base, zip);
       });
 
       doc.querySelectorAll("img, image, source").forEach((node) => {
@@ -694,6 +837,98 @@
       pageCount = Math.max(1, Math.ceil((flowElement.scrollWidth + gap) / (width + gap)));
       pageIndex = Math.max(0, Math.min(pageIndex, pageCount - 1));
       renderPage();
+    }
+
+    function textNodesInFlow() {
+      const nodes = [];
+      const walker = document.createTreeWalker(flowElement, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) nodes.push(walker.currentNode);
+      return nodes;
+    }
+
+    function rangeOffsets(range) {
+      const nodes = textNodesInFlow();
+      let offset = 0;
+      let start = -1;
+      let end = -1;
+      for (const node of nodes) {
+        if (node === range.startContainer) start = offset + range.startOffset;
+        if (node === range.endContainer) end = offset + range.endOffset;
+        offset += node.nodeValue.length;
+      }
+      return start >= 0 && end > start ? { start, end } : null;
+    }
+
+    function rangeFromOffsets(start, end) {
+      const nodes = textNodesInFlow();
+      let offset = 0;
+      let startNode = null;
+      let endNode = null;
+      let startOffset = 0;
+      let endOffset = 0;
+      for (const node of nodes) {
+        const nextOffset = offset + node.nodeValue.length;
+        if (!startNode && start >= offset && start <= nextOffset) {
+          startNode = node;
+          startOffset = start - offset;
+        }
+        if (!endNode && end >= offset && end <= nextOffset) {
+          endNode = node;
+          endOffset = end - offset;
+          break;
+        }
+        offset = nextOffset;
+      }
+      if (!startNode || !endNode) return null;
+      const range = document.createRange();
+      range.setStart(startNode, startOffset);
+      range.setEnd(endNode, endOffset);
+      return range;
+    }
+
+    function applyHighlight(highlight) {
+      const range = rangeFromOffsets(highlight.start, highlight.end);
+      if (!range || range.collapsed) return false;
+      const span = document.createElement("span");
+      span.className = "epub-highlight";
+      span.dataset.highlightId = highlight.id;
+      span.style.backgroundColor = highlight.color;
+      try {
+        range.surroundContents(span);
+      } catch (error) {
+        const fragment = range.extractContents();
+        span.appendChild(fragment);
+        range.insertNode(span);
+      }
+      return true;
+    }
+
+    function applySavedHighlights() {
+      flowElement.querySelectorAll(".epub-highlight").forEach((node) => node.replaceWith(...node.childNodes));
+      normalizeHighlights(highlights)
+        .sort((left, right) => right.start - left.start)
+        .forEach(applyHighlight);
+    }
+
+    function createHighlight(color) {
+      const selection = window.getSelection();
+      const range = lastSelectionRange || (selection && selection.rangeCount ? selection.getRangeAt(0).cloneRange() : null);
+      const normalizedColor = normalizeHighlightColor(color);
+      if (!range || !normalizedColor || !pageElement.contains(range.commonAncestorContainer)) return;
+      const offsets = rangeOffsets(range);
+      if (!offsets) return;
+      const highlight = {
+        id: `h${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+        ...offsets,
+        color: normalizedColor,
+        text: cleanText(range.toString()).slice(0, 500)
+      };
+      highlights = [...highlights, highlight].slice(-500);
+      applyHighlight(highlight);
+      if (selection) selection.removeAllRanges();
+      lastSelectionRange = null;
+      hideMenu();
+      queueBookSessionSave();
     }
 
     async function loadBook() {
@@ -751,7 +986,7 @@
       }
 
       if (!cleanText(flowElement.textContent)) throw new Error("This book has no readable text.");
-      pageIndex = 0;
+      applySavedHighlights();
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       recalculatePages();
       sendBookContext();
@@ -776,12 +1011,13 @@
       pageIndex = nextIndex;
       hideMenu();
       renderPage();
+      queueBookSessionSave();
     }
 
     function sendBookContext() {
       markFrame.contentWindow.postMessage({
         type: "skydive:book-context",
-        book: { title: bookTitle }
+        book: { id: bookId, title: bookTitle, markHistory }
       }, window.location.origin);
     }
 
@@ -834,12 +1070,19 @@
     prevButton.addEventListener("click", () => movePage(-1));
     nextButton.addEventListener("click", () => movePage(1));
     discussButton.addEventListener("click", discussSelection);
+    highlightColors.addEventListener("click", (event) => {
+      const swatch = event.target.closest(".highlight-swatch");
+      if (!swatch || !highlightColors.contains(swatch)) return;
+      createHighlight(swatch.dataset.highlightColor || "");
+    });
 
     pageElement.addEventListener("contextmenu", (event) => {
       const text = selectedText();
       if (!text) return;
       event.preventDefault();
       lastSelection = text;
+      const selection = window.getSelection();
+      lastSelectionRange = selection && selection.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
       menu.hidden = false;
       menu.style.left = `${Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 10)}px`;
       menu.style.top = `${Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 10)}px`;
@@ -856,6 +1099,12 @@
     });
 
     markFrame.addEventListener("load", sendBookContext);
+    window.addEventListener("message", (event) => {
+      if (event.origin !== window.location.origin || !event.data || typeof event.data !== "object") return;
+      if (event.data.type !== "skydive:mark-history") return;
+      markHistory = normalizeMarkHistory(event.data.history);
+      queueBookSessionSave();
+    });
     window.addEventListener("resize", () => {
       window.clearTimeout(resizeTimer);
       resizeTimer = window.setTimeout(recalculatePages, 140);

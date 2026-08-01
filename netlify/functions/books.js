@@ -4,6 +4,8 @@ const mongoUri = process.env.MONGODB_URI;
 const dbName = process.env.MONGODB_DB || "ZENBERRY_MAIN";
 const collectionName = process.env.MONGODB_BOOKS_COLLECTION || "SKYDIVE_BOOKS";
 const MAX_NAME_LENGTH = 500;
+const MAX_HIGHLIGHTS = 500;
+const MAX_MARK_HISTORY = 80;
 
 let collectionPromise = null;
 
@@ -27,7 +29,7 @@ function json(statusCode, body) {
     statusCode,
     headers: {
       "Access-Control-Allow-Headers": "Content-Type",
-      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
       "Access-Control-Allow-Origin": "*",
       "Cache-Control": "no-store",
       "Content-Type": "application/json"
@@ -54,7 +56,58 @@ function normalizeName(value) {
 }
 
 function publicBook(book) {
-  return book ? { id: book.id, src: book.src, name: book.name || "Book" } : null;
+  return book ? {
+    id: book.id,
+    src: book.src,
+    name: book.name || "Book",
+    position: normalizePosition(book.position),
+    highlights: normalizeHighlights(book.highlights),
+    markHistory: normalizeMarkHistory(book.markHistory)
+  } : null;
+}
+
+function normalizePosition(value) {
+  if (!value || typeof value !== "object") return { pageIndex: 0 };
+  const pageIndex = Number(value.pageIndex);
+  return {
+    pageIndex: Number.isInteger(pageIndex) && pageIndex >= 0 ? Math.min(pageIndex, 100000) : 0,
+    updatedAt: Number.isFinite(Number(value.updatedAt)) ? Number(value.updatedAt) : Date.now()
+  };
+}
+
+function normalizeColor(value) {
+  const color = String(value || "").trim().toLowerCase();
+  return /^#[0-9a-f]{6}$/.test(color) ? color : "";
+}
+
+function normalizeHighlights(value) {
+  const list = Array.isArray(value) ? value : [];
+  return list.slice(-MAX_HIGHLIGHTS).map((highlight) => {
+    if (!highlight || typeof highlight !== "object") return null;
+    const id = String(highlight.id || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 80);
+    const start = Number(highlight.start);
+    const end = Number(highlight.end);
+    const color = normalizeColor(highlight.color);
+    if (!id || !Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end <= start || !color) return null;
+    return {
+      id,
+      start: Math.min(start, 20000000),
+      end: Math.min(end, 20000000),
+      color,
+      text: String(highlight.text || "").replace(/\s+/g, " ").trim().slice(0, 500)
+    };
+  }).filter(Boolean);
+}
+
+function normalizeMarkHistory(value) {
+  const list = Array.isArray(value) ? value : [];
+  return list.slice(-MAX_MARK_HISTORY).map((message) => {
+    if (!message || typeof message !== "object") return null;
+    const role = message.role === "assistant" ? "assistant" : message.role === "user" ? "user" : "";
+    const content = String(message.content || "").trim().slice(0, 12000);
+    if (!role || !content) return null;
+    return { role, content };
+  }).filter(Boolean);
 }
 
 async function nextBookId(collection) {
@@ -109,6 +162,25 @@ exports.handler = async (event) => {
       const collection = await getCollection();
       const book = await registerBook(collection, src, normalizeName(payload.name));
       return json(200, { book: publicBook(book) });
+    }
+
+    if (event.httpMethod === "PATCH") {
+      const payload = event.body ? JSON.parse(event.body) : {};
+      const id = Number(payload.id);
+      if (!Number.isInteger(id) || id < 1) return json(400, { error: "A valid book id is required." });
+
+      const set = { sessionUpdatedAt: Date.now() };
+      if (Object.prototype.hasOwnProperty.call(payload, "position")) set.position = normalizePosition(payload.position);
+      if (Object.prototype.hasOwnProperty.call(payload, "highlights")) set.highlights = normalizeHighlights(payload.highlights);
+      if (Object.prototype.hasOwnProperty.call(payload, "markHistory")) set.markHistory = normalizeMarkHistory(payload.markHistory);
+      const collection = await getCollection();
+      const result = await collection.findOneAndUpdate(
+        { kind: "book", id },
+        { $set: set },
+        { returnDocument: "after", projection: { _id: 0, id: 1, src: 1, name: 1, position: 1, highlights: 1, markHistory: 1 } }
+      );
+      if (!result) return json(404, { error: "Book not found." });
+      return json(200, { book: publicBook(result) });
     }
 
     return json(405, { error: "Method not allowed." });
