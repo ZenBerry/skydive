@@ -530,7 +530,7 @@
       if (!bookId || suppressSessionSave) return;
       try {
         const response = await fetch("/api/books", {
-          method: "PATCH",
+          method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(sessionPayload())
         });
@@ -545,7 +545,7 @@
       window.clearTimeout(saveTimer);
       try {
         fetch("/api/books", {
-          method: "PATCH",
+          method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(sessionPayload()),
           keepalive: true
@@ -728,45 +728,41 @@
       return elementsByLocalName(root, name)[0] || null;
     }
 
-    function makeResourceUrl(path, zip) {
+    async function makeResourceUrl(path, zip) {
       if (!path || !zip.entries.has(path)) return "";
       if (objectUrls.has(path)) return objectUrls.get(path);
-      const placeholder = `skydive-epub-resource:${objectUrls.size}`;
-      objectUrls.set(path, placeholder);
-      zip.read(path).then((bytes) => {
+      try {
+        const bytes = await zip.read(path);
         const blobUrl = URL.createObjectURL(new Blob([bytes], { type: mimeFromPath(path) }));
         objectUrls.set(path, blobUrl);
-        flowElement.querySelectorAll(`[src="${placeholder}"], [href="${placeholder}"]`).forEach((node) => {
-          if (node.hasAttribute("src")) node.setAttribute("src", blobUrl);
-          if (node.hasAttribute("href")) node.setAttribute("href", blobUrl);
-        });
-        flowElement.querySelectorAll("style").forEach((style) => {
-          if (style.textContent.includes(placeholder)) {
-            style.textContent = style.textContent.split(placeholder).join(blobUrl);
-          }
-        });
-      }).catch((error) => {
+        return blobUrl;
+      } catch (error) {
         console.warn("Could not load EPUB resource:", path, error);
-      });
-      return placeholder;
+        return "";
+      }
     }
 
-    function rewriteCssUrls(css, base, zip) {
-      return String(css || "").replace(/url\((['"]?)([^'")]+)\1\)/gi, (match, quote, rawUrl) => {
+    async function rewriteCssUrls(css, base, zip) {
+      const source = String(css || "");
+      const matches = Array.from(source.matchAll(/url\((['"]?)([^'")]+)\1\)/gi));
+      let rewritten = source;
+      for (const match of matches) {
+        const rawUrl = match[2];
         const value = rawUrl.trim();
-        if (!value || /^(data:|blob:|https?:|about:|#)/i.test(value)) return match;
+        if (!value || /^(data:|blob:|https?:|about:|#)/i.test(value)) continue;
         const resourcePath = joinPath(base, value);
-        const url = makeResourceUrl(resourcePath, zip);
-        return url ? `url("${url}")` : match;
-      });
+        const url = await makeResourceUrl(resourcePath, zip);
+        rewritten = rewritten.split(match[0]).join(url ? `url("${url}")` : "none");
+      }
+      return rewritten;
     }
 
     function stripReaderOverrides(css) {
       return String(css || "").replace(/(^|[;{])\s*(font-family|color)\s*:[^;{}]+;?/gi, "$1");
     }
 
-    function prepareChapterCss(css, base, zip) {
-      return scopeCss(stripReaderOverrides(rewriteCssUrls(css, base, zip)));
+    async function prepareChapterCss(css, base, zip) {
+      return scopeCss(stripReaderOverrides(await rewriteCssUrls(css, base, zip)));
     }
 
     function scopeCss(css) {
@@ -809,17 +805,22 @@
       return scopedSelectors.length ? `${scopedSelectors.join(", ")} ${body}` : rule;
     }
 
-    function rewriteSrcset(value, base, zip) {
-      return String(value || "").split(",").map((part) => {
+    async function rewriteSrcset(value, base, zip) {
+      const parts = [];
+      for (const part of String(value || "").split(",")) {
         const pieces = part.trim().split(/\s+/);
         const url = pieces.shift();
-        if (!url || /^(data:|blob:|https?:|about:|#)/i.test(url)) return part.trim();
-        const resourceUrl = makeResourceUrl(joinPath(base, url), zip);
-        return [resourceUrl || url, ...pieces].join(" ");
-      }).join(", ");
+        if (!url || /^(data:|blob:|https?:|about:|#)/i.test(url)) {
+          parts.push(part.trim());
+          continue;
+        }
+        const resourceUrl = await makeResourceUrl(joinPath(base, url), zip);
+        if (resourceUrl) parts.push([resourceUrl, ...pieces].join(" "));
+      }
+      return parts.join(", ");
     }
 
-    function sanitizeChapterHtml(html, path, zip, cssByPath) {
+    async function sanitizeChapterHtml(html, path, zip, cssByPath) {
       const doc = new DOMParser().parseFromString(html, "text/html");
       const base = dirname(path);
       const chapter = document.createElement("section");
@@ -836,30 +837,39 @@
         }
       });
 
-      doc.querySelectorAll("link[rel~='stylesheet']").forEach((link) => {
+      for (const link of doc.querySelectorAll("link[rel~='stylesheet']")) {
         const href = attr(link, "href");
         const cssPath = href ? joinPath(base, href) : "";
         if (cssPath && cssByPath.has(cssPath)) {
           const style = document.createElement("style");
-          style.textContent = prepareChapterCss(cssByPath.get(cssPath), dirname(cssPath), zip);
+          style.textContent = await prepareChapterCss(cssByPath.get(cssPath), dirname(cssPath), zip);
           chapter.appendChild(style);
         }
         link.remove();
-      });
+      }
 
-      doc.querySelectorAll("style").forEach((styleNode) => {
-        styleNode.textContent = prepareChapterCss(styleNode.textContent, base, zip);
-      });
+      for (const styleNode of doc.querySelectorAll("style")) {
+        styleNode.textContent = await prepareChapterCss(styleNode.textContent, base, zip);
+      }
 
-      doc.querySelectorAll("img, image, source").forEach((node) => {
+      for (const node of doc.querySelectorAll("img, image, source")) {
         const src = attr(node, "src") || attr(node, "href") || attr(node, "xlink:href");
         if (src && !/^(data:|blob:|https?:|about:|#)/i.test(src)) {
-          const url = makeResourceUrl(joinPath(base, src), zip);
-          if (node.hasAttribute("src")) node.setAttribute("src", url);
-          else node.setAttribute("href", url);
+          const url = await makeResourceUrl(joinPath(base, src), zip);
+          node.removeAttribute("xlink:href");
+          if (url && node.hasAttribute("src")) node.setAttribute("src", url);
+          else if (url) node.setAttribute("href", url);
+          else {
+            node.removeAttribute("src");
+            node.removeAttribute("href");
+          }
         }
-        if (node.hasAttribute("srcset")) node.setAttribute("srcset", rewriteSrcset(node.getAttribute("srcset"), base, zip));
-      });
+        if (node.hasAttribute("srcset")) {
+          const srcset = await rewriteSrcset(node.getAttribute("srcset"), base, zip);
+          if (srcset) node.setAttribute("srcset", srcset);
+          else node.removeAttribute("srcset");
+        }
+      }
 
       doc.querySelectorAll("a[href]").forEach((link) => {
         const href = attr(link, "href");
@@ -982,30 +992,8 @@
       return parts.length > 0;
     }
 
-    function applyHighlight(highlight) {
-      const range = rangeFromOffsets(highlight.start, highlight.end);
-      if (!range || range.collapsed) return false;
-      if (!("CSS" in window) || !CSS.highlights || !("Highlight" in window)) {
-        return applyFallbackHighlight(highlight);
-      }
-      return true;
-    }
-
     function applySavedHighlights() {
       clearFallbackHighlights();
-      if ("CSS" in window && CSS.highlights && "Highlight" in window) {
-        for (const name of HIGHLIGHT_COLORS.values()) CSS.highlights.delete(name);
-        const rangesByName = new Map();
-        normalizeHighlights(highlights).forEach((highlight) => {
-          const name = HIGHLIGHT_COLORS.get(highlight.color);
-          const range = rangeFromOffsets(highlight.start, highlight.end);
-          if (!name || !range || range.collapsed) return;
-          if (!rangesByName.has(name)) rangesByName.set(name, []);
-          rangesByName.get(name).push(range);
-        });
-        rangesByName.forEach((ranges, name) => CSS.highlights.set(name, new Highlight(...ranges)));
-        return;
-      }
       normalizeHighlights(highlights)
         .sort((left, right) => right.start - left.start)
         .forEach(applyFallbackHighlight);
@@ -1112,7 +1100,7 @@
       pageIndex = nextIndex;
       hideMenu();
       renderPage();
-      queueBookSessionSave();
+      void saveBookSessionNow();
     }
 
     function sendBookContext() {

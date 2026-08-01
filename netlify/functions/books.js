@@ -142,6 +142,25 @@ async function registerBook(collection, src, name) {
   }
 }
 
+function getSessionBookId(payload) {
+  const id = Number(payload.id);
+  return Number.isInteger(id) && id >= 1 ? id : 0;
+}
+
+async function updateBookSession(collection, id, payload) {
+  const set = { sessionUpdatedAt: Date.now() };
+  if (Object.prototype.hasOwnProperty.call(payload, "position")) set.position = normalizePosition(payload.position);
+  if (Object.prototype.hasOwnProperty.call(payload, "highlights")) set.highlights = normalizeHighlights(payload.highlights);
+  if (Object.prototype.hasOwnProperty.call(payload, "markHistory")) set.markHistory = normalizeMarkHistory(payload.markHistory);
+  const book = await collection.findOneAndUpdate(
+    { kind: "book", id },
+    { $set: set },
+    { returnDocument: "after", projection: { _id: 0, id: 1, src: 1, name: 1, position: 1, highlights: 1, markHistory: 1 } }
+  );
+  if (!book) return { error: json(404, { error: "Book not found." }) };
+  return { book };
+}
+
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return json(204, {});
 
@@ -160,6 +179,14 @@ exports.handler = async (event) => {
 
     if (event.httpMethod === "POST") {
       const payload = event.body ? JSON.parse(event.body) : {};
+      if (Object.prototype.hasOwnProperty.call(payload, "id")) {
+        const id = getSessionBookId(payload);
+        if (!id) return json(400, { error: "A valid book id is required." });
+        const collection = await getCollection();
+        const result = await updateBookSession(collection, id, payload);
+        if (result.error) return result.error;
+        return json(200, { book: publicBook(result.book) });
+      }
       const src = normalizeUrl(payload.src);
       if (!src) return json(400, { error: "A valid book URL is required." });
       const collection = await getCollection();
@@ -169,21 +196,12 @@ exports.handler = async (event) => {
 
     if (event.httpMethod === "PATCH") {
       const payload = event.body ? JSON.parse(event.body) : {};
-      const id = Number(payload.id);
-      if (!Number.isInteger(id) || id < 1) return json(400, { error: "A valid book id is required." });
-
-      const set = { sessionUpdatedAt: Date.now() };
-      if (Object.prototype.hasOwnProperty.call(payload, "position")) set.position = normalizePosition(payload.position);
-      if (Object.prototype.hasOwnProperty.call(payload, "highlights")) set.highlights = normalizeHighlights(payload.highlights);
-      if (Object.prototype.hasOwnProperty.call(payload, "markHistory")) set.markHistory = normalizeMarkHistory(payload.markHistory);
+      const id = getSessionBookId(payload);
+      if (!id) return json(400, { error: "A valid book id is required." });
       const collection = await getCollection();
-      const result = await collection.findOneAndUpdate(
-        { kind: "book", id },
-        { $set: set },
-        { returnDocument: "after", projection: { _id: 0, id: 1, src: 1, name: 1, position: 1, highlights: 1, markHistory: 1 } }
-      );
-      if (!result) return json(404, { error: "Book not found." });
-      return json(200, { book: publicBook(result) });
+      const result = await updateBookSession(collection, id, payload);
+      if (result.error) return result.error;
+      return json(200, { book: publicBook(result.book) });
     }
 
     return json(405, { error: "Method not allowed." });
