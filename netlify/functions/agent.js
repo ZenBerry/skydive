@@ -523,6 +523,7 @@ function applyLinkText(state, op) {
 
 function attributeReplacementNodes(nextState, currentState, creator) {
   const currentById = new Map(currentState.nodes.map((node) => [node.id, node]));
+  const nextIds = new Set(nextState.nodes.map((node) => node.id));
   nextState.nodes = nextState.nodes.map((node) => {
     const current = currentById.get(node.id);
     if (current && current.createdBy) return { ...node, createdBy: current.createdBy };
@@ -535,6 +536,13 @@ function attributeReplacementNodes(nextState, currentState, creator) {
     const copy = { ...node };
     delete copy.createdBy;
     return copy;
+  });
+  currentState.nodes.forEach((node) => {
+    if (nextIds.has(node.id)) return;
+    nextState.nodes.push({
+      ...node,
+      deletedAt: node.deletedAt || Date.now()
+    });
   });
   return nextState;
 }

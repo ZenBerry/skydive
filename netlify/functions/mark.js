@@ -23,6 +23,8 @@ const MAX_REQUEST_LENGTH = 120000;
 const MAX_ACTIONS = 2;
 const MAX_ACTION_RESULT_LENGTH = 80000;
 const REQUEST_BUDGET_MS = 50000;
+const MAX_SPACE_COMMAND_SPACES = 500;
+const MAX_COMMAND_RESULTS = 500;
 const ACTION_NAMES = new Set([
   "skydive_manifest",
   "skydive_list_spaces",
@@ -353,6 +355,60 @@ function quotedText(value) {
 function cleanSpaceSlug(value) {
   const slug = String(value || "").trim().replace(/^\/+/, "").replace(/\/+$/, "");
   return slug && slug.length <= 500 && !slug.includes("//") ? slug : "";
+}
+
+function getSpacePath(space) {
+  const slug = cleanSpaceSlug(space);
+  return slug ? `/${slug.split("/").map(encodeURIComponent).join("/")}` : "/";
+}
+
+function getNodePath(space, nodeId) {
+  const path = getSpacePath(space);
+  const id = String(nodeId || "").trim();
+  return id ? `${path}?n=${encodeURIComponent(id)}` : path;
+}
+
+function escapeMarkdownLinkText(value) {
+  return String(value || "").replace(/[[\]\\]/g, "").replace(/\s+/g, " ").trim();
+}
+
+function markdownLink(label, href) {
+  return `[${escapeMarkdownLinkText(label) || escapeMarkdownLinkText(href)}](${href})`;
+}
+
+function formatDate(timestamp, timeZone) {
+  const value = Number(timestamp) || 0;
+  if (!value) return "unknown date";
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: cleanTimeZone(timeZone, "UTC"),
+    day: "numeric",
+    month: "short",
+    year: "numeric"
+  }).format(new Date(value));
+}
+
+function spaceOwnerKey(createdBy) {
+  return createdBy && typeof createdBy === "object" && createdBy.id && createdBy.nickname
+    ? `user:${createdBy.id}`
+    : "everyone";
+}
+
+function spaceOwnerLabel(createdBy, viewer) {
+  if (!createdBy || typeof createdBy !== "object" || !createdBy.id || !createdBy.nickname) {
+    return "Owned by everyone:";
+  }
+  if (viewer && viewer.id && String(viewer.id) === String(createdBy.id)) {
+    return `Owned by you (${createdBy.nickname}):`;
+  }
+  return `Owned by ${createdBy.nickname}:`;
+}
+
+function hasSpaceContentOrHistory(space, read) {
+  if (Number(space && space.revision) > 0) return true;
+  const state = read && read.result && read.result.ok && read.result.data ? read.result.data.state : null;
+  const nodes = state && Array.isArray(state.nodes) ? state.nodes : [];
+  const lines = state && Array.isArray(state.lines) ? state.lines : [];
+  return nodes.some((node) => !node.deletedAt) || lines.some((line) => !line.deletedAt);
 }
 
 function extractSpaceSlug(value) {
@@ -704,6 +760,78 @@ async function searchNodes(event, args) {
     matches,
     truncated: matches.length >= 500
   };
+}
+
+async function listSpacesForSlashCommand(event, timeZone) {
+  const listResult = await callSkydive(event, "/api/agent?spaces=1");
+  if (!listResult.ok) return `I couldn’t list spaces: ${listResult.error || "Skydive returned an error."}`;
+  const { user: viewer } = await getSessionUserWithRefresh(event);
+  const spaces = Array.isArray(listResult.data && listResult.data.spaces)
+    ? listResult.data.spaces.filter((space) => !String(space.slug).startsWith("delorean/")).slice(0, MAX_SPACE_COMMAND_SPACES)
+    : [];
+  if (!spaces.length) return "I couldn’t find any active Skydive spaces.";
+
+  const reads = await mapWithConcurrency(spaces, 8, async (space) => ({
+    space,
+    result: await callSkydive(event, `/api/agent?space=${encodeURIComponent(space.slug)}`)
+  }));
+
+  const groups = new Map();
+  for (const read of reads) {
+    const space = read.space;
+    if (!hasSpaceContentOrHistory(space, read)) continue;
+    const ownerKey = spaceOwnerKey(space.createdBy);
+    if (!groups.has(ownerKey)) {
+      groups.set(ownerKey, {
+        label: spaceOwnerLabel(space.createdBy, viewer),
+        ownedByViewer: Boolean(viewer && space.createdBy && String(viewer.id) === String(space.createdBy.id)),
+        isEveryone: ownerKey === "everyone",
+        spaces: []
+      });
+    }
+    groups.get(ownerKey).spaces.push(space);
+  }
+
+  const orderedGroups = [...groups.values()].sort((left, right) => {
+    if (left.ownedByViewer !== right.ownedByViewer) return left.ownedByViewer ? -1 : 1;
+    if (left.isEveryone !== right.isEveryone) return left.isEveryone ? -1 : 1;
+    return left.label.localeCompare(right.label);
+  });
+  if (!orderedGroups.length) return "I found no spaces with items or history.";
+
+  return orderedGroups.map((group) => {
+    const lines = group.spaces
+      .sort((left, right) => (Number(right.updatedAt) || 0) - (Number(left.updatedAt) || 0))
+      .map((space) => `• ${markdownLink(space.slug, getSpacePath(space.slug))}, last modified ${formatDate(space.updatedAt, timeZone)}`);
+    return `${group.label}\n\n${lines.join("\n")}`;
+  }).join("\n\n");
+}
+
+async function findNodesForSlashCommand(event, query) {
+  const result = await searchNodes(event, { query, includeArchives: false });
+  if (!result.ok) return `I couldn’t search nodes: ${result.error || "Skydive returned an error."}`;
+  const matches = Array.isArray(result.matches) ? result.matches.slice(0, MAX_COMMAND_RESULTS) : [];
+  if (!matches.length) return `I found no nodes containing "${result.query}".`;
+  const lines = matches.map((match) => {
+    const label = String(match.text || `(${match.kind} node)`).replace(/\s+/g, " ").trim().slice(0, 140);
+    return `• ${markdownLink(label, getNodePath(match.space, match.nodeId))} in ${markdownLink(match.space, getSpacePath(match.space))}`;
+  });
+  const suffix = result.truncated ? "\n\nShowing the first 500 matching nodes." : "";
+  return `Nodes containing "${result.query}":\n${lines.join("\n")}${suffix}`;
+}
+
+async function handleSlashCommand(event, messages, timeZone) {
+  const latestRaw = unwrapContextualUserMessage(messages[messages.length - 1].content).trim();
+  const match = latestRaw.match(/^\/([a-z][a-z0-9_-]*)(?:\s+([\s\S]*))?$/i);
+  if (!match) return null;
+  const command = match[1].toLowerCase();
+  const argument = String(match[2] || "").trim();
+  if (command === "list") return listSpacesForSlashCommand(event, timeZone);
+  if (command === "find") {
+    if (!argument) return "Use `/find text` to search node text.";
+    return findNodesForSlashCommand(event, argument);
+  }
+  return null;
 }
 
 async function executeAction(event, name, args, defaultTimeZone) {
@@ -1141,6 +1269,8 @@ async function runPromptAgent(event, messages, systemInstruction, timeZone, dead
 
 async function runMark(event, messages, timeZone, debug = false) {
   const deadline = Date.now() + REQUEST_BUDGET_MS;
+  const slashCommand = await handleSlashCommand(event, messages, timeZone);
+  if (slashCommand) return slashCommand;
   const deterministic = await handleDeterministicSkydiveIntent(event, messages, timeZone);
   if (deterministic) return deterministic;
   const systemInstruction = buildSystemInstruction();

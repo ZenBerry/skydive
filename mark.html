@@ -96,6 +96,12 @@
       line-height: 1.42;
     }
 
+    .content a {
+      color: inherit;
+      text-decoration-thickness: 0.06em;
+      text-underline-offset: 0.16em;
+    }
+
     .content.secret-content {
       cursor: pointer;
       -webkit-text-security: disc;
@@ -538,6 +544,22 @@
       return "Mark";
     }
 
+    function appendLinkedText(parent, text) {
+      const source = String(text || "");
+      const pattern = /\[([^\]\n]{1,240})\]\((\/[^)\s]{0,1000})\)/g;
+      let lastIndex = 0;
+      let match;
+      while ((match = pattern.exec(source)) !== null) {
+        if (match.index > lastIndex) parent.append(document.createTextNode(source.slice(lastIndex, match.index)));
+        const link = document.createElement("a");
+        link.href = match[2];
+        link.textContent = match[1].replace(/\\([[\]\\])/g, "$1");
+        parent.append(link);
+        lastIndex = pattern.lastIndex;
+      }
+      if (lastIndex < source.length) parent.append(document.createTextNode(source.slice(lastIndex)));
+    }
+
     function addMessage(role, content, options = {}) {
       const article = document.createElement("article");
       article.className = `message ${role === "assistant" ? "mark" : "you"}${options.pending ? " pending" : ""}`;
@@ -548,7 +570,8 @@
 
       const body = document.createElement("div");
       body.className = "content";
-      body.textContent = content;
+      if (role === "assistant") appendLinkedText(body, content);
+      else body.textContent = content;
       if (options.secret) {
         body.classList.add("secret-content");
         body.title = "Click to show or hide";
@@ -677,7 +700,9 @@
         setSecretExpected(data.secretInput === true);
       } catch (error) {
         pending.classList.remove("pending");
-        pending.querySelector(".content").textContent = error.message || `${assistantName} could not answer right now.`;
+        const pendingContent = pending.querySelector(".content");
+        pendingContent.replaceChildren();
+        pendingContent.textContent = error.message || `${assistantName} could not answer right now.`;
       } finally {
         waiting = false;
         resizePrompt();
@@ -732,7 +757,7 @@
     }
 
     void loadAppVersion();
-    const greeting = "Hi. I’m Mark. Ask me anything—or ask me to work with a Skydive space.";
+    const greeting = params.get("notice") || "Hi. I’m Mark. Ask me anything—or ask me to work with a Skydive space.";
     renderCurrentUserBullet();
     addMessage("assistant", greeting, { speaker: currentAssistantName() });
     void loadCurrentUser();

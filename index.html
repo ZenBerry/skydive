@@ -1009,7 +1009,7 @@
     const MAX_NODE_LAYOUT_FONT_PX = 192;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 104; // Increment once for each commit.
+    const APP_VERSION = 105; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -1034,6 +1034,7 @@
     const RESERVED_SHARED_SPACE_SLUGS = new Set(["agents", "api"]);
     const SHARED_SPACE_PARTS = getSharedSpacePathParts();
     const SHARED_SPACE_SLUG = getSharedSpaceSlug();
+    const TARGET_NODE_ID = new URLSearchParams(window.location.search).get("n") || "";
     const DELOREAN_SPACE_INFO = getDeloreanSpaceInfo();
     const SHARED_POLL_DELAYS_MS = [2000, 5000, 10000, 30000];
     const HISTORY_LIMIT = 100;
@@ -4392,6 +4393,10 @@
       return `/${String(slug || "").split("/").map(encodeURIComponent).join("/")}`;
     }
 
+    function getMarkPathWithNotice(message) {
+      return `/mark?notice=${encodeURIComponent(message)}`;
+    }
+
     function getAbsoluteSpaceUrl(slug) {
       return new URL(getSpacePathFromSlug(slug), window.location.origin).href;
     }
@@ -7597,6 +7602,20 @@
       return applySharedState(data, options);
     }
 
+    function focusTargetNodeFromUrl() {
+      const targetId = typeof TARGET_NODE_ID === "string" ? TARGET_NODE_ID.trim() : "";
+      if (!targetId) return;
+      const node = getNodeById(targetId);
+      if (node) {
+        focusNodeFullScreen(node);
+        highlightNavigationTarget(node, 5000);
+        return;
+      }
+      if (!SHARED_SPACE_SLUG) return;
+      const spaceLink = `[${SHARED_SPACE_SLUG}](${getSpacePathFromSlug(SHARED_SPACE_SLUG)})`;
+      window.location.assign(getMarkPathWithNotice(`The node in question no longer exists at ${spaceLink}.`));
+    }
+
     function getSharedPollDelay() {
       return SHARED_POLL_DELAYS_MS[Math.min(sharedPollDelayIndex, SHARED_POLL_DELAYS_MS.length - 1)];
     }
@@ -7694,6 +7713,7 @@
         }
       } finally {
         initializeSessionViewport();
+        focusTargetNodeFromUrl();
         resetHistoryToCurrentState();
         await hideLoadingScreen();
       }

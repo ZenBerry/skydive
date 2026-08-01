@@ -10,6 +10,7 @@
 - 2026-07-11: Added a brief README note that user accounts are created through Mark at `/mark`, with nickname-first registration, optional hidden password input, MongoDB-backed sessions, and node attribution.
 - 2026-07-11: Expanded the README with short newcomer sections for canvas features, slash-command widgets, files/audio, math lines, Mark/agent capabilities, shared-space URLs, shortcuts, and context menus.
 - Global instruction: Increment `APP_VERSION` in `index.html` by 1 for every commit.
+- Global instruction: Treat Netlify Functions as a scarce shared resource. Avoid unattended polling, recursive retries, broad loops, or background flows that can keep invoking functions; prefer bounded operations, backoff, visibility/focus gates, and cheap deterministic exits.
 - 2026-07-11: Kept `package-lock.json` as the canonical dependency lockfile and ignored local dependency artifacts: `node_modules/`, `.pnpm-store/`, and fallback-generated `pnpm-lock.yaml`.
 - 2026-07-09: Added a deterministic Mark router for the full Skydive Agent Interface surface: manifest/capabilities, read, create text/command nodes, update/move/resize/delete, align/distribute, link text, and safe replace-state refusal. Bumped `APP_VERSION` to 95.
 - 2026-07-09: Added deterministic Mark node text search for queries like "items that say 'test'", surfaced non-JSON HTTP errors in `/mark?debug=true`, compacted search result history, and bumped `APP_VERSION` to 94.
