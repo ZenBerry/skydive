@@ -146,6 +146,23 @@
       }
     },
     {
+      "id": "days",
+      "version": "1.0.0",
+      "title": "Days Until",
+      "description": "Count calendar days until a date.",
+      "aliases": ["days-until", "until"],
+      "acceptsArgs": true,
+      "source": "static",
+      "dynamicExecutable": false,
+      "stateSchema": {
+        "type": "object",
+        "properties": {
+          "input": { "type": "string" },
+          "editing": { "type": "boolean" }
+        }
+      }
+    },
+    {
       "id": "today",
       "version": "1.0.0",
       "title": "Today",
