@@ -1014,7 +1014,7 @@
     const MAX_NODE_LAYOUT_FONT_PX = 192;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 113; // Increment once for each commit.
+    const APP_VERSION = 114; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -1080,6 +1080,7 @@
     let contextMenuWidget = null;
     let contextMenuLineId = null;
     let contextMenuSelectionRange = null;
+    let contextMenuSizeTargets = [];
     let copiedNodeBaseFontSize = null;
     let titleHookNodeId = "";
     let titleHookTimer = null;
@@ -2061,6 +2062,7 @@
       contextMenuNode = null;
       contextMenuWidget = null;
       contextMenuSelectionRange = null;
+      contextMenuSizeTargets = [];
       widgetColorPicker.hidden = true;
       nodeContextMenu.hidden = true;
     }
@@ -2141,17 +2143,18 @@
       }
     }
 
-    function getSingleSelectedNode() {
-      if (selectedNodes.size !== 1) return null;
-      const [node] = Array.from(selectedNodes);
-      return node instanceof HTMLElement && world.contains(node) && !isNodeDeleted(node)
-        ? node
-        : null;
+    function getContextMenuSizeTargets(node) {
+      const targets = selectedNodes.has(node) ? Array.from(selectedNodes) : [node];
+      return targets.filter((target) =>
+        target instanceof HTMLElement &&
+        world.contains(target) &&
+        !isNodeDeleted(target)
+      );
     }
 
-    function canPasteSizeToSelection() {
+    function canPasteSizeToTargets(targets) {
       return (
-        selectedNodes.size > 0 &&
+        targets.length > 0 &&
         Number.isFinite(copiedNodeBaseFontSize) &&
         copiedNodeBaseFontSize > 0
       );
@@ -2163,9 +2166,10 @@
       closeLinkNodeDialog();
       contextMenuNode = node;
       contextMenuWidget = eventTargetExternalLinkCard(eventTarget, node);
+      contextMenuSizeTargets = getContextMenuSizeTargets(node);
       contextMenuSelectionRange = isCommandNode(node) || contextMenuWidget ? null : getSelectionRangeWithinNode(node);
-      copySizeBtn.disabled = !getSingleSelectedNode();
-      pasteSizeBtn.disabled = !canPasteSizeToSelection();
+      copySizeBtn.disabled = contextMenuSizeTargets.length !== 1;
+      pasteSizeBtn.disabled = !canPasteSizeToTargets(contextMenuSizeTargets);
       linkSelectionBtn.disabled = !contextMenuSelectionRange;
       widgetColorPicker.hidden = !isWidgetColorable(contextMenuWidget || node);
       updateWidgetColorPicker(contextMenuWidget || node);
@@ -3592,14 +3596,10 @@
       return BASE_TEXT_PX / Math.pow(QUICK_RESIZE_STEP_FACTOR, level - QUICK_RESIZE_MIN_LEVEL);
     }
 
-    function animateSelectedNodesToSizeLevel(level, durationMs = QUICK_RESIZE_ANIMATION_DURATION_MS) {
-      if (!Number.isInteger(level) || level < QUICK_RESIZE_MIN_LEVEL || level > QUICK_RESIZE_MAX_LEVEL) {
-        return false;
-      }
-
+    function animateNodesToBaseFontSize(nodes, targetFontSize, durationMs = QUICK_RESIZE_ANIMATION_DURATION_MS) {
+      if (!Number.isFinite(targetFontSize) || targetFontSize <= 0) return false;
       cancelNodeLayoutAnimation();
-      const targetFontSize = getQuickResizeFontSize(level);
-      const snapshots = Array.from(selectedNodes)
+      const snapshots = Array.from(nodes)
         .filter((node) => node instanceof HTMLElement && world.contains(node) && !isNodeDeleted(node))
         .map((node) => ({
           node,
@@ -3647,6 +3647,14 @@
 
       nodeLayoutAnimationFrame = requestAnimationFrame(tick);
       return true;
+    }
+
+    function animateSelectedNodesToSizeLevel(level, durationMs = QUICK_RESIZE_ANIMATION_DURATION_MS) {
+      if (!Number.isInteger(level) || level < QUICK_RESIZE_MIN_LEVEL || level > QUICK_RESIZE_MAX_LEVEL) {
+        return false;
+      }
+
+      return animateNodesToBaseFontSize(selectedNodes, getQuickResizeFontSize(level), durationMs);
     }
 
     function measureNodeRenderedSizePx(node, fontSizePx) {
@@ -5016,22 +5024,9 @@
       return animateNodePositions(targets);
     }
 
-    function pasteSizeToSelectedNodes() {
-      if (!canPasteSizeToSelection()) return false;
-      cancelNodeLayoutAnimation();
-      let changed = false;
-      for (const node of selectedNodes) {
-        if (!(node instanceof HTMLElement) || !world.contains(node) || isNodeDeleted(node)) continue;
-        if (Math.abs(getNodeBaseFontSize(node) - copiedNodeBaseFontSize) <= 0.000001) continue;
-        node.dataset.baseFontSize = String(copiedNodeBaseFontSize);
-        renderNode(node);
-        changed = true;
-      }
-      if (!changed) return true;
-      requestLineRender();
-      refreshSelectionBounds();
-      scheduleAutosave();
-      return true;
+    function pasteSizeToNodes(nodes) {
+      if (!canPasteSizeToTargets(nodes)) return false;
+      return animateNodesToBaseFontSize(nodes, copiedNodeBaseFontSize);
     }
 
     function clearSelection() {
@@ -7087,15 +7082,16 @@
     });
 
     copySizeBtn.addEventListener("click", () => {
-      const node = getSingleSelectedNode();
+      const [node] = contextMenuSizeTargets;
       closeNodeContextMenu();
-      if (!node) return;
+      if (!(node instanceof HTMLElement)) return;
       copiedNodeBaseFontSize = getNodeBaseFontSize(node);
     });
 
     pasteSizeBtn.addEventListener("click", () => {
+      const targets = contextMenuSizeTargets.slice();
       closeNodeContextMenu();
-      pasteSizeToSelectedNodes();
+      pasteSizeToNodes(targets);
     });
 
     hookTitleBtn.addEventListener("click", () => {
