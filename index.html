@@ -887,6 +887,8 @@
   <div id="fit-target-right" class="fit-marker target" aria-hidden="true" hidden></div>
   <div id="node-context-menu" hidden>
     <button id="copy-node-id-btn" type="button">Copy node ID</button>
+    <button id="copy-size-btn" type="button">Copy size</button>
+    <button id="paste-size-btn" type="button">Paste size</button>
     <button id="hook-title-btn" type="button">Hook node to window title</button>
     <button id="draw-line-btn" type="button">Line</button>
     <button id="link-selection-btn" type="button">Link selection to node ID...</button>
@@ -945,6 +947,8 @@
     const openFileInput = document.getElementById("open-file-input");
     const nodeContextMenu = document.getElementById("node-context-menu");
     const copyNodeIdBtn = document.getElementById("copy-node-id-btn");
+    const copySizeBtn = document.getElementById("copy-size-btn");
+    const pasteSizeBtn = document.getElementById("paste-size-btn");
     const hookTitleBtn = document.getElementById("hook-title-btn");
     const drawLineBtn = document.getElementById("draw-line-btn");
     const linkSelectionBtn = document.getElementById("link-selection-btn");
@@ -1010,7 +1014,7 @@
     const MAX_NODE_LAYOUT_FONT_PX = 192;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 112; // Increment once for each commit.
+    const APP_VERSION = 113; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -1076,6 +1080,7 @@
     let contextMenuWidget = null;
     let contextMenuLineId = null;
     let contextMenuSelectionRange = null;
+    let copiedNodeBaseFontSize = null;
     let titleHookNodeId = "";
     let titleHookTimer = null;
     let titleHookWorker = null;
@@ -2136,6 +2141,22 @@
       }
     }
 
+    function getSingleSelectedNode() {
+      if (selectedNodes.size !== 1) return null;
+      const [node] = Array.from(selectedNodes);
+      return node instanceof HTMLElement && world.contains(node) && !isNodeDeleted(node)
+        ? node
+        : null;
+    }
+
+    function canPasteSizeToSelection() {
+      return (
+        selectedNodes.size > 0 &&
+        Number.isFinite(copiedNodeBaseFontSize) &&
+        copiedNodeBaseFontSize > 0
+      );
+    }
+
     function openNodeContextMenu(node, clientX, clientY, eventTarget = null) {
       closeLineContextMenu();
       closeCanvasContextMenu();
@@ -2143,6 +2164,8 @@
       contextMenuNode = node;
       contextMenuWidget = eventTargetExternalLinkCard(eventTarget, node);
       contextMenuSelectionRange = isCommandNode(node) || contextMenuWidget ? null : getSelectionRangeWithinNode(node);
+      copySizeBtn.disabled = !getSingleSelectedNode();
+      pasteSizeBtn.disabled = !canPasteSizeToSelection();
       linkSelectionBtn.disabled = !contextMenuSelectionRange;
       widgetColorPicker.hidden = !isWidgetColorable(contextMenuWidget || node);
       updateWidgetColorPicker(contextMenuWidget || node);
@@ -4993,6 +5016,24 @@
       return animateNodePositions(targets);
     }
 
+    function pasteSizeToSelectedNodes() {
+      if (!canPasteSizeToSelection()) return false;
+      cancelNodeLayoutAnimation();
+      let changed = false;
+      for (const node of selectedNodes) {
+        if (!(node instanceof HTMLElement) || !world.contains(node) || isNodeDeleted(node)) continue;
+        if (Math.abs(getNodeBaseFontSize(node) - copiedNodeBaseFontSize) <= 0.000001) continue;
+        node.dataset.baseFontSize = String(copiedNodeBaseFontSize);
+        renderNode(node);
+        changed = true;
+      }
+      if (!changed) return true;
+      requestLineRender();
+      refreshSelectionBounds();
+      scheduleAutosave();
+      return true;
+    }
+
     function clearSelection() {
       if (selectedNodes.size === 0) {
         selectionBoundsWorld = null;
@@ -7045,6 +7086,18 @@
       }
     });
 
+    copySizeBtn.addEventListener("click", () => {
+      const node = getSingleSelectedNode();
+      closeNodeContextMenu();
+      if (!node) return;
+      copiedNodeBaseFontSize = getNodeBaseFontSize(node);
+    });
+
+    pasteSizeBtn.addEventListener("click", () => {
+      closeNodeContextMenu();
+      pasteSizeToSelectedNodes();
+    });
+
     hookTitleBtn.addEventListener("click", () => {
       const node = contextMenuNode;
       closeNodeContextMenu();
@@ -7172,6 +7225,11 @@
 
     groupSelectionBox.addEventListener("contextmenu", (event) => {
       event.preventDefault();
+      event.stopPropagation();
+      const [node] = Array.from(selectedNodes);
+      if (node instanceof HTMLElement && world.contains(node) && !isNodeDeleted(node)) {
+        openNodeContextMenu(node, event.clientX, event.clientY);
+      }
     });
 
     groupSelectionBox.addEventListener("pointerdown", (event) => {
