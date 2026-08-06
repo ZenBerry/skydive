@@ -454,6 +454,7 @@ function defaultCommandState(commandId, text) {
   if (commandId === "stw") return { running: false, startedAt: null, elapsedMs: 0 };
   if (commandId === "timer") return { durationMs: 0, remainingMs: 0, running: false, startedAt: null, completed: false, completedAt: null, alarmed: false, input: quotedText(text) };
   if (commandId === "today") return {};
+  if (commandId === "days" || commandId === "business-days") return { input: quotedText(text), editing: false };
   if (commandId === "delorean") return { status: "idle", input: quotedText(text), durationMs: 0, label: "", createdAt: Date.now(), targetAt: null, targetSlug: "", targetUrl: "", sourceSlug: "", error: "" };
   return {};
 }
@@ -1085,9 +1086,9 @@ async function handleDeterministicSkydiveIntent(event, messages, timeZone) {
     return formatApplyResult(`created "${text}"`, result);
   }
 
-  if (space && /\b(create|add|make|insert|new)\b/.test(latest) && /\b(command|timer|stopwatch|recorder|file|today|date|delorean)\b/.test(latest)) {
+  if (space && /\b(create|add|make|insert|new)\b/.test(latest) && /\b(command|timer|stopwatch|recorder|file|today|date|delorean|days?|business days?|bdays?|workdays?)\b/.test(latest)) {
     const command = commandDefinitionFor(latestRaw);
-    if (!command) return "I can create a command node, but I need a known command name like timer, stopwatch, recorder, file, delorean, or today.";
+    if (!command) return "I can create a command node, but I need a known command name like timer, stopwatch, recorder, file, delorean, days until, business days until, or today.";
     const result = await applyOpsWithFreshRead(event, space, (state) => {
       const position = nextNodePosition(state);
       return [{

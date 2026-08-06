@@ -163,6 +163,23 @@
       }
     },
     {
+      "id": "business-days",
+      "version": "1.0.0",
+      "title": "Business Days Until",
+      "description": "Count weekdays until a date.",
+      "aliases": ["business-days-until", "business-days-left", "bdays", "workdays"],
+      "acceptsArgs": true,
+      "source": "static",
+      "dynamicExecutable": false,
+      "stateSchema": {
+        "type": "object",
+        "properties": {
+          "input": { "type": "string" },
+          "editing": { "type": "boolean" }
+        }
+      }
+    },
+    {
       "id": "today",
       "version": "1.0.0",
       "title": "Today",
