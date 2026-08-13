@@ -334,14 +334,10 @@
     }
 
     .external-link-label {
-      display: none;
-    }
-
-    .external-link-card::before {
-      content: attr(data-display-label);
       overflow: hidden;
       color: #4b3b2d;
       display: block;
+      cursor: pointer;
       font: 500 0.78em/1.16 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
       text-decoration: underline;
       text-overflow: ellipsis;
@@ -1015,7 +1011,7 @@
     const MAX_NODE_LAYOUT_FONT_PX = 192;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 115; // Increment once for each commit.
+    const APP_VERSION = 116; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -1824,6 +1820,11 @@
       card.dataset.displayLabel = getExternalLinkDisplayLabel(href, label);
       card.replaceChildren();
       applyWidgetColor(card);
+
+      const displayLabel = document.createElement("span");
+      displayLabel.className = "external-link-label";
+      displayLabel.textContent = card.dataset.displayLabel;
+      card.appendChild(displayLabel);
 
       const actions = document.createElement("span");
       actions.className = "external-link-actions";
@@ -4049,6 +4050,12 @@
       return Boolean(target.closest("button, input, textarea, select"));
     }
 
+    function isExternalLinkLabelTarget(card, target) {
+      if (!(target instanceof Element)) return false;
+      const label = target.closest(".external-link-label");
+      return Boolean(label && card.contains(label));
+    }
+
     function attachExternalLinkCardPointerHandlers(card) {
       card.addEventListener("pointerdown", (event) => {
         if (event.button !== 0 || isExternalLinkControlTarget(event.target)) return;
@@ -4068,7 +4075,7 @@
           startClientY: event.clientY,
           dragOffsetX: Number(node.dataset.x) - pointer.x,
           dragOffsetY: Number(node.dataset.y) - pointer.y,
-          href: normalizeExternalHref(card.dataset.href || ""),
+          href: isExternalLinkLabelTarget(card, event.target) ? normalizeExternalHref(card.dataset.href || "") : "",
           moved: false
         };
         card.setPointerCapture(event.pointerId);
@@ -4170,6 +4177,8 @@
         event.stopPropagation();
         return true;
       }
+
+      if (!isExternalLinkLabelTarget(card, event.target)) return false;
 
       const href = normalizeExternalHref(card.dataset.href || "");
       if (!href) return false;
