@@ -1011,7 +1011,7 @@
     const MAX_NODE_LAYOUT_FONT_PX = 192;
     const STORAGE_KEY = "mindmap.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 116; // Increment once for each commit.
+    const APP_VERSION = 117; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -6810,7 +6810,9 @@
         if (event.target instanceof Element) {
           const externalLinkCard = event.target.closest(".external-link-card");
           if (externalLinkCard && event.target.closest("button, input, textarea, select")) return;
-          pendingExternalLinkHref = normalizeExternalHref(externalLinkCard ? externalLinkCard.dataset.href : "");
+          pendingExternalLinkHref = externalLinkCard && isExternalLinkLabelTarget(externalLinkCard, event.target)
+            ? normalizeExternalHref(externalLinkCard.dataset.href || "")
+            : "";
         }
         if (isCommandNode(node) && isCommandInteractiveTarget(event.target)) return;
         if (selectedNodes.size > 0 && !selectedNodes.has(node)) {
