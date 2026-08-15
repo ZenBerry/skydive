@@ -1,5 +1,9 @@
 # Codex Notes
 
+- 2026-08-15: Made the shared widget shell radius override apply to external-link widgets too, so link widgets match command widget corner radii. Bumped `APP_VERSION` to 121.
+- 2026-08-15: Added a dedicated shared `--widget-button-radius` set to pill-round corners for command and external-link widget buttons, leaving the hand-tuned shell/control radii intact. Bumped `APP_VERSION` to 120.
+- 2026-08-15: Increased shared widget shell/control radii while keeping progressive squircle corner rendering, making command widgets and external-link widgets feel more Apple-like. Bumped `APP_VERSION` to 119.
+- 2026-08-15: Added progressive `corner-shape: squircle` styling for command widget shells, controls, and external link widgets so supported browsers render Apple-like continuous corners while older browsers keep the existing border-radius fallback. Bumped `APP_VERSION` to 118.
 - 2026-07-11: Reduced `/chord` zoom jitter by replacing the string strip's CSS grid with fixed-width flex cells and rendering plain text instead of native inputs outside edit mode. Bumped `APP_VERSION` to 102 and `chord` to 1.0.2.
 - 2026-07-11: Refined `/chord` editing UX: added title, Save label while editing, same-size fret/tuning inputs, left-to-right keyboard traversal, arrow-key navigation/value stepping, and removed nested active-string transform to reduce zoom flicker. Bumped `APP_VERSION` to 101 and `chord` to 1.0.1.
 - 2026-07-11: Added isolated `/chord` command widget in `commands/chord.js`: parses six guitar-tab fret values, uses editable E A D G B E tuning, plays a lightweight Web Audio strum with active-string highlighting, and bumps `APP_VERSION` to 100.
