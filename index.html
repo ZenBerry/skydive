@@ -1052,7 +1052,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 124; // Increment once for each commit.
+    const APP_VERSION = 125; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -1756,6 +1756,13 @@
       if (loadingScreen) loadingScreen.classList.add("loading-complete");
       await waitForLoadingTransition();
       if (loadingScreen) loadingScreen.hidden = true;
+    }
+
+    function skipLoadingScreen() {
+      document.body.classList.add("app-ready");
+      if (!loadingScreen) return;
+      loadingScreen.hidden = true;
+      loadingScreen.classList.remove("loading-visible", "loading-complete");
     }
 
     function getNodeById(nodeId, options = {}) {
@@ -7827,7 +7834,8 @@
       const cache = readSharedSpaceCache();
 
       if (cache) {
-        return loadCachedSharedSpace(cache, null, options);
+        if (await loadCachedSharedSpace(cache, null, options)) return true;
+        if (typeof options.onCacheFallback === "function") options.onCacheFallback();
       }
 
       return loadFromSharedSpace(options);
@@ -7917,27 +7925,44 @@
     }
 
     async function boot() {
-      showLoadingScreen();
+      const canSkipLoadingScreen = Boolean(SHARED_SPACE_SLUG && readSharedSpaceCache());
+      let loadingScreenShown = false;
+      sharedSpaceLoadedFromCache = false;
+      if (canSkipLoadingScreen && loadingScreen) {
+        loadingScreen.hidden = true;
+        loadingScreen.classList.remove("loading-visible", "loading-complete");
+      } else {
+        showLoadingScreen();
+        loadingScreenShown = true;
+      }
       updateDocumentTitle();
       startTitleHookRefresh();
-      setLoadingProgress(10);
+      if (loadingScreenShown) setLoadingProgress(10);
       void requestPersistentStorage();
       try {
         if (SHARED_SPACE_SLUG) {
-          setLoadingProgress(20);
+          if (loadingScreenShown) setLoadingProgress(20);
           try {
             if (!await loadFromSharedSpaceWithCache({
               incremental: true,
-              onProgress: (progress) => setLoadingProgress(20 + progress * 75)
+              onProgress: (progress) => {
+                if (loadingScreenShown) setLoadingProgress(20 + progress * 75);
+              },
+              onCacheFallback: () => {
+                if (loadingScreenShown) return;
+                showLoadingScreen();
+                loadingScreenShown = true;
+                setLoadingProgress(20);
+              }
             })) {
-              setLoadingProgress(90);
+              if (loadingScreenShown) setLoadingProgress(90);
               render();
             }
             startSharedPolling();
             if (sharedSpaceLoadedFromCache) refreshSharedSpaceSoon();
           } catch (error) {
             console.error("Shared space load failed:", error);
-            setLoadingProgress(90);
+            if (loadingScreenShown) setLoadingProgress(90);
             render();
           }
           return;
@@ -7955,7 +7980,11 @@
         initializeSessionViewport();
         focusTargetNodeFromUrl();
         resetHistoryToCurrentState();
-        await hideLoadingScreen();
+        if (loadingScreenShown) {
+          await hideLoadingScreen();
+        } else {
+          skipLoadingScreen();
+        }
       }
     }
 
