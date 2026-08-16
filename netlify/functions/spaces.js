@@ -91,6 +91,7 @@ exports.handler = async (event) => {
     const creator = authorSnapshot(viewer);
 
     if (event.httpMethod === "GET") {
+      const metaOnly = Boolean(event.queryStringParameters && event.queryStringParameters.meta);
       const now = Date.now();
       await collection.updateOne(
         { slug },
@@ -104,7 +105,11 @@ exports.handler = async (event) => {
 
       const space = await collection.findOne(
         { slug },
-        { projection: { _id: 0, slug: 1, state: 1, updatedAt: 1, revision: 1, createdBy: 1 } }
+        {
+          projection: metaOnly
+            ? { _id: 0, slug: 1, updatedAt: 1, revision: 1, createdBy: 1 }
+            : { _id: 0, slug: 1, state: 1, updatedAt: 1, revision: 1, createdBy: 1 }
+        }
       );
 
       return json(200, { ...space, viewer }, cookies);
@@ -117,8 +122,9 @@ exports.handler = async (event) => {
       }
 
       const now = Date.now();
-      const current = await collection.findOne({ slug }, { projection: { _id: 0, state: 1 } });
+      const current = await collection.findOne({ slug }, { projection: { _id: 0, state: 1, revision: 1 } });
       const state = attributeNewNodes(stripViewportState(payload.state), current && current.state, viewer);
+      const revision = Number(current && current.revision) || 0;
       await collection.updateOne(
         { slug },
         {
@@ -129,7 +135,7 @@ exports.handler = async (event) => {
         { upsert: true }
       );
 
-      return json(200, { slug, updatedAt: now, viewer }, cookies);
+      return json(200, { slug, revision: revision + 1, updatedAt: now, viewer }, cookies);
     }
 
     return json(405, { error: "Method not allowed." });

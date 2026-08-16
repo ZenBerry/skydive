@@ -1050,8 +1050,9 @@
     const MIN_NODE_LAYOUT_FONT_PX = 8;
     const MAX_NODE_LAYOUT_FONT_PX = 192;
     const STORAGE_KEY = "mindmap.v1";
+    const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 121; // Increment once for each commit.
+    const APP_VERSION = 122; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -1138,6 +1139,7 @@
     let suppressSelectionModeToggleUntil = 0;
     let navigationFitTargetNode = null;
     let navigationFitMarkersVisible = false;
+    let latestSharedRevision = 0;
     let latestSharedUpdatedAt = 0;
     let applyingSharedState = false;
     let savingSharedState = false;
@@ -1297,6 +1299,10 @@
 
     function getStorageKey() {
       return SHARED_SPACE_SLUG ? `${STORAGE_KEY}.${SHARED_SPACE_SLUG}` : STORAGE_KEY;
+    }
+
+    function getSharedSpaceCacheKey(slug = SHARED_SPACE_SLUG) {
+      return `${SHARED_SPACE_CACHE_KEY}.${slug}`;
     }
 
     function getViewportStorageKey() {
@@ -6056,6 +6062,11 @@
       return `/.netlify/functions/spaces?${params.toString()}`;
     }
 
+    function getSharedSpaceMetaUrl(slug = SHARED_SPACE_SLUG) {
+      const params = new URLSearchParams({ slug, meta: "1" });
+      return `/.netlify/functions/spaces?${params.toString()}`;
+    }
+
     async function readJsonResponse(response, onDownloadProgress) {
       const reportProgress = typeof onDownloadProgress === "function" ? onDownloadProgress : null;
       const contentLength = Number(response.headers.get("Content-Length")) || 0;
@@ -6106,6 +6117,86 @@
       return readJsonResponse(response, onDownloadProgress);
     }
 
+    async function requestSharedSpaceMeta(options = {}) {
+      const { slug = SHARED_SPACE_SLUG, ...fetchOptions } = options;
+      const response = await fetch(getSharedSpaceMetaUrl(slug), {
+        headers: { "Accept": "application/json" },
+        ...fetchOptions
+      });
+
+      if (!response.ok) {
+        throw new Error(`Shared space metadata request failed: ${response.status}`);
+      }
+
+      return response.json();
+    }
+
+    function readSharedSpaceCache(slug = SHARED_SPACE_SLUG) {
+      if (!slug) return null;
+      try {
+        const raw = localStorage.getItem(getSharedSpaceCacheKey(slug));
+        if (!raw) return null;
+        const cache = JSON.parse(raw);
+        if (!cache || typeof cache !== "object" || !cache.state || typeof cache.state !== "object") return null;
+        if (cache.appVersion !== APP_VERSION) return null;
+        return cache;
+      } catch (error) {
+        console.error("Shared space cache read failed:", error);
+        return null;
+      }
+    }
+
+    function writeSharedSpaceCache(data, stateOverride = null, slug = SHARED_SPACE_SLUG) {
+      if (!slug || !data) return false;
+      const state = stateOverride || data.state;
+      if (!state || typeof state !== "object") return false;
+      try {
+        localStorage.setItem(getSharedSpaceCacheKey(slug), JSON.stringify({
+          appVersion: APP_VERSION,
+          slug,
+          revision: Number(data.revision) || 0,
+          updatedAt: Number(data.updatedAt) || 0,
+          cachedAt: Date.now(),
+          state
+        }));
+        return true;
+      } catch (error) {
+        console.error("Shared space cache write failed:", error);
+        return false;
+      }
+    }
+
+    function removeSharedSpaceCache(slug = SHARED_SPACE_SLUG) {
+      if (!slug) return;
+      try {
+        localStorage.removeItem(getSharedSpaceCacheKey(slug));
+      } catch (error) {
+        console.error("Shared space cache cleanup failed:", error);
+      }
+    }
+
+    function sharedSpaceCacheMatchesMeta(cache, meta) {
+      if (!cache || !meta) return false;
+      const cacheRevision = Number(cache.revision);
+      const metaRevision = Number(meta.revision);
+      const cacheUpdatedAt = Number(cache.updatedAt);
+      const metaUpdatedAt = Number(meta.updatedAt);
+      if (Number.isFinite(cacheRevision) && Number.isFinite(metaRevision)) {
+        return cacheRevision === metaRevision && cacheUpdatedAt === metaUpdatedAt;
+      }
+      return Number.isFinite(cacheUpdatedAt) && Number.isFinite(metaUpdatedAt) && cacheUpdatedAt === metaUpdatedAt;
+    }
+
+    function isNewerSharedMeta(meta) {
+      if (!meta) return false;
+      const revision = Number(meta.revision);
+      if (Number.isFinite(revision) && revision > 0) {
+        return revision > latestSharedRevision;
+      }
+      const updatedAt = Number(meta.updatedAt) || 0;
+      return updatedAt > latestSharedUpdatedAt;
+    }
+
     async function saveCurrentState() {
       markDeloreanModified();
       const state = serializeState();
@@ -6116,7 +6207,9 @@
             method: "PUT",
             body: JSON.stringify({ state })
           });
+          latestSharedRevision = Number(data.revision) || latestSharedRevision;
           latestSharedUpdatedAt = Number(data.updatedAt) || latestSharedUpdatedAt;
+          writeSharedSpaceCache(data, state);
           if (Object.prototype.hasOwnProperty.call(data, "viewer")) setCurrentUser(data.viewer);
           resetSharedPollingCadence();
           scheduleSharedPoll(getSharedPollDelay());
@@ -7670,19 +7763,26 @@
       if (Object.prototype.hasOwnProperty.call(data, "viewer")) setCurrentUser(data.viewer);
       if (!data.state) return false;
 
+      const revision = Number(data.revision) || 0;
       const updatedAt = Number(data.updatedAt) || 1;
-      if (updatedAt <= latestSharedUpdatedAt) return false;
+      if (revision > 0) {
+        if (revision <= latestSharedRevision) return false;
+      } else if (updatedAt <= latestSharedUpdatedAt) {
+        return false;
+      }
       const reportProgress = typeof options.onProgress === "function" ? options.onProgress : null;
       if (reportProgress) reportProgress(0.25);
 
       try {
         applyingSharedState = true;
+        latestSharedRevision = revision || latestSharedRevision;
         latestSharedUpdatedAt = updatedAt;
         await loadState(data.state, {
           autosave: false,
           incremental: options.incremental,
           onProgress: createLoadingProgressRange(0.25, 1, reportProgress)
         });
+        writeSharedSpaceCache(data);
         resetHistoryToCurrentState();
         return true;
       } catch (error) {
@@ -7703,10 +7803,52 @@
       if (reportProgress) reportProgress(0.25);
       if (Object.prototype.hasOwnProperty.call(data, "viewer")) setCurrentUser(data.viewer);
       if (!data.state) {
+        latestSharedRevision = Number(data.revision) || latestSharedRevision;
         latestSharedUpdatedAt = Number(data.updatedAt) || latestSharedUpdatedAt;
         return false;
       }
       return applySharedState(data, options);
+    }
+
+    async function loadCachedSharedSpace(cache, meta, options = {}) {
+      if (!cache || !meta || !cache.state) return false;
+      const reportProgress = typeof options.onProgress === "function" ? options.onProgress : null;
+      if (reportProgress) reportProgress(0.18);
+      try {
+        latestSharedRevision = Number(meta.revision) || Number(cache.revision) || latestSharedRevision;
+        latestSharedUpdatedAt = Number(meta.updatedAt) || Number(cache.updatedAt) || latestSharedUpdatedAt;
+        if (Object.prototype.hasOwnProperty.call(meta, "viewer")) setCurrentUser(meta.viewer);
+        await loadState(cache.state, {
+          autosave: false,
+          incremental: options.incremental,
+          onProgress: createLoadingProgressRange(0.18, 1, reportProgress)
+        });
+        return true;
+      } catch (error) {
+        removeSharedSpaceCache();
+        console.error("Shared space cache restore failed:", error);
+        return false;
+      }
+    }
+
+    async function loadFromSharedSpaceWithCache(options = {}) {
+      if (!SHARED_SPACE_SLUG) return false;
+      const cache = readSharedSpaceCache();
+      const reportProgress = typeof options.onProgress === "function" ? options.onProgress : null;
+
+      if (cache) {
+        if (reportProgress) reportProgress(0.03);
+        try {
+          const meta = await requestSharedSpaceMeta({ cache: "no-store" });
+          if (sharedSpaceCacheMatchesMeta(cache, meta)) {
+            return loadCachedSharedSpace(cache, meta, options);
+          }
+        } catch (error) {
+          console.error("Shared space metadata load failed:", error);
+        }
+      }
+
+      return loadFromSharedSpace(options);
     }
 
     function focusTargetNodeFromUrl() {
@@ -7760,7 +7902,15 @@
 
       sharedPollInFlight = true;
       try {
-        const changed = await requestSharedSpace().then(applySharedState);
+        const meta = await requestSharedSpaceMeta({ cache: "no-store" });
+        if (Object.prototype.hasOwnProperty.call(meta, "viewer")) setCurrentUser(meta.viewer);
+        if (!isNewerSharedMeta(meta)) {
+          latestSharedRevision = Number(meta.revision) || latestSharedRevision;
+          latestSharedUpdatedAt = Number(meta.updatedAt) || latestSharedUpdatedAt;
+          slowSharedPollingCadence();
+          return;
+        }
+        const changed = await requestSharedSpace({ cache: "no-store" }).then(applySharedState);
         if (changed) resetSharedPollingCadence();
         else slowSharedPollingCadence();
       } catch (error) {
@@ -7794,7 +7944,7 @@
         if (SHARED_SPACE_SLUG) {
           setLoadingProgress(20);
           try {
-            if (!await loadFromSharedSpace({
+            if (!await loadFromSharedSpaceWithCache({
               incremental: true,
               onProgress: (progress) => setLoadingProgress(20 + progress * 75)
             })) {
