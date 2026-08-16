@@ -48,6 +48,10 @@
       opacity: 1;
     }
 
+    body.app-ready-instant #viewport {
+      transition: none;
+    }
+
     #viewport.panning,
     #viewport.panning .text-node,
     #viewport.panning .external-link-card,
@@ -1052,7 +1056,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 126; // Increment once for each commit.
+    const APP_VERSION = 127; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -1840,7 +1844,7 @@
 
     function skipLoadingScreen() {
       clearArtificialLoadingProgress();
-      document.body.classList.add("app-ready");
+      document.body.classList.add("app-ready-instant", "app-ready");
       if (!loadingScreen) return;
       loadingScreen.hidden = true;
       loadingScreen.classList.remove("loading-visible", "loading-complete");
