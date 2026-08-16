@@ -1056,7 +1056,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 127; // Increment once for each commit.
+    const APP_VERSION = 128; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -1151,6 +1151,7 @@
     let latestSharedRevision = 0;
     let latestSharedUpdatedAt = 0;
     let sharedSpaceLoadedFromCache = false;
+    let sharedCacheValidationPending = false;
     let applyingSharedState = false;
     let savingSharedState = false;
     let sharedPollTimer = null;
@@ -6278,7 +6279,47 @@
       return updatedAt > latestSharedUpdatedAt;
     }
 
+    function isSharedEditLocked() {
+      return Boolean(SHARED_SPACE_SLUG && sharedCacheValidationPending);
+    }
+
+    function unlockSharedCacheEditing() {
+      sharedCacheValidationPending = false;
+    }
+
+    function shouldBlockSharedEditEvent(event) {
+      if (!isSharedEditLocked()) return false;
+      if (event.type === "wheel" || event.type === "pointermove" || event.type === "pointerup" || event.type === "pointercancel") {
+        return false;
+      }
+      if (event.type === "keydown" && event.key === "Escape") return false;
+      if (event.type === "pointerdown") {
+        return event.target !== viewport && event.target !== world;
+      }
+      if (event.type === "contextmenu" || event.type === "dblclick" || event.type === "drop" || event.type === "paste" || event.type === "beforeinput") {
+        return true;
+      }
+      if (event.type === "click") {
+        return event.target instanceof Element && Boolean(event.target.closest("button, input, textarea, select, [contenteditable='true']"));
+      }
+      if (event.type === "keydown") {
+        const key = event.key || "";
+        if (isEditableTarget(event.target)) return true;
+        if (key === "Delete" || key === "Backspace") return true;
+        if (/^[1-9]$/.test(key)) return true;
+        if (key === "=" || key.toLowerCase() === "s" || key.toLowerCase() === "o" || key.toLowerCase() === "z" || key.toLowerCase() === "y") return true;
+      }
+      return false;
+    }
+
+    function blockSharedEditUntilValidated(event) {
+      if (!shouldBlockSharedEditEvent(event)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+
     async function saveCurrentState() {
+      if (isSharedEditLocked()) return;
       markDeloreanModified();
       const state = serializeState();
       if (SHARED_SPACE_SLUG) {
@@ -6337,7 +6378,7 @@
     }
 
     function scheduleHistoryCommit() {
-      if (suppressAutosave || applyingSharedState || applyingHistoryState) return;
+      if (suppressAutosave || applyingSharedState || applyingHistoryState || isSharedEditLocked()) return;
       clearTimeout(historyTimer);
       historyTimer = setTimeout(() => {
         historyTimer = null;
@@ -6403,7 +6444,7 @@
     }
 
     function scheduleAutosave() {
-      if (suppressAutosave || applyingSharedState) return;
+      if (suppressAutosave || applyingSharedState || isSharedEditLocked()) return;
       markDeloreanModified();
       scheduleHistoryCommit();
       clearTimeout(saveTimer);
@@ -7268,6 +7309,15 @@
       return node;
     }
 
+    window.addEventListener("pointerdown", blockSharedEditUntilValidated, { capture: true });
+    window.addEventListener("click", blockSharedEditUntilValidated, { capture: true });
+    window.addEventListener("dblclick", blockSharedEditUntilValidated, { capture: true });
+    window.addEventListener("contextmenu", blockSharedEditUntilValidated, { capture: true });
+    window.addEventListener("keydown", blockSharedEditUntilValidated, { capture: true });
+    window.addEventListener("beforeinput", blockSharedEditUntilValidated, { capture: true });
+    window.addEventListener("paste", blockSharedEditUntilValidated, { capture: true });
+    window.addEventListener("drop", blockSharedEditUntilValidated, { capture: true });
+
     world.addEventListener("contextmenu", (event) => {
       if (!(event.target instanceof Element)) return;
       const node = event.target.closest(".text-node");
@@ -7906,6 +7956,7 @@
           onProgress: createLoadingProgressRange(0.18, 1, reportProgress)
         });
         sharedSpaceLoadedFromCache = true;
+        sharedCacheValidationPending = true;
         return true;
       } catch (error) {
         removeSharedSpaceCache();
@@ -7982,10 +8033,12 @@
         if (!isNewerSharedMeta(meta)) {
           latestSharedRevision = Number(meta.revision) || latestSharedRevision;
           latestSharedUpdatedAt = Number(meta.updatedAt) || latestSharedUpdatedAt;
+          unlockSharedCacheEditing();
           slowSharedPollingCadence();
           return;
         }
         const changed = await requestSharedSpace({ cache: "no-store" }).then(applySharedState);
+        unlockSharedCacheEditing();
         if (changed) resetSharedPollingCadence();
         else slowSharedPollingCadence();
       } catch (error) {
@@ -8013,6 +8066,7 @@
       const canSkipLoadingScreen = Boolean(SHARED_SPACE_SLUG && readSharedSpaceCache());
       let loadingScreenShown = false;
       sharedSpaceLoadedFromCache = false;
+      sharedCacheValidationPending = false;
       if (canSkipLoadingScreen && loadingScreen) {
         loadingScreen.hidden = true;
         loadingScreen.classList.remove("loading-visible", "loading-complete");
