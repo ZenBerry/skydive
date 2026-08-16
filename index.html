@@ -1052,7 +1052,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 125; // Increment once for each commit.
+    const APP_VERSION = 126; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -1083,6 +1083,11 @@
     const HISTORY_LIMIT = 100;
     const HISTORY_COMMIT_DELAY_MS = 120;
     const TITLE_HOOK_REFRESH_MS = 1000;
+    const LOADING_ARTIFICIAL_START_PERCENT = 24;
+    const LOADING_ARTIFICIAL_FAST_LIMIT_PERCENT = 42;
+    const LOADING_ARTIFICIAL_SLOW_LIMIT_PERCENT = 77;
+    const LOADING_ARTIFICIAL_FAST_STEP_MS = 1000;
+    const LOADING_ARTIFICIAL_SLOW_STEP_MS = 10000;
     const MOBILE_LONG_PRESS_MS = 550;
     const MOBILE_GESTURE_MOVE_TOLERANCE_PX = 10;
     const MOBILE_DOUBLE_TAP_MS = 350;
@@ -1157,6 +1162,9 @@
     let loadingProgressAnimationFrom = 0;
     let loadingProgressAnimationDuration = 0;
     let loadingProgressResolvers = [];
+    let loadingArtificialProgressTimer = null;
+    let loadingArtificialProgressActive = false;
+    let loadingRealProgressOffset = 0;
     let lineConnections = [];
     let lineRenderRoot = lineLayer;
     let spaceMeta = {};
@@ -1638,11 +1646,79 @@
       updateDocumentTitle();
     }
 
-    function setLoadingProgress(percent) {
+    function clearArtificialLoadingProgress() {
+      if (loadingArtificialProgressTimer !== null) {
+        clearTimeout(loadingArtificialProgressTimer);
+        loadingArtificialProgressTimer = null;
+      }
+      loadingArtificialProgressActive = false;
+    }
+
+    function getArtificialLoadingProgressDelay(percent) {
+      if (percent < LOADING_ARTIFICIAL_FAST_LIMIT_PERCENT) return LOADING_ARTIFICIAL_FAST_STEP_MS;
+      if (percent < LOADING_ARTIFICIAL_SLOW_LIMIT_PERCENT) return LOADING_ARTIFICIAL_SLOW_STEP_MS;
+      return 0;
+    }
+
+    function scheduleArtificialLoadingProgress() {
+      if (!loadingScreen || loadingArtificialProgressTimer !== null) return;
+      const current = Math.max(
+        Math.round(loadingDisplayedProgress),
+        loadingProgressValue,
+        LOADING_ARTIFICIAL_START_PERCENT
+      );
+      const delay = getArtificialLoadingProgressDelay(current);
+      if (!delay) {
+        loadingArtificialProgressActive = current < 100;
+        return;
+      }
+
+      loadingArtificialProgressActive = true;
+      loadingArtificialProgressTimer = setTimeout(() => {
+        loadingArtificialProgressTimer = null;
+        if (!loadingArtificialProgressActive || !loadingScreen) return;
+        const displayed = Math.max(Math.round(loadingDisplayedProgress), loadingProgressValue);
+        const limit = displayed < LOADING_ARTIFICIAL_FAST_LIMIT_PERCENT
+          ? LOADING_ARTIFICIAL_FAST_LIMIT_PERCENT
+          : LOADING_ARTIFICIAL_SLOW_LIMIT_PERCENT;
+        const next = Math.min(limit, displayed + 1);
+        if (next <= displayed) {
+          loadingArtificialProgressActive = false;
+          return;
+        }
+        setLoadingProgress(next, { artificial: true });
+        scheduleArtificialLoadingProgress();
+      }, delay);
+    }
+
+    function setLoadingProgress(percent, options = {}) {
       if (!loadingScreen) return;
-      const value = Math.max(0, Math.min(100, Math.round(percent)));
-      if (value < loadingProgressValue) return;
-      loadingProgressValue = value;
+      const isArtificial = options.artificial === true;
+      const reportedValue = Math.max(0, Math.min(100, Math.round(percent)));
+      let nextProgressValue = reportedValue;
+      let handedOffArtificialProgress = false;
+
+      if (!isArtificial && loadingArtificialProgressActive && reportedValue > LOADING_ARTIFICIAL_START_PERCENT) {
+        const displayedFloor = Math.max(0, Math.min(100, Math.round(loadingDisplayedProgress)));
+        handedOffArtificialProgress = true;
+        clearArtificialLoadingProgress();
+        loadingRealProgressOffset = Math.max(0, displayedFloor - reportedValue);
+      }
+
+      if (!isArtificial && loadingRealProgressOffset > 0) {
+        if (reportedValue >= 100) {
+          loadingRealProgressOffset = 0;
+        } else if (reportedValue > LOADING_ARTIFICIAL_START_PERCENT) {
+          nextProgressValue = Math.min(99, reportedValue + loadingRealProgressOffset);
+        }
+      }
+
+      if (handedOffArtificialProgress) {
+        loadingProgressValue = Math.min(loadingProgressValue, nextProgressValue);
+      }
+
+      if (nextProgressValue < loadingProgressValue) return;
+      loadingProgressValue = nextProgressValue;
       loadingProgressAnimationFrom = loadingDisplayedProgress;
       loadingProgressAnimationStart = 0;
       loadingProgressAnimationDuration = Math.max(
@@ -1651,6 +1727,9 @@
       );
       if (loadingProgressAnimationFrame === null) {
         loadingProgressAnimationFrame = requestAnimationFrame(animateLoadingProgress);
+      }
+      if (!isArtificial && loadingProgressValue === LOADING_ARTIFICIAL_START_PERCENT) {
+        scheduleArtificialLoadingProgress();
       }
     }
 
@@ -1749,6 +1828,7 @@
     }
 
     async function hideLoadingScreen() {
+      clearArtificialLoadingProgress();
       setLoadingProgress(100);
       await waitForLoadingProgressAnimation();
       document.body.classList.add("app-ready");
@@ -1759,6 +1839,7 @@
     }
 
     function skipLoadingScreen() {
+      clearArtificialLoadingProgress();
       document.body.classList.add("app-ready");
       if (!loadingScreen) return;
       loadingScreen.hidden = true;
