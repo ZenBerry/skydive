@@ -249,6 +249,15 @@
       white-space: normal;
     }
 
+    .text-node.markdown-view-transition {
+      transition: opacity 140ms cubic-bezier(0.9, 0, 0.1, 1);
+      will-change: opacity;
+    }
+
+    .text-node.markdown-view-transition.markdown-view-transition-out {
+      opacity: 0;
+    }
+
     .text-node[data-view-mode="markdown"]:not(.editing) > * {
       margin: 0 0 0.42em;
     }
@@ -1156,7 +1165,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 131; // Increment once for each commit.
+    const APP_VERSION = 132; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -2364,6 +2373,210 @@
       return fragment;
     }
 
+    function getMarkdownInlineSourceBoundaries(text, sourceStart = 0) {
+      const boundaries = [sourceStart];
+
+      function appendText(start, value) {
+        for (let index = 0; index < value.length; index += 1) {
+          boundaries.push(sourceStart + start + index + 1);
+        }
+      }
+
+      function mapInline(value, baseStart) {
+        const pattern = /(`+)([\s\S]*?)\1|\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|(\*\*|__)([\s\S]+?)\5|(\*|_)([^\s*_][\s\S]*?[^\s*_]|\S)\7/g;
+        let lastIndex = 0;
+        let match;
+
+        while ((match = pattern.exec(value)) !== null) {
+          appendText(baseStart + lastIndex, value.slice(lastIndex, match.index));
+          if (match[1]) {
+            appendText(baseStart + match.index + match[1].length, match[2]);
+          } else if (match[3]) {
+            mapInline(match[3], baseStart + match.index + 1);
+          } else if (match[5]) {
+            mapInline(match[6], baseStart + match.index + match[5].length);
+          } else if (match[7]) {
+            mapInline(match[8], baseStart + match.index + match[7].length);
+          }
+          lastIndex = pattern.lastIndex;
+        }
+
+        appendText(baseStart + lastIndex, value.slice(lastIndex));
+      }
+
+      mapInline(text, 0);
+      return boundaries;
+    }
+
+    function appendMarkdownBoundaryText(boundaries, sourceStart, text) {
+      const inlineBoundaries = getMarkdownInlineSourceBoundaries(text, sourceStart);
+      if (inlineBoundaries.length <= 1) return;
+      boundaries.push(...inlineBoundaries.slice(1));
+    }
+
+    function appendMarkdownBoundaryNewline(boundaries, sourceIndex) {
+      boundaries.push(sourceIndex);
+    }
+
+    function buildMarkdownDisplaySourceBoundaries(source) {
+      const normalizedSource = String(source || "").replace(/\r\n?/g, "\n");
+      const boundaries = [0];
+      const lines = normalizedSource.split("\n");
+      let sourceIndex = 0;
+      let paragraph = [];
+      let paragraphStarts = [];
+      let listItems = [];
+      let listItemStarts = [];
+      let listOrdered = false;
+      let quoteLines = [];
+      let quoteStarts = [];
+      let inFence = false;
+      let fenceLines = [];
+      let fenceStarts = [];
+
+      function syncCurrentBoundary(index) {
+        boundaries[boundaries.length - 1] = index;
+      }
+
+      function flushParagraph() {
+        paragraph.forEach((line, index) => {
+          if (index > 0) appendMarkdownBoundaryNewline(boundaries, paragraphStarts[index]);
+          appendMarkdownBoundaryText(boundaries, paragraphStarts[index], line);
+        });
+        paragraph = [];
+        paragraphStarts = [];
+      }
+
+      function flushList() {
+        listItems.forEach((item, index) => {
+          if (index > 0) appendMarkdownBoundaryNewline(boundaries, listItemStarts[index]);
+          appendMarkdownBoundaryText(boundaries, listItemStarts[index], item);
+        });
+        listItems = [];
+        listItemStarts = [];
+      }
+
+      function flushQuote() {
+        quoteLines.forEach((line, index) => {
+          if (index > 0) appendMarkdownBoundaryNewline(boundaries, quoteStarts[index]);
+          appendMarkdownBoundaryText(boundaries, quoteStarts[index], line);
+        });
+        quoteLines = [];
+        quoteStarts = [];
+      }
+
+      function flushFlow() {
+        flushParagraph();
+        flushList();
+        flushQuote();
+      }
+
+      function appendFence() {
+        fenceLines.forEach((line, index) => {
+          if (index > 0) appendMarkdownBoundaryNewline(boundaries, fenceStarts[index]);
+          for (let charIndex = 0; charIndex < line.length; charIndex += 1) {
+            boundaries.push(fenceStarts[index] + charIndex + 1);
+          }
+        });
+        fenceLines = [];
+        fenceStarts = [];
+      }
+
+      lines.forEach((line, lineIndex) => {
+        const lineStart = sourceIndex;
+        const nextLineStart = sourceIndex + line.length + (lineIndex < lines.length - 1 ? 1 : 0);
+
+        if (/^\s*```/.test(line)) {
+          if (inFence) {
+            appendFence();
+            inFence = false;
+          } else {
+            flushFlow();
+            inFence = true;
+          }
+          syncCurrentBoundary(nextLineStart);
+          sourceIndex = nextLineStart;
+          return;
+        }
+
+        if (inFence) {
+          fenceLines.push(line);
+          fenceStarts.push(lineStart);
+          sourceIndex = nextLineStart;
+          return;
+        }
+
+        const trimmed = line.trim();
+        if (!trimmed) {
+          flushFlow();
+          syncCurrentBoundary(nextLineStart);
+          sourceIndex = nextLineStart;
+          return;
+        }
+
+        if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+          flushFlow();
+          syncCurrentBoundary(nextLineStart);
+          sourceIndex = nextLineStart;
+          return;
+        }
+
+        const heading = /^(#{1,3})\s+(.+)$/.exec(trimmed);
+        if (heading) {
+          flushFlow();
+          const headingText = heading[2].trim();
+          const contentStart = lineStart + line.indexOf(headingText);
+          appendMarkdownBoundaryText(boundaries, contentStart, headingText);
+          sourceIndex = nextLineStart;
+          return;
+        }
+
+        const quote = /^>\s?(.*)$/.exec(trimmed);
+        if (quote) {
+          flushParagraph();
+          flushList();
+          const trimmedStart = line.indexOf(trimmed);
+          quoteLines.push(quote[1]);
+          quoteStarts.push(lineStart + trimmedStart + trimmed.length - quote[1].length);
+          sourceIndex = nextLineStart;
+          return;
+        }
+
+        const unordered = /^[-*+]\s+(.+)$/.exec(trimmed);
+        const ordered = /^\d+[.)]\s+(.+)$/.exec(trimmed);
+        if (unordered || ordered) {
+          flushParagraph();
+          flushQuote();
+          const match = ordered || unordered;
+          const nextOrdered = Boolean(ordered);
+          if (listItems.length > 0 && listOrdered !== nextOrdered) flushList();
+          listOrdered = nextOrdered;
+          listItems.push(match[1]);
+          listItemStarts.push(lineStart + line.indexOf(match[1]));
+          sourceIndex = nextLineStart;
+          return;
+        }
+
+        flushList();
+        flushQuote();
+        paragraph.push(line);
+        paragraphStarts.push(lineStart);
+        sourceIndex = nextLineStart;
+      });
+
+      if (inFence) appendFence();
+      flushFlow();
+
+      if (boundaries.length === 1) boundaries[0] = normalizedSource.length;
+      return boundaries;
+    }
+
+    function getMarkdownSourceOffsetFromDisplayOffset(source, displayOffset) {
+      const boundaries = buildMarkdownDisplaySourceBoundaries(source);
+      const index = clamp(Math.round(displayOffset), 0, boundaries.length - 1);
+      return boundaries[index];
+    }
+
     function appendMarkdownParagraph(container, lines) {
       if (lines.length === 0) return;
       const paragraph = document.createElement("p");
@@ -2523,6 +2736,32 @@
       requestLineRender();
       updateDocumentTitle();
       scheduleAutosave();
+    }
+
+    function switchNodeMarkdownView(node, enabled, options = {}) {
+      if (!(node instanceof HTMLElement) || isCommandNode(node) || isCalcVariableNode(node)) return;
+      const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const afterSwitch = typeof options.afterSwitch === "function" ? options.afterSwitch : null;
+
+      if (prefersReducedMotion || options.animate === false) {
+        setNodeMarkdownView(node, enabled);
+        if (afterSwitch) afterSwitch();
+        return;
+      }
+
+      node.classList.add("markdown-view-transition");
+      node.getBoundingClientRect();
+      node.classList.add("markdown-view-transition-out");
+
+      window.setTimeout(() => {
+        setNodeMarkdownView(node, enabled);
+        if (afterSwitch) afterSwitch();
+        node.getBoundingClientRect();
+        node.classList.remove("markdown-view-transition-out");
+        window.setTimeout(() => {
+          node.classList.remove("markdown-view-transition");
+        }, 170);
+      }, 140);
     }
 
     function prepareMarkdownNodeForEditing(node) {
@@ -5170,6 +5409,88 @@
       return { node: root, offset: root.childNodes.length };
     }
 
+    function getCaretRangeFromPoint(clientX, clientY) {
+      if (document.caretPositionFromPoint) {
+        const position = document.caretPositionFromPoint(clientX, clientY);
+        if (position) {
+          const range = document.createRange();
+          range.setStart(position.offsetNode, position.offset);
+          range.collapse(true);
+          return range;
+        }
+      }
+
+      if (document.caretRangeFromPoint) {
+        const range = document.caretRangeFromPoint(clientX, clientY);
+        if (range) return range;
+      }
+
+      return null;
+    }
+
+    function getRenderedTextOffset(root, range) {
+      if (!(root instanceof Node) || !(range instanceof Range)) return 0;
+      let offset = 0;
+      let found = false;
+
+      function countNode(nodePart) {
+        if (found) return;
+        if (nodePart === range.endContainer) {
+          if (nodePart.nodeType === Node.TEXT_NODE) {
+            offset += clamp(range.endOffset, 0, (nodePart.textContent || "").length);
+          } else {
+            for (let index = 0; index < range.endOffset; index += 1) {
+              countWholeNode(nodePart.childNodes[index]);
+            }
+          }
+          found = true;
+          return;
+        }
+
+        if (nodePart.nodeType === Node.TEXT_NODE) {
+          offset += (nodePart.textContent || "").length;
+          return;
+        }
+
+        if (nodePart.nodeType !== Node.ELEMENT_NODE) return;
+        if (nodePart.tagName === "BR") {
+          offset += 1;
+          return;
+        }
+
+        for (const child of nodePart.childNodes) countNode(child);
+      }
+
+      function countWholeNode(nodePart) {
+        if (!nodePart) return;
+        if (nodePart.nodeType === Node.TEXT_NODE) {
+          offset += (nodePart.textContent || "").length;
+          return;
+        }
+        if (nodePart.nodeType !== Node.ELEMENT_NODE) return;
+        if (nodePart.tagName === "BR") {
+          offset += 1;
+          return;
+        }
+        for (const child of nodePart.childNodes) countWholeNode(child);
+      }
+
+      countNode(root);
+      return offset;
+    }
+
+    function placeCaretInTextNode(node, offset) {
+      if (!(node instanceof HTMLElement)) return;
+      const position = getTextPositionAtOffset(node, offset);
+      const range = document.createRange();
+      range.setStart(position.node, position.offset);
+      range.collapse(true);
+      const selection = window.getSelection();
+      if (!selection) return;
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+
     function getSlashQueryForNode(node) {
       const selection = window.getSelection();
       if (!selection || selection.rangeCount === 0) return null;
@@ -6517,7 +6838,7 @@
       selection.addRange(range);
     }
 
-    function startEditing(node, selectAll = false) {
+    function startEditing(node, selectAll = false, caretOffset = null) {
       if (isCommandNode(node)) return;
       if (isCalcVariableNode(node)) return;
       prepareMarkdownNodeForEditing(node);
@@ -6525,6 +6846,7 @@
       node.contentEditable = "true";
       node.focus();
       if (selectAll) selectAllText(node);
+      else if (Number.isFinite(caretOffset)) placeCaretInTextNode(node, caretOffset);
     }
 
     function stopEditing(node) {
@@ -7447,6 +7769,20 @@
       });
     }
 
+    function switchMarkdownNodeToPlainTextAtPoint(node, clientX, clientY) {
+      if (!isMarkdownViewNode(node)) return false;
+      const source = getMarkdownSource(node);
+      const range = getCaretRangeFromPoint(clientX, clientY);
+      const displayOffset = range && node.contains(range.endContainer)
+        ? getRenderedTextOffset(node, range)
+        : 0;
+      const sourceOffset = getMarkdownSourceOffsetFromDisplayOffset(source, displayOffset);
+      switchNodeMarkdownView(node, false, {
+        afterSwitch: () => startEditing(node, false, sourceOffset)
+      });
+      return true;
+    }
+
     function attachNodeHandlers(node) {
       let dragPointerId = null;
       let dragOffsetX = 0;
@@ -7525,6 +7861,7 @@
         if (isCommandNode(node)) return;
         if (isCalcVariableNode(node)) return;
         clearSelection();
+        if (switchMarkdownNodeToPlainTextAtPoint(node, event.clientX, event.clientY)) return;
         startEditing(node);
       });
 
@@ -7805,13 +8142,13 @@
     viewMarkdownBtn.addEventListener("click", () => {
       const node = contextMenuNode;
       closeNodeContextMenu();
-      setNodeMarkdownView(node, true);
+      switchNodeMarkdownView(node, true);
     });
 
     viewPlainTextBtn.addEventListener("click", () => {
       const node = contextMenuNode;
       closeNodeContextMenu();
-      setNodeMarkdownView(node, false);
+      switchNodeMarkdownView(node, false);
     });
 
     hookTitleBtn.addEventListener("click", () => {
