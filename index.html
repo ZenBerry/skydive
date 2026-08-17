@@ -245,6 +245,92 @@
       display: none !important;
     }
 
+    .text-node[data-view-mode="markdown"]:not(.editing) {
+      white-space: normal;
+    }
+
+    .text-node[data-view-mode="markdown"]:not(.editing) > * {
+      margin: 0 0 0.42em;
+    }
+
+    .text-node[data-view-mode="markdown"]:not(.editing) > :last-child {
+      margin-bottom: 0;
+    }
+
+    .text-node[data-view-mode="markdown"]:not(.editing) h1,
+    .text-node[data-view-mode="markdown"]:not(.editing) h2,
+    .text-node[data-view-mode="markdown"]:not(.editing) h3 {
+      font: inherit;
+      font-weight: 700;
+      line-height: 1.12;
+    }
+
+    .text-node[data-view-mode="markdown"]:not(.editing) h1 {
+      font-size: 1.55em;
+    }
+
+    .text-node[data-view-mode="markdown"]:not(.editing) h2 {
+      font-size: 1.28em;
+    }
+
+    .text-node[data-view-mode="markdown"]:not(.editing) h3 {
+      font-size: 1.08em;
+    }
+
+    .text-node[data-view-mode="markdown"]:not(.editing) ul,
+    .text-node[data-view-mode="markdown"]:not(.editing) ol {
+      padding-left: 1.08em;
+    }
+
+    .text-node[data-view-mode="markdown"]:not(.editing) li {
+      margin: 0 0 0.14em;
+    }
+
+    .text-node[data-view-mode="markdown"]:not(.editing) blockquote {
+      padding-left: 0.58em;
+      border-left: 0.08em solid rgba(17, 24, 39, 0.28);
+      color: #4b5563;
+    }
+
+    .text-node[data-view-mode="markdown"]:not(.editing) code,
+    .text-node[data-view-mode="markdown"]:not(.editing) pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    .text-node[data-view-mode="markdown"]:not(.editing) code {
+      padding: 0.02em 0.22em;
+      border-radius: 0.18em;
+      background: #f2f4f7;
+      font-size: 0.86em;
+    }
+
+    .text-node[data-view-mode="markdown"]:not(.editing) pre {
+      max-width: 28em;
+      overflow: auto;
+      padding: 0.48em 0.58em;
+      border-radius: 0.28em;
+      background: #f7f7f5;
+      white-space: pre;
+    }
+
+    .text-node[data-view-mode="markdown"]:not(.editing) pre code {
+      padding: 0;
+      background: transparent;
+      font-size: 0.82em;
+    }
+
+    .text-node[data-view-mode="markdown"]:not(.editing) a {
+      color: #2563eb;
+      text-decoration: underline;
+    }
+
+    .text-node[data-view-mode="markdown"]:not(.editing) hr {
+      width: 100%;
+      margin: 0.55em 0;
+      border: 0;
+      border-top: 0.05em solid rgba(17, 24, 39, 0.25);
+    }
+
     .text-node.variable-node {
       box-sizing: border-box;
       padding: 0.18em 0.34em 0.16em;
@@ -929,6 +1015,8 @@
     <button id="copy-node-id-btn" type="button">Copy node ID</button>
     <button id="copy-size-btn" type="button">Copy size</button>
     <button id="paste-size-btn" type="button">Paste size</button>
+    <button id="view-markdown-btn" type="button">View as markdown</button>
+    <button id="view-plain-text-btn" type="button">View as plain text</button>
     <button id="hook-title-btn" type="button">Hook node to window title</button>
     <button id="draw-line-btn" type="button">Line</button>
     <button id="link-selection-btn" type="button">Link selection to node ID...</button>
@@ -990,6 +1078,8 @@
     const copyNodeIdBtn = document.getElementById("copy-node-id-btn");
     const copySizeBtn = document.getElementById("copy-size-btn");
     const pasteSizeBtn = document.getElementById("paste-size-btn");
+    const viewMarkdownBtn = document.getElementById("view-markdown-btn");
+    const viewPlainTextBtn = document.getElementById("view-plain-text-btn");
     const hookTitleBtn = document.getElementById("hook-title-btn");
     const drawLineBtn = document.getElementById("draw-line-btn");
     const linkSelectionBtn = document.getElementById("link-selection-btn");
@@ -1056,7 +1146,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 128; // Increment once for each commit.
+    const APP_VERSION = 129; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -2170,6 +2260,233 @@
       }
     }
 
+    function isMarkdownViewNode(node) {
+      return node instanceof HTMLElement && node.dataset.viewMode === "markdown";
+    }
+
+    function getMarkdownSource(node) {
+      return typeof node.dataset.markdownSource === "string"
+        ? node.dataset.markdownSource
+        : node.textContent || "";
+    }
+
+    function getSerializableTextSource(node) {
+      return isMarkdownViewNode(node) ? getMarkdownSource(node) : node.textContent || "";
+    }
+
+    function createMarkdownInlineFragment(text) {
+      const fragment = document.createDocumentFragment();
+      const pattern = /(`+)([\s\S]*?)\1|\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|(\*\*|__)([\s\S]+?)\5|(\*|_)([^\s*_][\s\S]*?[^\s*_]|\S)\7/g;
+      let lastIndex = 0;
+      let match;
+
+      function appendPlain(value) {
+        if (value) fragment.appendChild(document.createTextNode(value));
+      }
+
+      while ((match = pattern.exec(text)) !== null) {
+        appendPlain(text.slice(lastIndex, match.index));
+        if (match[1]) {
+          const code = document.createElement("code");
+          code.textContent = match[2];
+          fragment.appendChild(code);
+        } else if (match[3]) {
+          const href = normalizeExternalHref(match[4]);
+          if (href) {
+            const link = document.createElement("a");
+            link.href = href;
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+            link.appendChild(createMarkdownInlineFragment(match[3]));
+            fragment.appendChild(link);
+          } else {
+            appendPlain(match[0]);
+          }
+        } else if (match[5]) {
+          const strong = document.createElement("strong");
+          strong.appendChild(createMarkdownInlineFragment(match[6]));
+          fragment.appendChild(strong);
+        } else if (match[7]) {
+          const em = document.createElement("em");
+          em.appendChild(createMarkdownInlineFragment(match[8]));
+          fragment.appendChild(em);
+        }
+        lastIndex = pattern.lastIndex;
+      }
+
+      appendPlain(text.slice(lastIndex));
+      return fragment;
+    }
+
+    function appendMarkdownParagraph(container, lines) {
+      if (lines.length === 0) return;
+      const paragraph = document.createElement("p");
+      paragraph.appendChild(createMarkdownInlineFragment(lines.join(" ")));
+      container.appendChild(paragraph);
+    }
+
+    function appendMarkdownList(container, items, ordered) {
+      if (items.length === 0) return;
+      const list = document.createElement(ordered ? "ol" : "ul");
+      for (const itemText of items) {
+        const item = document.createElement("li");
+        item.appendChild(createMarkdownInlineFragment(itemText));
+        list.appendChild(item);
+      }
+      container.appendChild(list);
+    }
+
+    function renderMarkdownToFragment(source) {
+      const fragment = document.createDocumentFragment();
+      const lines = String(source || "").replace(/\r\n?/g, "\n").split("\n");
+      let paragraph = [];
+      let listItems = [];
+      let listOrdered = false;
+      let quoteLines = [];
+      let inFence = false;
+      let fenceLines = [];
+
+      function flushParagraph() {
+        appendMarkdownParagraph(fragment, paragraph);
+        paragraph = [];
+      }
+
+      function flushList() {
+        appendMarkdownList(fragment, listItems, listOrdered);
+        listItems = [];
+      }
+
+      function flushQuote() {
+        if (quoteLines.length === 0) return;
+        const quote = document.createElement("blockquote");
+        appendMarkdownParagraph(quote, quoteLines);
+        fragment.appendChild(quote);
+        quoteLines = [];
+      }
+
+      function flushFlow() {
+        flushParagraph();
+        flushList();
+        flushQuote();
+      }
+
+      function appendFence() {
+        const pre = document.createElement("pre");
+        const code = document.createElement("code");
+        code.textContent = fenceLines.join("\n");
+        pre.appendChild(code);
+        fragment.appendChild(pre);
+        fenceLines = [];
+      }
+
+      for (const line of lines) {
+        if (/^\s*```/.test(line)) {
+          if (inFence) {
+            appendFence();
+            inFence = false;
+          } else {
+            flushFlow();
+            inFence = true;
+          }
+          continue;
+        }
+
+        if (inFence) {
+          fenceLines.push(line);
+          continue;
+        }
+
+        const trimmed = line.trim();
+        if (!trimmed) {
+          flushFlow();
+          continue;
+        }
+
+        if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+          flushFlow();
+          fragment.appendChild(document.createElement("hr"));
+          continue;
+        }
+
+        const heading = /^(#{1,3})\s+(.+)$/.exec(trimmed);
+        if (heading) {
+          flushFlow();
+          const level = heading[1].length;
+          const element = document.createElement(`h${level}`);
+          element.appendChild(createMarkdownInlineFragment(heading[2].trim()));
+          fragment.appendChild(element);
+          continue;
+        }
+
+        const quote = /^>\s?(.*)$/.exec(trimmed);
+        if (quote) {
+          flushParagraph();
+          flushList();
+          quoteLines.push(quote[1]);
+          continue;
+        }
+
+        const unordered = /^[-*+]\s+(.+)$/.exec(trimmed);
+        const ordered = /^\d+[.)]\s+(.+)$/.exec(trimmed);
+        if (unordered || ordered) {
+          flushParagraph();
+          flushQuote();
+          const nextOrdered = Boolean(ordered);
+          if (listItems.length > 0 && listOrdered !== nextOrdered) flushList();
+          listOrdered = nextOrdered;
+          listItems.push((ordered || unordered)[1]);
+          continue;
+        }
+
+        flushList();
+        flushQuote();
+        paragraph.push(trimmed);
+      }
+
+      if (inFence) appendFence();
+      flushFlow();
+
+      if (!fragment.hasChildNodes()) {
+        fragment.appendChild(document.createElement("br"));
+      }
+      return fragment;
+    }
+
+    function renderMarkdownNode(node) {
+      if (!isMarkdownViewNode(node) || node.classList.contains("editing")) return;
+      node.replaceChildren(renderMarkdownToFragment(getMarkdownSource(node)));
+    }
+
+    function setNodeMarkdownView(node, enabled) {
+      if (!(node instanceof HTMLElement) || isCommandNode(node) || isCalcVariableNode(node)) return;
+      if (enabled) {
+        node.dataset.markdownSource = getSerializableTextSource(node);
+        node.dataset.viewMode = "markdown";
+        renderMarkdownNode(node);
+      } else {
+        const source = getMarkdownSource(node);
+        delete node.dataset.viewMode;
+        delete node.dataset.markdownSource;
+        node.textContent = source;
+        normalizeNodeMarkup(node);
+      }
+      refreshSelectionBounds();
+      requestLineRender();
+      updateDocumentTitle();
+      scheduleAutosave();
+    }
+
+    function prepareMarkdownNodeForEditing(node) {
+      if (!isMarkdownViewNode(node)) return;
+      node.textContent = getMarkdownSource(node);
+    }
+
+    function finishMarkdownNodeEditing(node) {
+      if (!isMarkdownViewNode(node)) return;
+      node.dataset.markdownSource = node.textContent || "";
+      renderMarkdownNode(node);
+    }
+
     function getSelectionRangeWithinNode(node) {
       const selection = window.getSelection();
       if (!selection || selection.rangeCount === 0) return null;
@@ -2205,6 +2522,8 @@
       contextMenuWidget = null;
       contextMenuSelectionRange = null;
       contextMenuSizeTargets = [];
+      viewMarkdownBtn.hidden = false;
+      viewPlainTextBtn.hidden = false;
       widgetColorPicker.hidden = true;
       nodeContextMenu.hidden = true;
     }
@@ -2313,6 +2632,9 @@
       copySizeBtn.disabled = contextMenuSizeTargets.length !== 1;
       pasteSizeBtn.disabled = !canPasteSizeToTargets(contextMenuSizeTargets);
       linkSelectionBtn.disabled = !contextMenuSelectionRange;
+      const canToggleMarkdown = !isCommandNode(node) && !isCalcVariableNode(node) && !contextMenuWidget;
+      viewMarkdownBtn.hidden = !canToggleMarkdown || isMarkdownViewNode(node);
+      viewPlainTextBtn.hidden = !canToggleMarkdown || !isMarkdownViewNode(node);
       widgetColorPicker.hidden = !isWidgetColorable(contextMenuWidget || node);
       updateWidgetColorPicker(contextMenuWidget || node);
       nodeContextMenu.hidden = false;
@@ -4746,8 +5068,9 @@
         ...base,
         kind: "text",
         ...(isCalcVariableNode(node) ? { variable: true } : {}),
-        html: sanitizeNodeHtml(node.innerHTML),
-        text: node.textContent || ""
+        ...(isMarkdownViewNode(node) ? { viewMode: "markdown" } : {}),
+        ...(!isMarkdownViewNode(node) ? { html: sanitizeNodeHtml(node.innerHTML) } : {}),
+        text: getSerializableTextSource(node)
       };
     }
 
@@ -6126,6 +6449,7 @@
     function startEditing(node, selectAll = false) {
       if (isCommandNode(node)) return;
       if (isCalcVariableNode(node)) return;
+      prepareMarkdownNodeForEditing(node);
       node.classList.add("editing");
       node.contentEditable = "true";
       node.focus();
@@ -6135,6 +6459,7 @@
     function stopEditing(node) {
       node.contentEditable = "false";
       node.classList.remove("editing");
+      finishMarkdownNodeEditing(node);
     }
 
     function serializeState() {
@@ -6537,7 +6862,8 @@
       const x = Number.isFinite(Number(entry.x)) ? Number(entry.x) : 0;
       const y = Number.isFinite(Number(entry.y)) ? Number(entry.y) : 0;
       const text = typeof entry.text === "string" ? entry.text : "";
-      const html = typeof entry.html === "string" ? sanitizeNodeHtml(entry.html) : null;
+      const markdownView = entry.viewMode === "markdown";
+      const html = !markdownView && typeof entry.html === "string" ? sanitizeNodeHtml(entry.html) : null;
       const id = typeof entry.id === "string" ? entry.id : "";
       const baseFontSize = Number.isFinite(Number(entry.baseFontSize)) && Number(entry.baseFontSize) > 0
         ? Number(entry.baseFontSize)
@@ -6565,6 +6891,7 @@
           createdBy: entry.createdBy,
           rotation,
           variable: entry.variable === true,
+          viewMode: markdownView ? "markdown" : "",
           preserveTimestamps: true
         });
       }
@@ -7138,6 +7465,13 @@
         if (handleExternalLinkVisit(node, event)) return;
         if (node.classList.contains("editing")) return;
         if (!(event.target instanceof Element)) return;
+        const markdownLink = isMarkdownViewNode(node) ? event.target.closest("a[href]") : null;
+        if (markdownLink && node.contains(markdownLink)) {
+          event.preventDefault();
+          event.stopPropagation();
+          openExternalHref(markdownLink.getAttribute("href") || "");
+          return;
+        }
         const link = event.target.closest(".internal-link");
         if (selectedNodes.has(node) && !dragMoved && (!link || !node.contains(link))) {
           toggleSelectionHandleMode();
@@ -7162,7 +7496,11 @@
 
       node.addEventListener("input", () => {
         if (isCalcVariableNode(node)) return;
-        autoLinkExternalUrls(node, { moveCaretToEnd: true });
+        if (isMarkdownViewNode(node)) {
+          node.dataset.markdownSource = node.textContent || "";
+        } else {
+          autoLinkExternalUrls(node, { moveCaretToEnd: true });
+        }
         updateCalcVariables();
         updateDocumentTitle();
         scheduleAutosave();
@@ -7175,6 +7513,17 @@
           return;
         }
         event.preventDefault();
+        if (isMarkdownViewNode(node)) {
+          const clipboard = event.clipboardData;
+          const plainText = clipboard ? clipboard.getData("text/plain") || "" : "";
+          if (!insertTextAtCaretInNode(node, plainText)) return;
+          node.dataset.markdownSource = node.textContent || "";
+          updateCalcVariables();
+          updateDocumentTitle();
+          scheduleAutosave();
+          updateSlashMenuForNode(node);
+          return;
+        }
         if (!insertSanitizedPaste(node, getSanitizedPasteHtml(event))) return;
         autoLinkExternalUrls(node, { force: true, moveCaretToEnd: true });
         updateCalcVariables();
@@ -7186,7 +7535,11 @@
       node.addEventListener("blur", () => {
         if (isCommandNode(node)) return;
         if (isCalcVariableNode(node)) return;
-        autoLinkExternalUrls(node, { force: true });
+        if (isMarkdownViewNode(node)) {
+          node.dataset.markdownSource = node.textContent || "";
+        } else {
+          autoLinkExternalUrls(node, { force: true });
+        }
         stopEditing(node);
         updateCalcVariables();
         closeSlashCommandMenu();
@@ -7267,6 +7620,11 @@
       setNodeCreator(node, options.createdBy || (!options.preserveTimestamps ? currentUser : null));
       setNodePosition(node, worldX, worldY);
       if (options.variable === true) setCalcVariableNode(node, true);
+      if (options.viewMode === "markdown" && !isCalcVariableNode(node)) {
+        node.dataset.markdownSource = node.textContent || "";
+        node.dataset.viewMode = "markdown";
+        renderMarkdownNode(node);
+      }
       attachNodeHandlers(node);
       world.appendChild(node);
       if (!isNodeDeleted(node)) observeNodeForLines(node);
@@ -7368,6 +7726,18 @@
       const targets = contextMenuSizeTargets.slice();
       closeNodeContextMenu();
       pasteSizeToNodes(targets);
+    });
+
+    viewMarkdownBtn.addEventListener("click", () => {
+      const node = contextMenuNode;
+      closeNodeContextMenu();
+      setNodeMarkdownView(node, true);
+    });
+
+    viewPlainTextBtn.addEventListener("click", () => {
+      const node = contextMenuNode;
+      closeNodeContextMenu();
+      setNodeMarkdownView(node, false);
     });
 
     hookTitleBtn.addEventListener("click", () => {
