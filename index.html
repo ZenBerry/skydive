@@ -442,7 +442,17 @@
       cursor: pointer;
     }
 
+    .external-link-plain {
+      color: #2563eb;
+      text-decoration: underline;
+      cursor: pointer;
+    }
+
     .text-node.editing .internal-link {
+      cursor: text;
+    }
+
+    .text-node.editing .external-link-plain {
       cursor: text;
     }
 
@@ -1146,7 +1156,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 129; // Increment once for each commit.
+    const APP_VERSION = 130; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -2152,11 +2162,13 @@
         }
 
         if (tag === "SPAN" && element.classList.contains("external-link-plain")) {
-          const href = normalizeExternalHref(element.textContent || "");
+          const text = element.textContent || "";
+          const href = normalizeExternalHref(element.dataset.href || text);
           if (href) {
             const span = document.createElement("span");
             span.className = "external-link-plain";
-            span.textContent = href;
+            span.dataset.href = href;
+            span.textContent = text;
             target.appendChild(span);
             return;
           }
@@ -2270,8 +2282,18 @@
         : node.textContent || "";
     }
 
+    function getPlainTextSource(node) {
+      if (!(node instanceof HTMLElement)) return "";
+      const clone = node.cloneNode(true);
+      for (const card of clone.querySelectorAll(".external-link-card")) {
+        const href = normalizeExternalHref(card.dataset.href || "");
+        card.replaceWith(document.createTextNode(href));
+      }
+      return clone.textContent || "";
+    }
+
     function getSerializableTextSource(node) {
-      return isMarkdownViewNode(node) ? getMarkdownSource(node) : node.textContent || "";
+      return isMarkdownViewNode(node) ? getMarkdownSource(node) : getPlainTextSource(node);
     }
 
     function createMarkdownInlineFragment(text) {
@@ -2321,7 +2343,10 @@
     function appendMarkdownParagraph(container, lines) {
       if (lines.length === 0) return;
       const paragraph = document.createElement("p");
-      paragraph.appendChild(createMarkdownInlineFragment(lines.join(" ")));
+      lines.forEach((line, index) => {
+        if (index > 0) paragraph.appendChild(document.createElement("br"));
+        paragraph.appendChild(createMarkdownInlineFragment(line));
+      });
       container.appendChild(paragraph);
     }
 
@@ -2440,7 +2465,7 @@
 
         flushList();
         flushQuote();
-        paragraph.push(trimmed);
+        paragraph.push(line);
       }
 
       if (inFence) appendFence();
@@ -4402,6 +4427,7 @@
     function autoLinkExternalUrls(node, options = {}) {
       if (!node || isCommandNode(node)) return false;
       const { force = false, moveCaretToEnd = false } = options;
+      const nodeText = getPlainTextSource(node).trim();
       const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, {
         acceptNode(textNode) {
           const parent = textNode.parentElement;
@@ -4444,9 +4470,12 @@
           }
 
           if (normalizedHref && !isStillBeingTyped) {
-            const card = createExternalLinkCard(normalizedHref);
-            if (card) {
-              fragment.appendChild(card);
+            const isOnlyLinkInNode = nodeText === href;
+            const link = isOnlyLinkInNode
+              ? createExternalLinkCard(normalizedHref)
+              : createExternalLinkPlain(normalizedHref, href);
+            if (link) {
+              fragment.appendChild(link);
               if (trailing) fragment.appendChild(document.createTextNode(trailing));
               textNodeChanged = true;
             } else {
@@ -4477,6 +4506,16 @@
       return changed;
     }
 
+    function createExternalLinkPlain(href, text = href) {
+      const normalizedHref = normalizeExternalHref(href);
+      if (!normalizedHref) return null;
+      const span = document.createElement("span");
+      span.className = "external-link-plain";
+      span.dataset.href = normalizedHref;
+      span.textContent = text;
+      return span;
+    }
+
     function getExternalLinkCardFromTarget(node, target) {
       if (!(target instanceof Element)) return null;
       const card = target.closest(".external-link-card");
@@ -4487,10 +4526,8 @@
     function flattenExternalLinkCard(card) {
       const href = normalizeExternalHref(card.dataset.href || "");
       if (!href) return;
-      const span = document.createElement("span");
-      span.className = "external-link-plain";
-      span.textContent = href;
-      card.replaceWith(span);
+      const link = createExternalLinkPlain(href);
+      if (link) card.replaceWith(link);
     }
 
     function saveExternalLinkCardEdit(card) {
@@ -4627,7 +4664,17 @@
 
     function handleExternalLinkVisit(node, event) {
       const card = getExternalLinkCardFromTarget(node, event.target);
-      if (!card) return false;
+      if (!card) {
+        if (node.classList.contains("editing") || !(event.target instanceof Element)) return false;
+        const plainLink = event.target.closest(".external-link-plain");
+        if (!plainLink || !node.contains(plainLink)) return false;
+        const href = normalizeExternalHref(plainLink.dataset.href || plainLink.textContent || "");
+        if (!href) return false;
+        event.preventDefault();
+        event.stopPropagation();
+        openExternalHref(href);
+        return true;
+      }
 
       if (event.target instanceof Element && event.target.closest("button, input, textarea, select")) {
         return false;
@@ -7391,10 +7438,13 @@
         if (event.target instanceof Element && event.target.closest(".internal-link")) return;
         if (event.target instanceof Element) {
           const externalLinkCard = event.target.closest(".external-link-card");
+          const externalLinkPlain = event.target.closest(".external-link-plain");
           if (externalLinkCard && event.target.closest("button, input, textarea, select")) return;
           pendingExternalLinkHref = externalLinkCard && isExternalLinkLabelTarget(externalLinkCard, event.target)
             ? normalizeExternalHref(externalLinkCard.dataset.href || "")
-            : "";
+            : externalLinkPlain && node.contains(externalLinkPlain)
+              ? normalizeExternalHref(externalLinkPlain.dataset.href || externalLinkPlain.textContent || "")
+              : "";
         }
         if (isCommandNode(node) && isCommandInteractiveTarget(event.target)) return;
         if (selectedNodes.size > 0 && !selectedNodes.has(node)) {
