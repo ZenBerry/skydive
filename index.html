@@ -1156,7 +1156,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 130; // Increment once for each commit.
+    const APP_VERSION = 131; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -2284,12 +2284,36 @@
 
     function getPlainTextSource(node) {
       if (!(node instanceof HTMLElement)) return "";
-      const clone = node.cloneNode(true);
-      for (const card of clone.querySelectorAll(".external-link-card")) {
-        const href = normalizeExternalHref(card.dataset.href || "");
-        card.replaceWith(document.createTextNode(href));
+      let source = "";
+
+      function appendBreak() {
+        if (source && !source.endsWith("\n")) source += "\n";
       }
-      return clone.textContent || "";
+
+      function read(nodePart) {
+        if (nodePart.nodeType === Node.TEXT_NODE) {
+          source += nodePart.textContent || "";
+          return;
+        }
+
+        if (nodePart.nodeType !== Node.ELEMENT_NODE) return;
+        const element = nodePart;
+        if (element.tagName === "BR") {
+          source += "\n";
+          return;
+        }
+
+        if (element.classList.contains("external-link-card")) {
+          source += normalizeExternalHref(element.dataset.href || "");
+          return;
+        }
+
+        if (PASTED_BLOCK_TAGS.has(element.tagName)) appendBreak();
+        for (const child of element.childNodes) read(child);
+      }
+
+      for (const child of node.childNodes) read(child);
+      return source;
     }
 
     function getSerializableTextSource(node) {
