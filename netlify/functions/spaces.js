@@ -140,8 +140,11 @@ exports.handler = async (event) => {
       }
 
       const state = attributeNewNodes(stripViewportState(payload.state), current && current.state, viewer);
+      const revisionFilter = current && current.revision === undefined
+        ? { $or: [{ revision: { $exists: false } }, { revision: 0 }] }
+        : { revision };
       const result = await collection.updateOne(
-        hasBaseRevision ? { slug, revision } : { slug },
+        hasBaseRevision ? { slug, ...revisionFilter } : { slug },
         {
           $set: { slug, state, updatedAt: now },
           $inc: { revision: 1 },
