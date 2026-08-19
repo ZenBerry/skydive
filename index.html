@@ -1165,7 +1165,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 132; // Increment once for each commit.
+    const APP_VERSION = 133; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -1261,6 +1261,8 @@
     let latestSharedUpdatedAt = 0;
     let sharedSpaceLoadedFromCache = false;
     let sharedCacheValidationPending = false;
+    let sharedLocalMutationPending = false;
+    let sharedSaveConflictNotified = false;
     let applyingSharedState = false;
     let savingSharedState = false;
     let sharedPollTimer = null;
@@ -1426,6 +1428,10 @@
 
     function getSharedSpaceCacheKey(slug = SHARED_SPACE_SLUG) {
       return `${SHARED_SPACE_CACHE_KEY}.${slug}`;
+    }
+
+    function getSharedSpaceDraftKey(slug = SHARED_SPACE_SLUG) {
+      return `${SHARED_SPACE_CACHE_KEY}.draft.${slug}`;
     }
 
     function getViewportStorageKey() {
@@ -6923,7 +6929,16 @@
       });
 
       if (!response.ok) {
-        throw new Error(`Shared space request failed: ${response.status}`);
+        let data = null;
+        try {
+          data = await response.json();
+        } catch (error) {
+          data = null;
+        }
+        const error = new Error(`Shared space request failed: ${response.status}`);
+        error.status = response.status;
+        error.data = data;
+        throw error;
       }
 
       return readJsonResponse(response, onDownloadProgress);
@@ -6987,6 +7002,24 @@
       }
     }
 
+    function writeSharedSpaceDraft(state, conflict = null, slug = SHARED_SPACE_SLUG) {
+      if (!slug || !state || typeof state !== "object") return false;
+      try {
+        localStorage.setItem(getSharedSpaceDraftKey(slug), JSON.stringify({
+          appVersion: APP_VERSION,
+          slug,
+          baseRevision: latestSharedRevision,
+          serverRevision: Number(conflict && conflict.currentRevision) || 0,
+          savedAt: Date.now(),
+          state
+        }));
+        return true;
+      } catch (error) {
+        console.error("Shared space draft write failed:", error);
+        return false;
+      }
+    }
+
     function isNewerSharedMeta(meta) {
       if (!meta) return false;
       const revision = Number(meta.revision);
@@ -7003,6 +7036,23 @@
 
     function unlockSharedCacheEditing() {
       sharedCacheValidationPending = false;
+    }
+
+    function hasActiveSharedLocalEdits() {
+      return Boolean(
+        SHARED_SPACE_SLUG &&
+        (
+          sharedLocalMutationPending ||
+          saveTimer !== null ||
+          getActiveEditingNode()
+        )
+      );
+    }
+
+    function notifySharedSaveConflict() {
+      if (sharedSaveConflictNotified) return;
+      sharedSaveConflictNotified = true;
+      alert("This space changed elsewhere before your edit could save. Your local edit is still visible, but it has not been saved yet.");
     }
 
     function shouldBlockSharedEditEvent(event) {
@@ -7045,14 +7095,23 @@
         try {
           const data = await requestSharedSpace({
             method: "PUT",
-            body: JSON.stringify({ state })
+            body: JSON.stringify({ state, baseRevision: latestSharedRevision })
           });
           latestSharedRevision = Number(data.revision) || latestSharedRevision;
           latestSharedUpdatedAt = Number(data.updatedAt) || latestSharedUpdatedAt;
+          sharedLocalMutationPending = false;
+          sharedSaveConflictNotified = false;
           writeSharedSpaceCache(data, state);
           if (Object.prototype.hasOwnProperty.call(data, "viewer")) setCurrentUser(data.viewer);
           resetSharedPollingCadence();
           scheduleSharedPoll(getSharedPollDelay());
+        } catch (error) {
+          if (error && error.status === 409) {
+            sharedLocalMutationPending = true;
+            writeSharedSpaceDraft(state, error.data);
+            notifySharedSaveConflict();
+          }
+          throw error;
         } finally {
           savingSharedState = false;
         }
@@ -7163,6 +7222,7 @@
 
     function scheduleAutosave() {
       if (suppressAutosave || applyingSharedState || isSharedEditLocked()) return;
+      if (SHARED_SPACE_SLUG) sharedLocalMutationPending = true;
       markDeloreanModified();
       scheduleHistoryCommit();
       clearTimeout(saveTimer);
@@ -8674,6 +8734,7 @@
       if (!data) return false;
       if (Object.prototype.hasOwnProperty.call(data, "viewer")) setCurrentUser(data.viewer);
       if (!data.state) return false;
+      if (hasActiveSharedLocalEdits() && options.force !== true) return false;
 
       const revision = Number(data.revision) || 0;
       const updatedAt = Number(data.updatedAt) || 1;
@@ -8815,6 +8876,10 @@
           latestSharedRevision = Number(meta.revision) || latestSharedRevision;
           latestSharedUpdatedAt = Number(meta.updatedAt) || latestSharedUpdatedAt;
           unlockSharedCacheEditing();
+          slowSharedPollingCadence();
+          return;
+        }
+        if (hasActiveSharedLocalEdits()) {
           slowSharedPollingCadence();
           return;
         }
