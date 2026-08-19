@@ -1221,7 +1221,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 137; // Increment once for each commit.
+    const APP_VERSION = 138; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const DEFAULT_TEMPLATE_DESCRIPTION = "A pre-saved template";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
@@ -3029,6 +3029,7 @@
       return {
         version: 1,
         origin,
+        baseFontSize: targets.reduce((total, node) => total + getNodeBaseFontSize(node), 0) / targets.length,
         nodes: targets.map((node) => {
           const entry = serializeNode(node);
           return {
@@ -5881,20 +5882,36 @@
       return true;
     }
 
+    function getTemplateReferenceBaseFontSize(payload, entries) {
+      const payloadBaseFontSize = Number(payload && payload.baseFontSize);
+      if (Number.isFinite(payloadBaseFontSize) && payloadBaseFontSize > 0) return payloadBaseFontSize;
+
+      const sizes = entries
+        .map((entry) => Number(entry && entry.baseFontSize))
+        .filter((value) => Number.isFinite(value) && value > 0);
+      if (sizes.length === 0) return BASE_TEXT_PX / camera.scale;
+      return sizes.reduce((total, value) => total + value, 0) / sizes.length;
+    }
+
     function createNodesFromTemplate(template, worldX, worldY, baseFontSize) {
       const payload = template && template.payload && typeof template.payload === "object" ? template.payload : {};
       const entries = Array.isArray(payload.nodes) ? payload.nodes : [];
       const lines = Array.isArray(payload.lines) ? payload.lines : [];
+      const targetBaseFontSize = Number.isFinite(Number(baseFontSize)) && Number(baseFontSize) > 0
+        ? Number(baseFontSize)
+        : BASE_TEXT_PX / camera.scale;
+      const referenceBaseFontSize = getTemplateReferenceBaseFontSize(payload, entries);
+      const templateScale = targetBaseFontSize / referenceBaseFontSize;
       const idMap = new Map();
       const createdNodes = [];
 
       entries.forEach((entry) => {
         if (!entry || typeof entry !== "object") return;
-        const x = worldX + Number(entry.x || 0);
-        const y = worldY + Number(entry.y || 0);
+        const x = worldX + Number(entry.x || 0) * templateScale;
+        const y = worldY + Number(entry.y || 0) * templateScale;
         const nodeBaseFontSize = Number.isFinite(Number(entry.baseFontSize)) && Number(entry.baseFontSize) > 0
-          ? Number(entry.baseFontSize)
-          : baseFontSize;
+          ? Number(entry.baseFontSize) * templateScale
+          : targetBaseFontSize;
         const options = {
           rotation: Number.isFinite(Number(entry.rotation)) ? Number(entry.rotation) : 0,
           variable: entry.variable === true,
