@@ -1165,7 +1165,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 134; // Increment once for each commit.
+    const APP_VERSION = 135; // Increment once for each commit.
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -1265,6 +1265,7 @@
     let sharedSaveConflictNotified = false;
     let applyingSharedState = false;
     let savingSharedState = false;
+    let sharedSaveQueued = false;
     let sharedPollTimer = null;
     let sharedPollDelayIndex = 0;
     let sharedPollInFlight = false;
@@ -7020,6 +7021,44 @@
       }
     }
 
+    function updateSharedServerMarkers(data) {
+      if (!data || typeof data !== "object") return;
+      latestSharedRevision = Number(data.revision) || Number(data.currentRevision) || latestSharedRevision;
+      latestSharedUpdatedAt = Number(data.updatedAt) || latestSharedUpdatedAt;
+    }
+
+    function getSharedConflictSpace(error) {
+      return error && error.data && error.data.space && typeof error.data.space === "object"
+        ? error.data.space
+        : null;
+    }
+
+    function getStableJson(value) {
+      if (Array.isArray(value)) {
+        return `[${value.map(getStableJson).join(",")}]`;
+      }
+      if (value && typeof value === "object") {
+        return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${getStableJson(value[key])}`).join(",")}}`;
+      }
+      return JSON.stringify(value);
+    }
+
+    function isSameSharedState(left, right) {
+      if (!left || !right) return false;
+      try {
+        return getStableJson(left) === getStableJson(right);
+      } catch (error) {
+        return false;
+      }
+    }
+
+    function canRetrySharedSaveAfterConflict(error) {
+      const conflictSpace = getSharedConflictSpace(error);
+      if (!conflictSpace || !conflictSpace.state) return false;
+      const cache = readSharedSpaceCache();
+      return Boolean(cache && isSameSharedState(cache.state, conflictSpace.state));
+    }
+
     function isNewerSharedMeta(meta) {
       if (!meta) return false;
       const revision = Number(meta.revision);
@@ -7091,20 +7130,38 @@
       markDeloreanModified();
       const state = serializeState();
       if (SHARED_SPACE_SLUG) {
+        if (savingSharedState) {
+          sharedSaveQueued = true;
+          return;
+        }
         savingSharedState = true;
+        let saveSucceeded = false;
         try {
-          const data = await requestSharedSpace({
-            method: "PUT",
-            body: JSON.stringify({ state, baseRevision: latestSharedRevision })
-          });
-          latestSharedRevision = Number(data.revision) || latestSharedRevision;
-          latestSharedUpdatedAt = Number(data.updatedAt) || latestSharedUpdatedAt;
+          let data = null;
+          try {
+            data = await requestSharedSpace({
+              method: "PUT",
+              body: JSON.stringify({ state, baseRevision: latestSharedRevision })
+            });
+          } catch (error) {
+            if (error && error.status === 409 && canRetrySharedSaveAfterConflict(error)) {
+              updateSharedServerMarkers(getSharedConflictSpace(error));
+              data = await requestSharedSpace({
+                method: "PUT",
+                body: JSON.stringify({ state, baseRevision: latestSharedRevision })
+              });
+            } else {
+              throw error;
+            }
+          }
+          updateSharedServerMarkers(data);
           sharedLocalMutationPending = false;
           sharedSaveConflictNotified = false;
           writeSharedSpaceCache(data, state);
           if (Object.prototype.hasOwnProperty.call(data, "viewer")) setCurrentUser(data.viewer);
           resetSharedPollingCadence();
           scheduleSharedPoll(getSharedPollDelay());
+          saveSucceeded = true;
         } catch (error) {
           if (error && error.status === 409) {
             sharedLocalMutationPending = true;
@@ -7114,6 +7171,11 @@
           throw error;
         } finally {
           savingSharedState = false;
+          if (!saveSucceeded) sharedSaveQueued = false;
+        }
+        if (saveSucceeded && sharedSaveQueued) {
+          sharedSaveQueued = false;
+          scheduleAutosave();
         }
         return;
       }
@@ -7227,6 +7289,7 @@
       scheduleHistoryCommit();
       clearTimeout(saveTimer);
       saveTimer = setTimeout(() => {
+        saveTimer = null;
         void saveCurrentState().catch((error) => {
           console.error("Autosave failed:", error);
         });
