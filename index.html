@@ -736,7 +736,8 @@
     }
 
     #link-node-dialog-input,
-    #template-dialog-input {
+    #template-dialog-input,
+    #template-dialog-description {
       border: 1px solid #d0d0d0;
       border-radius: 6px;
       margin: 8px;
@@ -746,8 +747,14 @@
       outline: none;
     }
 
+    #template-dialog-description {
+      margin-top: 0;
+      resize: none;
+    }
+
     #link-node-dialog-input:focus,
-    #template-dialog-input:focus {
+    #template-dialog-input:focus,
+    #template-dialog-description:focus {
       border-color: #d0d0d0;
       box-shadow: none;
     }
@@ -1105,6 +1112,7 @@
   <div id="template-dialog" hidden>
     <div id="template-dialog-title">Save as global template</div>
     <input id="template-dialog-input" type="text" autocomplete="off" spellcheck="false" placeholder="Template name">
+    <textarea id="template-dialog-description" rows="2" autocomplete="off" spellcheck="true" placeholder="Description (optional)"></textarea>
     <div id="template-dialog-message" aria-live="polite"></div>
     <div id="template-dialog-actions">
       <button id="template-dialog-cancel-btn" type="button">Cancel</button>
@@ -1157,6 +1165,7 @@
     const linkNodeDialogConfirmBtn = document.getElementById("link-node-dialog-confirm-btn");
     const templateDialog = document.getElementById("template-dialog");
     const templateDialogInput = document.getElementById("template-dialog-input");
+    const templateDialogDescription = document.getElementById("template-dialog-description");
     const templateDialogMessage = document.getElementById("template-dialog-message");
     const templateDialogCancelBtn = document.getElementById("template-dialog-cancel-btn");
     const templateDialogConfirmBtn = document.getElementById("template-dialog-confirm-btn");
@@ -1212,8 +1221,9 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 136; // Increment once for each commit.
+    const APP_VERSION = 137; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
+    const DEFAULT_TEMPLATE_DESCRIPTION = "A pre-saved template";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -2895,6 +2905,7 @@
       pendingTemplateTargets = [];
       savingTemplate = false;
       templateDialogInput.value = "";
+      templateDialogDescription.value = "";
       templateDialogMessage.textContent = "";
       templateDialogMessage.dataset.tone = "";
       templateDialogConfirmBtn.disabled = false;
@@ -2991,6 +3002,7 @@
       );
       savingTemplate = false;
       templateDialogInput.value = "";
+      templateDialogDescription.value = "";
       updateTemplateDialogValidation();
       templateDialog.hidden = false;
       positionTemplateDialog(clientX, clientY);
@@ -3050,6 +3062,7 @@
       if (savingTemplate) return;
       const name = templateDialogInput.value.trim();
       const id = normalizeTemplateCommandId(name);
+      const description = templateDialogDescription.value.trim() || DEFAULT_TEMPLATE_DESCRIPTION;
       const problem = getTemplateNameProblem(name);
       if (problem) {
         setTemplateDialogMessage(problem, "warn");
@@ -3074,7 +3087,7 @@
             "Accept": "application/json",
             "Content-Type": "application/json"
           },
-          body: JSON.stringify({ id, name, payload })
+          body: JSON.stringify({ id, name, description, payload })
         });
         const data = await response.json().catch(() => ({}));
         if (!response.ok) {
@@ -5262,7 +5275,7 @@
       const templateCommands = globalTemplates.map((template) => ({
         id: template.id,
         title: template.name || "Template",
-        description: "Create saved template elements.",
+        description: template.description || DEFAULT_TEMPLATE_DESCRIPTION,
         kind: "template",
         template
       }));

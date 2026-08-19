@@ -8,6 +8,8 @@ const collectionName = process.env.MONGODB_TEMPLATES_COLLECTION || "SKYDIVE_TEMP
 const MAX_TEMPLATE_NODES = 120;
 const MAX_TEMPLATE_LINES = 300;
 const MAX_TEMPLATE_PAYLOAD_BYTES = 300000;
+const MAX_TEMPLATE_DESCRIPTION_LENGTH = 220;
+const DEFAULT_TEMPLATE_DESCRIPTION = "A pre-saved template";
 const COMMAND_ID_PATTERN = /^[a-z0-9_-]{1,64}$/;
 
 let collectionPromise = null;
@@ -77,6 +79,11 @@ function cloneJson(value, fallback) {
   }
 }
 
+function normalizeDescription(value) {
+  const description = String(value || "").normalize("NFKC").replace(/\s+/g, " ").trim();
+  return (description || DEFAULT_TEMPLATE_DESCRIPTION).slice(0, MAX_TEMPLATE_DESCRIPTION_LENGTH);
+}
+
 function normalizeTemplatePayload(value) {
   const payload = value && typeof value === "object" ? value : {};
   const nodes = Array.isArray(payload.nodes) ? payload.nodes : [];
@@ -101,6 +108,7 @@ function publicTemplate(template) {
   return {
     id: template.id,
     name: template.name,
+    description: normalizeDescription(template.description),
     payload: template.payload,
     createdAt: template.createdAt,
     updatedAt: template.updatedAt,
@@ -131,6 +139,7 @@ exports.handler = async (event) => {
       const body = event.body ? JSON.parse(event.body) : {};
       const id = normalizeTemplateId(body.id || body.name);
       const name = String(body.name || "").normalize("NFKC").replace(/\s+/g, " ").trim();
+      const description = normalizeDescription(body.description);
       if (!name || !COMMAND_ID_PATTERN.test(id)) {
         return json(400, { error: "Choose a short command-style name." }, cookies);
       }
@@ -148,6 +157,7 @@ exports.handler = async (event) => {
         ownerId: viewer.id,
         id,
         name,
+        description,
         payload,
         createdBy: authorSnapshot(viewer),
         createdAt: now,
