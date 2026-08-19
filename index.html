@@ -699,7 +699,8 @@
       outline-offset: 2px;
     }
 
-    #link-node-dialog {
+    #link-node-dialog,
+    #template-dialog {
       position: fixed;
       z-index: 1100;
       width: min(300px, calc(100vw - 16px));
@@ -712,20 +713,30 @@
       gap: 4px;
     }
 
-    #link-node-dialog[hidden] {
+    #link-node-dialog[hidden],
+    #template-dialog[hidden] {
       display: none;
     }
 
-    #link-node-dialog-title {
+    #link-node-dialog-title,
+    #template-dialog-title {
       padding: 8px 10px 6px;
       border-radius: 6px;
       font: 500 14px/1.2 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
       color: #111;
-      cursor: move;
       touch-action: none;
     }
 
-    #link-node-dialog-input {
+    #link-node-dialog-title {
+      cursor: move;
+    }
+
+    #template-dialog-title {
+      cursor: default;
+    }
+
+    #link-node-dialog-input,
+    #template-dialog-input {
       border: 1px solid #d0d0d0;
       border-radius: 6px;
       margin: 8px;
@@ -735,18 +746,32 @@
       outline: none;
     }
 
-    #link-node-dialog-input:focus {
+    #link-node-dialog-input:focus,
+    #template-dialog-input:focus {
       border-color: #d0d0d0;
       box-shadow: none;
     }
 
-    #link-node-dialog-actions {
+    #template-dialog-message {
+      min-height: 16px;
+      padding: 0 10px 2px;
+      font: 400 12px/1.25 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
+      color: #7b6a58;
+    }
+
+    #template-dialog-message[data-tone="warn"] {
+      color: #9a6a2f;
+    }
+
+    #link-node-dialog-actions,
+    #template-dialog-actions {
       display: flex;
       justify-content: flex-end;
       gap: 4px;
     }
 
-    #link-node-dialog button {
+    #link-node-dialog button,
+    #template-dialog button {
       border: 0;
       background: transparent;
       padding: 8px 10px;
@@ -757,8 +782,14 @@
       cursor: pointer;
     }
 
-    #link-node-dialog button:hover {
+    #link-node-dialog button:hover:not(:disabled),
+    #template-dialog button:hover:not(:disabled) {
       background: #f2f4f7;
+    }
+
+    #template-dialog button:disabled {
+      color: #999;
+      cursor: not-allowed;
     }
 
     #slash-command-menu {
@@ -1038,6 +1069,7 @@
     <button id="view-plain-text-btn" type="button">View as plain text</button>
     <button id="hook-title-btn" type="button">Hook node to window title</button>
     <button id="draw-line-btn" type="button">Line</button>
+    <button id="save-template-btn" type="button">Save as global template</button>
     <button id="link-selection-btn" type="button">Link selection to node ID...</button>
     <div id="widget-color-picker" role="radiogroup" aria-label="Widget color" hidden>
       <button class="widget-color-swatch" type="button" role="radio" aria-label="White" data-widget-color="#ffffff" style="--swatch-color: #ffffff"></button>
@@ -1068,6 +1100,15 @@
     <div id="link-node-dialog-actions">
       <button id="link-node-dialog-cancel-btn" type="button">Cancel</button>
       <button id="link-node-dialog-confirm-btn" type="button">Link</button>
+    </div>
+  </div>
+  <div id="template-dialog" hidden>
+    <div id="template-dialog-title">Save as global template</div>
+    <input id="template-dialog-input" type="text" autocomplete="off" spellcheck="false" placeholder="Template name">
+    <div id="template-dialog-message" aria-live="polite"></div>
+    <div id="template-dialog-actions">
+      <button id="template-dialog-cancel-btn" type="button">Cancel</button>
+      <button id="template-dialog-confirm-btn" type="button">Save</button>
     </div>
   </div>
   <div id="slash-command-menu" hidden></div>
@@ -1101,6 +1142,7 @@
     const viewPlainTextBtn = document.getElementById("view-plain-text-btn");
     const hookTitleBtn = document.getElementById("hook-title-btn");
     const drawLineBtn = document.getElementById("draw-line-btn");
+    const saveTemplateBtn = document.getElementById("save-template-btn");
     const linkSelectionBtn = document.getElementById("link-selection-btn");
     const widgetColorPicker = document.getElementById("widget-color-picker");
     const lineContextMenu = document.getElementById("line-context-menu");
@@ -1113,6 +1155,11 @@
     const linkNodeDialogInput = document.getElementById("link-node-dialog-input");
     const linkNodeDialogCancelBtn = document.getElementById("link-node-dialog-cancel-btn");
     const linkNodeDialogConfirmBtn = document.getElementById("link-node-dialog-confirm-btn");
+    const templateDialog = document.getElementById("template-dialog");
+    const templateDialogInput = document.getElementById("template-dialog-input");
+    const templateDialogMessage = document.getElementById("template-dialog-message");
+    const templateDialogCancelBtn = document.getElementById("template-dialog-cancel-btn");
+    const templateDialogConfirmBtn = document.getElementById("template-dialog-confirm-btn");
     const slashCommandMenu = document.getElementById("slash-command-menu");
     const fitGuideLeft = document.getElementById("fit-guide-left");
     const fitGuideRight = document.getElementById("fit-guide-right");
@@ -1165,7 +1212,8 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 135; // Increment once for each commit.
+    const APP_VERSION = 136; // Increment once for each commit.
+    const TEMPLATES_URL = "/.netlify/functions/templates";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
@@ -1211,6 +1259,7 @@
     const QUICK_RESIZE_STEP_FACTOR = 3;
     const QUICK_RESIZE_MIN_LEVEL = 1;
     const QUICK_RESIZE_MAX_LEVEL = 9;
+    const TEMPLATE_COMMAND_ID_PATTERN = /^[a-z0-9_-]{1,64}$/;
     const FILE_TYPES = [{
       description: "Mind Map JSON",
       accept: { "application/json": [".mind.json", ".json"] }
@@ -1243,6 +1292,8 @@
     let titleHookWorker = null;
     let pendingLinkSourceNode = null;
     let pendingLinkSelectionRange = null;
+    let pendingTemplateTargets = [];
+    let savingTemplate = false;
     let linkDialogDrag = null;
     let lineDraft = null;
     let marqueeSession = null;
@@ -1286,6 +1337,7 @@
     let lineRenderRoot = lineLayer;
     let spaceMeta = {};
     let currentUser = null;
+    let globalTemplates = [];
     let deloreanModified = false;
     let mobileInteractionMode = "pan";
     let mobilePointerSession = null;
@@ -2839,6 +2891,16 @@
       linkNodeDialog.hidden = true;
     }
 
+    function closeTemplateDialog() {
+      pendingTemplateTargets = [];
+      savingTemplate = false;
+      templateDialogInput.value = "";
+      templateDialogMessage.textContent = "";
+      templateDialogMessage.dataset.tone = "";
+      templateDialogConfirmBtn.disabled = false;
+      templateDialog.hidden = true;
+    }
+
     function positionLinkNodeDialog(clientX, clientY) {
       const desiredX = Number.isFinite(clientX) ? clientX : window.innerWidth / 2;
       const desiredY = Number.isFinite(clientY) ? clientY : window.innerHeight / 2;
@@ -2899,6 +2961,137 @@
       }
     }
 
+    function positionTemplateDialog(clientX, clientY) {
+      const desiredX = Number.isFinite(clientX) ? clientX : window.innerWidth / 2;
+      const desiredY = Number.isFinite(clientY) ? clientY : window.innerHeight / 2;
+      const rect = templateDialog.getBoundingClientRect();
+      const left = clamp(desiredX, 8, Math.max(8, window.innerWidth - rect.width - 8));
+      const top = clamp(desiredY, 8, Math.max(8, window.innerHeight - rect.height - 8));
+      templateDialog.style.left = `${left}px`;
+      templateDialog.style.top = `${top}px`;
+    }
+
+    function setTemplateDialogMessage(message, tone = "") {
+      templateDialogMessage.textContent = message || "";
+      templateDialogMessage.dataset.tone = tone || "";
+    }
+
+    function updateTemplateDialogValidation() {
+      const name = templateDialogInput.value;
+      const problem = getTemplateNameProblem(name);
+      templateDialogConfirmBtn.disabled = savingTemplate || Boolean(problem);
+      setTemplateDialogMessage(problem, problem ? "warn" : "");
+    }
+
+    function openTemplateDialog(targets, clientX, clientY) {
+      pendingTemplateTargets = targets.filter((target) =>
+        target instanceof HTMLElement &&
+        world.contains(target) &&
+        !isNodeDeleted(target)
+      );
+      savingTemplate = false;
+      templateDialogInput.value = "";
+      updateTemplateDialogValidation();
+      templateDialog.hidden = false;
+      positionTemplateDialog(clientX, clientY);
+      templateDialogInput.focus();
+      templateDialogInput.select();
+    }
+
+    function buildTemplatePayload(nodes) {
+      const targets = nodes.filter((node) => node instanceof HTMLElement && world.contains(node) && !isNodeDeleted(node));
+      if (targets.length === 0) return null;
+
+      const nodeIds = new Set(targets.map((node) => node.dataset.nodeId || "").filter(Boolean));
+      let minX = Infinity;
+      let minY = Infinity;
+      targets.forEach((node) => {
+        minX = Math.min(minX, Number(node.dataset.x));
+        minY = Math.min(minY, Number(node.dataset.y));
+      });
+      const origin = {
+        x: Number.isFinite(minX) ? minX : 0,
+        y: Number.isFinite(minY) ? minY : 0
+      };
+
+      return {
+        version: 1,
+        origin,
+        nodes: targets.map((node) => {
+          const entry = serializeNode(node);
+          return {
+            ...entry,
+            x: Number(entry.x) - origin.x,
+            y: Number(entry.y) - origin.y
+          };
+        }),
+        lines: lineConnections
+          .filter((line) => !line.deletedAt && nodeIds.has(line.from) && nodeIds.has(line.to))
+          .map(serializeLineConnection)
+      };
+    }
+
+    async function loadGlobalTemplates() {
+      try {
+        const response = await fetch(TEMPLATES_URL, {
+          headers: { "Accept": "application/json" },
+          cache: "no-store"
+        });
+        if (!response.ok) throw new Error(`Templates request failed: ${response.status}`);
+        const data = await response.json();
+        globalTemplates = Array.isArray(data.templates) ? data.templates : [];
+      } catch (error) {
+        console.error("Template load failed:", error);
+        globalTemplates = [];
+      }
+    }
+
+    async function submitTemplateDialog() {
+      if (savingTemplate) return;
+      const name = templateDialogInput.value.trim();
+      const id = normalizeTemplateCommandId(name);
+      const problem = getTemplateNameProblem(name);
+      if (problem) {
+        setTemplateDialogMessage(problem, "warn");
+        templateDialogInput.focus();
+        return;
+      }
+
+      const payload = buildTemplatePayload(pendingTemplateTargets);
+      if (!payload) {
+        setTemplateDialogMessage("Select something lovely first.", "warn");
+        return;
+      }
+
+      savingTemplate = true;
+      templateDialogConfirmBtn.disabled = true;
+      setTemplateDialogMessage("Saving...");
+
+      try {
+        const response = await fetch(TEMPLATES_URL, {
+          method: "POST",
+          headers: {
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ id, name, payload })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data.error || "Could not save this template.");
+        }
+        if (data.template) {
+          globalTemplates = [data.template].concat(globalTemplates.filter((template) => template.id !== data.template.id));
+        }
+        closeTemplateDialog();
+      } catch (error) {
+        savingTemplate = false;
+        setTemplateDialogMessage(error && error.message ? error.message : "Could not save this template.", "warn");
+        templateDialogConfirmBtn.disabled = false;
+        templateDialogInput.focus();
+      }
+    }
+
     function getContextMenuSizeTargets(node) {
       const targets = selectedNodes.has(node) ? Array.from(selectedNodes) : [node];
       return targets.filter((target) =>
@@ -2920,6 +3113,7 @@
       closeLineContextMenu();
       closeCanvasContextMenu();
       closeLinkNodeDialog();
+      closeTemplateDialog();
       contextMenuNode = node;
       contextMenuWidget = eventTargetExternalLinkCard(eventTarget, node);
       contextMenuSizeTargets = getContextMenuSizeTargets(node);
@@ -2945,6 +3139,7 @@
       closeNodeContextMenu();
       closeCanvasContextMenu();
       closeLinkNodeDialog();
+      closeTemplateDialog();
       contextMenuLineId = lineId;
       updateCalcOperationPicker(lineId);
       lineContextMenu.hidden = false;
@@ -2960,6 +3155,7 @@
       closeNodeContextMenu();
       closeLineContextMenu();
       closeLinkNodeDialog();
+      closeTemplateDialog();
       canvasContextMenu.hidden = false;
 
       const menuRect = canvasContextMenu.getBoundingClientRect();
@@ -5062,11 +5258,47 @@
     }
 
     function getRegisteredCommands() {
-      return Array.isArray(window.SkydiveCommands) ? window.SkydiveCommands : [];
+      const commands = Array.isArray(window.SkydiveCommands) ? window.SkydiveCommands : [];
+      const templateCommands = globalTemplates.map((template) => ({
+        id: template.id,
+        title: template.name || "Template",
+        description: "Create saved template elements.",
+        kind: "template",
+        template
+      }));
+      return commands.concat(templateCommands);
     }
 
     function getCommand(commandId) {
       return getRegisteredCommands().find((command) => command && command.id === commandId) || null;
+    }
+
+    function getStaticCommandIds() {
+      const commands = Array.isArray(window.SkydiveCommands) ? window.SkydiveCommands : [];
+      return new Set(commands.flatMap((command) => [
+        command && command.id,
+        ...(Array.isArray(command && command.aliases) ? command.aliases : [])
+      ]).map((value) => String(value || "").toLowerCase()).filter(Boolean));
+    }
+
+    function normalizeTemplateCommandId(value) {
+      return String(value || "")
+        .normalize("NFKC")
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, "-")
+        .replace(/[^a-z0-9_-]/g, "")
+        .replace(/[-_]{2,}/g, "-")
+        .replace(/^[-_]+|[-_]+$/g, "");
+    }
+
+    function getTemplateNameProblem(name) {
+      const id = normalizeTemplateCommandId(name);
+      if (!id) return "Give it a short name first.";
+      if (!TEMPLATE_COMMAND_ID_PATTERN.test(id)) return "Try a shorter command-style name.";
+      if (getStaticCommandIds().has(id)) return `/${id} is already a command.`;
+      if (globalTemplates.some((template) => template.id === id)) return `/${id} is already one of your templates.`;
+      return "";
     }
 
     function cloneCommandState(state) {
@@ -5636,6 +5868,71 @@
       return true;
     }
 
+    function createNodesFromTemplate(template, worldX, worldY, baseFontSize) {
+      const payload = template && template.payload && typeof template.payload === "object" ? template.payload : {};
+      const entries = Array.isArray(payload.nodes) ? payload.nodes : [];
+      const lines = Array.isArray(payload.lines) ? payload.lines : [];
+      const idMap = new Map();
+      const createdNodes = [];
+
+      entries.forEach((entry) => {
+        if (!entry || typeof entry !== "object") return;
+        const x = worldX + Number(entry.x || 0);
+        const y = worldY + Number(entry.y || 0);
+        const nodeBaseFontSize = Number.isFinite(Number(entry.baseFontSize)) && Number(entry.baseFontSize) > 0
+          ? Number(entry.baseFontSize)
+          : baseFontSize;
+        const options = {
+          rotation: Number.isFinite(Number(entry.rotation)) ? Number(entry.rotation) : 0,
+          variable: entry.variable === true,
+          viewMode: entry.viewMode === "markdown" ? "markdown" : ""
+        };
+        const node = entry.kind === "command"
+          ? createCommandNode(
+            x,
+            y,
+            String(entry.commandId || ""),
+            cloneJson(entry.commandState, {}),
+            nodeBaseFontSize,
+            "",
+            String(entry.commandVersion || ""),
+            options
+          )
+          : createTextNode(
+            x,
+            y,
+            typeof entry.text === "string" ? entry.text : "",
+            nodeBaseFontSize,
+            "",
+            typeof entry.html === "string" ? entry.html : null,
+            options
+          );
+        if (node) {
+          idMap.set(String(entry.id || ""), node.dataset.nodeId || "");
+          createdNodes.push(node);
+        }
+      });
+
+      lines.forEach((line) => {
+        if (!line || typeof line !== "object") return;
+        const from = idMap.get(String(line.from || ""));
+        const to = idMap.get(String(line.to || ""));
+        if (!from || !to || from === to || hasLineConnection(from, to)) return;
+        const operation = normalizeCalcOperation(line.operation);
+        lineConnections.push({
+          id: generateLineId(),
+          from,
+          to,
+          createdAt: Date.now(),
+          ...(operation ? { operation } : {})
+        });
+      });
+
+      renderLineConnections();
+      updateCalcVariables();
+      return createdNodes;
+    }
+
     function executeSlashCommand(index = slashCommandSelectedIndex) {
       const session = slashCommandSession;
       if (!session) return;
@@ -5647,6 +5944,36 @@
       const sourceX = Number(sourceNode.dataset.x);
       const sourceY = Number(sourceNode.dataset.y);
       removeSlashToken(sourceNode, session);
+
+      if (command.kind === "template") {
+        const insertX = sourceX;
+        const insertY = (sourceNode.textContent || "").trim()
+          ? sourceY + size.height + 12 / camera.scale
+          : sourceY;
+        const wasSuppressingAutosave = suppressAutosave;
+        suppressAutosave = true;
+        let createdNodes = [];
+        try {
+          createdNodes = createNodesFromTemplate(
+            command.template,
+            insertX,
+            insertY,
+            Number(sourceNode.dataset.baseFontSize)
+          );
+          if (!(sourceNode.textContent || "").trim()) {
+            softDeleteNodes([sourceNode]);
+          } else {
+            sourceNode.blur();
+          }
+        } finally {
+          suppressAutosave = wasSuppressingAutosave;
+        }
+        closeSlashCommandMenu();
+        setSelectedNodes(createdNodes);
+        updateDocumentTitle();
+        scheduleAutosave();
+        return;
+      }
 
       if (command.output === "text" && typeof command.createText === "function") {
         insertTextAtCaretInNode(sourceNode, command.createText({ args: session.args || "", query: session.query || "" }));
@@ -7439,6 +7766,7 @@
       closeLineContextMenu();
       closeCanvasContextMenu();
       closeLinkNodeDialog();
+      closeTemplateDialog();
       closeSlashCommandMenu();
       clearSelection();
       hideMarqueeRect();
@@ -7508,6 +7836,7 @@
         closeLineContextMenu();
         closeCanvasContextMenu();
         closeLinkNodeDialog();
+        closeTemplateDialog();
         closeSlashCommandMenu();
         clearSelection();
         hideMarqueeRect();
@@ -8346,6 +8675,21 @@
       openLinkNodeDialog(sourceNode, selectionRange, spawnX, spawnY);
     });
 
+    saveTemplateBtn.addEventListener("click", (event) => {
+      const targets = contextMenuSizeTargets.slice();
+      const menuRect = nodeContextMenu.getBoundingClientRect();
+      const hasPointerLocation =
+        Number.isFinite(event.clientX) &&
+        Number.isFinite(event.clientY) &&
+        event.clientX > 0 &&
+        event.clientY > 0;
+      const spawnX = hasPointerLocation ? event.clientX : menuRect.left + 12;
+      const spawnY = hasPointerLocation ? event.clientY : menuRect.top + 12;
+      closeNodeContextMenu();
+      if (targets.length === 0) return;
+      openTemplateDialog(targets, spawnX, spawnY);
+    });
+
     linkNodeDialogCancelBtn.addEventListener("click", () => {
       closeLinkNodeDialog();
     });
@@ -8363,6 +8707,28 @@
       if (event.key === "Escape") {
         event.preventDefault();
         closeLinkNodeDialog();
+      }
+    });
+
+    templateDialogCancelBtn.addEventListener("click", () => {
+      closeTemplateDialog();
+    });
+
+    templateDialogConfirmBtn.addEventListener("click", () => {
+      void submitTemplateDialog();
+    });
+
+    templateDialogInput.addEventListener("input", updateTemplateDialogValidation);
+
+    templateDialogInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        void submitTemplateDialog();
+      }
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeTemplateDialog();
       }
     });
 
@@ -8578,6 +8944,7 @@
       closeNodeContextMenu();
       closeLineContextMenu();
       closeCanvasContextMenu();
+      closeTemplateDialog();
       cancelNodeLayoutAnimation();
       clearSelection();
       const point = screenToWorld(event.clientX, event.clientY);
@@ -8618,6 +8985,7 @@
       closeLineContextMenu();
       closeCanvasContextMenu();
       closeLinkNodeDialog();
+      closeTemplateDialog();
       closeSlashCommandMenu();
       cancelCameraAnimation();
       cancelNodeLayoutAnimation();
@@ -8751,6 +9119,7 @@
       closeLineContextMenu();
       closeCanvasContextMenu();
       closeLinkNodeDialog();
+      closeTemplateDialog();
       closeSlashCommandMenu();
       render();
     });
@@ -8988,6 +9357,7 @@
       if (loadingScreenShown) setLoadingProgress(10);
       void requestPersistentStorage();
       try {
+        await loadGlobalTemplates();
         if (SHARED_SPACE_SLUG) {
           if (loadingScreenShown) setLoadingProgress(20);
           try {
