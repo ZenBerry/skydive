@@ -793,11 +793,12 @@ function buildManifest(event) {
 async function listSpaces(collection) {
   const spaces = await collection.find(
     {},
-    { projection: { _id: 0, slug: 1, updatedAt: 1, revision: 1, createdBy: 1 } }
-  ).sort({ updatedAt: -1 }).limit(500).toArray();
+    { projection: { _id: 0, slug: 1, createdAt: 1, updatedAt: 1, revision: 1, createdBy: 1 } }
+  ).sort({ updatedAt: -1 }).toArray();
 
   return spaces.map((space) => ({
     slug: space.slug,
+    createdAt: Number(space.createdAt) || 0,
     updatedAt: Number(space.updatedAt) || 0,
     revision: Number(space.revision) || 0,
     createdBy: space.createdBy || null

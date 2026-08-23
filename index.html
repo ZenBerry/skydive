@@ -1287,7 +1287,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 139; // Increment once for each commit.
+    const APP_VERSION = 140; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const DEFAULT_TEMPLATE_DESCRIPTION = "A pre-saved template";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
@@ -1316,6 +1316,7 @@
     const RESERVED_SHARED_SPACE_SLUGS = new Set(["agents", "api", PLAYGROUND_SLUG]);
     const SHARED_SPACE_PARTS = getSharedSpacePathParts();
     const SHARED_SPACE_SLUG = getSharedSpaceSlug();
+    const USER_SPACES_INFO = getUserSpacesPageInfo();
     const TARGET_NODE_ID = new URLSearchParams(window.location.search).get("n") || "";
     const DELOREAN_SPACE_INFO = getDeloreanSpaceInfo();
     const SHARED_POLL_DELAYS_MS = [2000, 5000, 10000, 30000];
@@ -1338,11 +1339,12 @@
     const QUICK_RESIZE_MIN_LEVEL = 1;
     const QUICK_RESIZE_MAX_LEVEL = 9;
     const TEMPLATE_COMMAND_ID_PATTERN = /^[a-z0-9_-]{1,64}$/;
-    const PLAYGROUND_WIDGET_BASE_FONT_SIZE = 44;
-    const PLAYGROUND_SLOT_GAP_X = 360;
-    const PLAYGROUND_SLOT_GAP_Y = 240;
-    const PLAYGROUND_INITIAL_COLUMNS = 3;
-    const PLAYGROUND_INITIAL_ROWS = 2;
+    const LANDSCAPE_WIDGET_BASE_FONT_SIZE = 44;
+    const LANDSCAPE_SLOT_GAP_X = 360;
+    const LANDSCAPE_SLOT_GAP_Y = 240;
+    const LANDSCAPE_INITIAL_COLUMNS = 3;
+    const LANDSCAPE_INITIAL_ROWS = 2;
+    const USER_SPACES_SYNC_DEBOUNCE_MS = 1200;
     const FILE_TYPES = [{
       description: "Mind Map JSON",
       accept: { "application/json": [".mind.json", ".json"] }
@@ -1403,6 +1405,8 @@
     let sharedPollTimer = null;
     let sharedPollDelayIndex = 0;
     let sharedPollInFlight = false;
+    let userSpacesSyncTimer = null;
+    let userSpacesSyncInFlight = false;
     let slashCommandSession = null;
     let slashCommandSelectedIndex = 0;
     let externalLinkCardPointer = null;
@@ -1546,6 +1550,22 @@
 
     function getSharedSpaceSlug() {
       return SHARED_SPACE_PARTS.join("/");
+    }
+
+    function normalizeUserSlug(value) {
+      return String(value || "").normalize("NFKC").trim().toLocaleLowerCase("en-US");
+    }
+
+    function getUserSpacesPageInfo() {
+      if (SHARED_SPACE_PARTS.length !== 2 || SHARED_SPACE_PARTS[1].toLocaleLowerCase("en-US") !== "spaces") {
+        return { active: false, username: "", usernameKey: "" };
+      }
+      const username = SHARED_SPACE_PARTS[0] || "";
+      return {
+        active: Boolean(username),
+        username,
+        usernameKey: normalizeUserSlug(username)
+      };
     }
 
     function getDeloreanSpaceInfo() {
@@ -8652,10 +8672,10 @@
       return `playground-widget-${index}`;
     }
 
-    function getPlaygroundSlot(index) {
+    function getLandscapeSlot(index) {
       let remaining = Math.max(1, Math.floor(Number(index) || 1));
-      let columns = PLAYGROUND_INITIAL_COLUMNS;
-      let rows = PLAYGROUND_INITIAL_ROWS;
+      let columns = LANDSCAPE_INITIAL_COLUMNS;
+      let rows = LANDSCAPE_INITIAL_ROWS;
       const initialSlots = columns * rows;
 
       if (remaining <= initialSlots) {
@@ -8688,12 +8708,16 @@
       }
     }
 
-    function getPlaygroundSlotCenter(index) {
-      const slot = getPlaygroundSlot(index);
+    function getLandscapeSlotCenter(index) {
+      const slot = getLandscapeSlot(index);
       return {
-        x: (slot.column - (PLAYGROUND_INITIAL_COLUMNS - 1) / 2) * PLAYGROUND_SLOT_GAP_X,
-        y: (slot.row - (PLAYGROUND_INITIAL_ROWS - 1) / 2) * PLAYGROUND_SLOT_GAP_Y
+        x: (slot.column - (LANDSCAPE_INITIAL_COLUMNS - 1) / 2) * LANDSCAPE_SLOT_GAP_X,
+        y: (slot.row - (LANDSCAPE_INITIAL_ROWS - 1) / 2) * LANDSCAPE_SLOT_GAP_Y
       };
+    }
+
+    function getPlaygroundSlotCenter(index) {
+      return getLandscapeSlotCenter(index);
     }
 
     function getPlaygroundWidgetCount() {
@@ -8727,7 +8751,7 @@
         center.x,
         center.y,
         "",
-        PLAYGROUND_WIDGET_BASE_FONT_SIZE,
+        LANDSCAPE_WIDGET_BASE_FONT_SIZE,
         widgetId
       );
       node.dataset.playgroundMock = "true";
@@ -8796,6 +8820,148 @@
         addPlaygroundWidget();
       });
       updatePlaygroundControls();
+    }
+
+    function getUserSpaceWidgetId(slug) {
+      return `user-space:${String(slug || "").trim()}`;
+    }
+
+    function getUserSpaceWidgetCount() {
+      let count = 0;
+      for (const node of world.children) {
+        if (!(node instanceof HTMLElement) || isNodeDeleted(node)) continue;
+        if (node.dataset.userSpaceWidget === "true") count += 1;
+      }
+      return count;
+    }
+
+    function getUserSpaceWidgetBySlug(slug, options = {}) {
+      return getNodeById(getUserSpaceWidgetId(slug), options);
+    }
+
+    function normalizeSpaceOwnerKey(space) {
+      return normalizeUserSlug(space && space.createdBy && space.createdBy.nickname);
+    }
+
+    function isIndexedUserSpace(space) {
+      const slug = String(space && space.slug || "").trim();
+      if (!slug || slug.startsWith("delorean/") || slug === SHARED_SPACE_SLUG) return false;
+      return normalizeSpaceOwnerKey(space) === USER_SPACES_INFO.usernameKey;
+    }
+
+    function compareSpacesByCreatedAt(left, right) {
+      const leftCreatedAt = Number(left && left.createdAt) || Number(left && left.updatedAt) || 0;
+      const rightCreatedAt = Number(right && right.createdAt) || Number(right && right.updatedAt) || 0;
+      if (leftCreatedAt !== rightCreatedAt) return leftCreatedAt - rightCreatedAt;
+      return String(left && left.slug || "").localeCompare(String(right && right.slug || ""));
+    }
+
+    async function fetchAgentSpaces() {
+      const response = await fetch("/api/agent?spaces=1", {
+        headers: { "Accept": "application/json" },
+        cache: "no-store"
+      });
+      if (!response.ok) throw new Error(`Spaces list request failed: ${response.status}`);
+      const data = await response.json();
+      return Array.isArray(data && data.spaces) ? data.spaces : [];
+    }
+
+    function createUserSpaceWidget(space) {
+      const slug = String(space && space.slug || "").trim();
+      if (!slug) return null;
+      const widgetId = getUserSpaceWidgetId(slug);
+      const existing = getUserSpaceWidgetBySlug(slug, { includeDeleted: true });
+      if (existing && !isNodeDeleted(existing)) return existing;
+      if (existing) removeNodeImmediately(existing);
+
+      const center = getLandscapeSlotCenter(getUserSpaceWidgetCount() + 1);
+      const node = createTextNode(
+        center.x,
+        center.y,
+        "",
+        LANDSCAPE_WIDGET_BASE_FONT_SIZE,
+        widgetId
+      );
+      node.dataset.userSpaceWidget = "true";
+      node.dataset.userSpaceSlug = slug;
+      const card = createExternalLinkCard(
+        getAbsoluteSpaceUrl(slug),
+        slug
+      );
+      if (card) {
+        node.replaceChildren(card);
+        normalizeNodeMarkup(node);
+      } else {
+        node.textContent = slug;
+      }
+      renderNode(node);
+      setNodeCenteredAtWorldPoint(node, center.x, center.y);
+      return node;
+    }
+
+    function ensureUserSpaceWidgets(spaces) {
+      const orderedSpaces = spaces
+        .filter(isIndexedUserSpace)
+        .sort(compareSpacesByCreatedAt);
+      let created = 0;
+
+      for (const space of orderedSpaces) {
+        const slug = String(space.slug || "").trim();
+        if (!slug || getUserSpaceWidgetBySlug(slug)) continue;
+        if (createUserSpaceWidget(space)) created += 1;
+      }
+
+      const missing = orderedSpaces.filter((space) => {
+        const slug = String(space.slug || "").trim();
+        return slug && !getUserSpaceWidgetBySlug(slug);
+      });
+      for (const space of missing) {
+        if (createUserSpaceWidget(space)) created += 1;
+      }
+
+      return {
+        total: orderedSpaces.length,
+        created,
+        missingAfterSync: orderedSpaces.filter((space) => {
+          const slug = String(space.slug || "").trim();
+          return slug && !getUserSpaceWidgetBySlug(slug);
+        }).map((space) => String(space.slug || ""))
+      };
+    }
+
+    async function syncUserSpacesIndex(options = {}) {
+      if (!USER_SPACES_INFO.active || userSpacesSyncInFlight) return;
+      if (isSharedEditLocked() && options.force !== true) return;
+      userSpacesSyncInFlight = true;
+      try {
+        const spaces = await fetchAgentSpaces();
+        const result = ensureUserSpaceWidgets(spaces);
+        if (result.created > 0) {
+          clearSelection();
+          if (saveTimer !== null) {
+            clearTimeout(saveTimer);
+            saveTimer = null;
+          }
+          commitHistorySnapshot();
+          await saveCurrentState();
+        }
+        if (result.missingAfterSync.length > 0) {
+          console.error("User spaces index sync missed spaces:", result.missingAfterSync);
+        }
+      } catch (error) {
+        console.error("User spaces index sync failed:", error);
+      } finally {
+        userSpacesSyncInFlight = false;
+      }
+    }
+
+    function scheduleUserSpacesIndexSync(delayMs = USER_SPACES_SYNC_DEBOUNCE_MS) {
+      if (!USER_SPACES_INFO.active) return;
+      clearTimeout(userSpacesSyncTimer);
+      userSpacesSyncTimer = setTimeout(() => {
+        userSpacesSyncTimer = null;
+        void syncUserSpacesIndex();
+      }, Math.max(0, delayMs));
     }
 
     window.addEventListener("pointerdown", blockSharedEditUntilValidated, { capture: true });
@@ -9403,11 +9569,15 @@
     document.addEventListener("visibilitychange", () => {
       updateDocumentTitle();
       if (document.hidden) clearSharedPollTimer();
-      else refreshSharedSpaceSoon();
+      else {
+        refreshSharedSpaceSoon();
+        scheduleUserSpacesIndexSync();
+      }
     });
     window.addEventListener("focus", () => {
       updateDocumentTitle();
       refreshSharedSpaceSoon();
+      scheduleUserSpacesIndexSync();
     });
 
     async function loadFromLocalStorage(options = {}) {
@@ -9630,28 +9800,35 @@
         if (IS_PLAYGROUND) {
           if (loadingScreenShown) setLoadingProgress(90);
           await loadState({ version: 1, nodes: [], lines: [] }, { autosave: false });
-          setupPlaygroundControls();
+          // setupPlaygroundControls();
           render();
           return;
         }
         if (SHARED_SPACE_SLUG) {
           if (loadingScreenShown) setLoadingProgress(20);
           try {
-            if (!await loadFromSharedSpaceWithCache({
+            const loadOptions = {
               incremental: true,
               onProgress: (progress) => {
                 if (loadingScreenShown) setLoadingProgress(20 + progress * 75);
-              },
-              onCacheFallback: () => {
-                if (loadingScreenShown) return;
-                showLoadingScreen();
-                loadingScreenShown = true;
-                setLoadingProgress(20);
               }
-            })) {
+            };
+            const loaded = USER_SPACES_INFO.active
+              ? await loadFromSharedSpace(loadOptions)
+              : await loadFromSharedSpaceWithCache({
+                ...loadOptions,
+                onCacheFallback: () => {
+                  if (loadingScreenShown) return;
+                  showLoadingScreen();
+                  loadingScreenShown = true;
+                  setLoadingProgress(20);
+                }
+              });
+            if (!loaded) {
               if (loadingScreenShown) setLoadingProgress(90);
               render();
             }
+            if (USER_SPACES_INFO.active) await syncUserSpacesIndex({ force: true });
             startSharedPolling();
             if (sharedSpaceLoadedFromCache) refreshSharedSpaceSoon();
           } catch (error) {
