@@ -1,5 +1,6 @@
 # Codex Notes
 
+- 2026-08-23: Updated the soft-green widget color to `#e8fced`, preserved old saved green widget state through a color alias, set links to use `text-decoration-thickness: from-font`, and bumped `APP_VERSION` to 141.
 - 2026-08-15: Made the shared widget shell radius override apply to external-link widgets too, so link widgets match command widget corner radii. Bumped `APP_VERSION` to 121.
 - 2026-08-15: Added a dedicated shared `--widget-button-radius` set to pill-round corners for command and external-link widget buttons, leaving the hand-tuned shell/control radii intact. Bumped `APP_VERSION` to 120.
 - 2026-08-15: Increased shared widget shell/control radii while keeping progressive squircle corner rendering, making command widgets and external-link widgets feel more Apple-like. Bumped `APP_VERSION` to 119.
