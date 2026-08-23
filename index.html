@@ -1148,7 +1148,7 @@
       <button class="widget-color-swatch" type="button" role="radio" aria-label="White" data-widget-color="#ffffff" style="--swatch-color: #ffffff"></button>
       <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft peach" data-widget-color="#f4cbb9" style="--swatch-color: #f4cbb9"></button>
       <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft beige" data-widget-color="#fff8ed" style="--swatch-color: #fff8ed"></button>
-      <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft green" data-widget-color="#e8fced" style="--swatch-color: #e8fced"></button>
+      <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft green" data-widget-color="#ecfce8" style="--swatch-color: #ecfce8"></button>
       <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft blue" data-widget-color="#c8def1" style="--swatch-color: #c8def1"></button>
       <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft purple" data-widget-color="#ddcfed" style="--swatch-color: #ddcfed"></button>
       <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft gray" data-widget-color="#dfddd9" style="--swatch-color: #dfddd9"></button>
@@ -1291,7 +1291,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 142; // Increment once for each commit.
+    const APP_VERSION = 143; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const DEFAULT_TEMPLATE_DESCRIPTION = "A pre-saved template";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
@@ -1299,9 +1299,10 @@
     const AUDIO_WIDGET_COMMAND_ID = "rec";
     const WIDGET_COLOR_STATE_KEY = "_widgetColor";
     const DEFAULT_WIDGET_COLOR = "#ffffff";
-    const WIDGET_COLORS = new Set(["#ffffff", "#f4cbb9", "#fff8ed", "#e8fced", "#c8def1", "#ddcfed", "#dfddd9"]);
+    const WIDGET_COLORS = new Set(["#ffffff", "#f4cbb9", "#fff8ed", "#ecfce8", "#c8def1", "#ddcfed", "#dfddd9"]);
     const LEGACY_WIDGET_COLOR_ALIASES = new Map([
-      ["#c9e1ce", "#e8fced"]
+      ["#c9e1ce", "#ecfce8"],
+      ["#e8fced", "#ecfce8"]
     ]);
     const CALC_OPERATIONS = new Set(["+", "-", "*", "÷", "="]);
     const SANITIZED_INLINE_TAGS = new Map([

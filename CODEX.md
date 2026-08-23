@@ -1,5 +1,6 @@
 # Codex Notes
 
+- 2026-08-23: Updated the soft-green widget color to `#ecfce8`, mapped prior green widget colors to the new shade, and bumped `APP_VERSION` to 143.
 - 2026-08-23: Added `text-decoration-thickness: from-font` to external link widget labels, made computed widget button colors render at 44% alpha, and bumped `APP_VERSION` to 142.
 - 2026-08-23: Updated the soft-green widget color to `#e8fced`, preserved old saved green widget state through a color alias, set links to use `text-decoration-thickness: from-font`, and bumped `APP_VERSION` to 141.
 - 2026-08-15: Made the shared widget shell radius override apply to external-link widgets too, so link widgets match command widget corner radii. Bumped `APP_VERSION` to 121.
