@@ -354,8 +354,8 @@
     .command-node,
     .external-link-card {
       --widget-color: #ffffff;
-      --widget-button-color: #e8e8e8;
-      --widget-button-hover-color: #f0f0f0;
+      --widget-button-color: hsl(0 0% 91% / 44%);
+      --widget-button-hover-color: hsl(0 0% 94% / 44%);
       --widget-border-color: #d6d6d6;
       --widget-field-color: #ffffff;
       --widget-field-border-color: #d6d6d6;
@@ -492,6 +492,7 @@
       cursor: pointer;
       font: 500 0.78em/1.16 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
       text-decoration: underline;
+      text-decoration-thickness: from-font;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
@@ -1290,7 +1291,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 141; // Increment once for each commit.
+    const APP_VERSION = 142; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const DEFAULT_TEMPLATE_DESCRIPTION = "A pre-saved template";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
@@ -5448,7 +5449,7 @@
       return WIDGET_COLORS.has(color) ? color : "";
     }
 
-    function adjustWidgetColorLightness(color, delta) {
+    function adjustWidgetColorLightness(color, delta, alpha = 1) {
       const match = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(color);
       if (!match) return color;
 
@@ -5470,7 +5471,8 @@
         hue = (hue * 60 + 360) % 360;
       }
 
-      return `hsl(${hue.toFixed(1)} ${Math.round(saturation * 100)}% ${clamp(lightness * 100 + delta, 0, 100).toFixed(1)}%)`;
+      const alphaSuffix = alpha < 1 ? ` / ${Math.round(alpha * 100)}%` : "";
+      return `hsl(${hue.toFixed(1)} ${Math.round(saturation * 100)}% ${clamp(lightness * 100 + delta, 0, 100).toFixed(1)}%${alphaSuffix})`;
     }
 
     function getWidgetColor(node) {
@@ -5489,8 +5491,8 @@
       if (isCommandNode(node) || color !== DEFAULT_WIDGET_COLOR) node.dataset.widgetColor = color;
       else delete node.dataset.widgetColor;
       node.style.setProperty("--widget-color", color);
-      node.style.setProperty("--widget-button-color", adjustWidgetColorLightness(color, -9));
-      node.style.setProperty("--widget-button-hover-color", adjustWidgetColorLightness(color, -6));
+      node.style.setProperty("--widget-button-color", adjustWidgetColorLightness(color, -9, 0.44));
+      node.style.setProperty("--widget-button-hover-color", adjustWidgetColorLightness(color, -6, 0.44));
       node.style.setProperty("--widget-border-color", adjustWidgetColorLightness(color, -16));
       node.style.setProperty("--widget-field-color", adjustWidgetColorLightness(color, 4));
       node.style.setProperty("--widget-field-border-color", adjustWidgetColorLightness(color, -14));
