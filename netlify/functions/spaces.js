@@ -4,6 +4,7 @@ const { authorSnapshot, getSessionUserWithRefresh } = require("./lib/users");
 const mongoUri = process.env.MONGODB_URI;
 const dbName = process.env.MONGODB_DB || "ZENBERRY_MAIN";
 const collectionName = process.env.MONGODB_COLLECTION || "SKYDIVE_SPACES";
+const PLAYGROUND_SLUG = "playground";
 
 let collectionPromise = null;
 
@@ -83,6 +84,19 @@ exports.handler = async (event) => {
   const slug = getSlug(event);
   if (!slug) {
     return json(400, { error: "A valid slug is required." });
+  }
+
+  if (slug === PLAYGROUND_SLUG || slug.startsWith(`${PLAYGROUND_SLUG}/`)) {
+    if (event.httpMethod === "GET") {
+      return json(200, {
+        slug,
+        state: null,
+        revision: 0,
+        updatedAt: 0,
+        playground: true
+      });
+    }
+    return json(403, { error: "Playground spaces are ephemeral and cannot be saved." });
   }
 
   try {

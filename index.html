@@ -1022,6 +1022,63 @@
     #mobile-redo-btn img {
       transform: scaleX(-1);
     }
+
+    #playground-controls {
+      position: fixed;
+      right: calc(12px + env(safe-area-inset-right, 0px));
+      bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+      z-index: 1300;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px;
+      border: 1px solid rgba(17, 24, 39, 0.12);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.88);
+      box-shadow: 0 4px 14px rgba(15, 23, 42, 0.1);
+      -webkit-backdrop-filter: blur(10px);
+      backdrop-filter: blur(10px);
+      opacity: 0.34;
+      transition: opacity 120ms ease;
+    }
+
+    #playground-controls:hover,
+    #playground-controls:focus-within {
+      opacity: 1;
+    }
+
+    #playground-controls[hidden] {
+      display: none;
+    }
+
+    #playground-controls button {
+      display: grid;
+      width: 30px;
+      height: 30px;
+      place-items: center;
+      border: 1px solid rgba(17, 24, 39, 0.15);
+      border-radius: 6px;
+      background: #fff;
+      color: #111827;
+      font: 700 18px/1 "Roboto", "Helvetica Neue", Arial, sans-serif;
+      cursor: pointer;
+    }
+
+    #playground-controls button:hover:not(:disabled) {
+      background: #f2f4f7;
+    }
+
+    #playground-controls button:disabled {
+      opacity: 0.34;
+      cursor: not-allowed;
+    }
+
+    #playground-count {
+      min-width: 2ch;
+      color: #6b7280;
+      font: 500 12px/1 "Roboto", "Helvetica Neue", Arial, sans-serif;
+      text-align: center;
+    }
   </style>
 </head>
 <body>
@@ -1063,6 +1120,11 @@
         <path d="M11 11.5v5M13 11.5v5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
       </svg>
     </button>
+  </div>
+  <div id="playground-controls" role="toolbar" aria-label="Playground mock widgets" hidden>
+    <button id="playground-remove-btn" type="button" aria-label="Remove mock widget" title="Remove mock widget">-</button>
+    <span id="playground-count" aria-live="polite">0</span>
+    <button id="playground-add-btn" type="button" aria-label="Add mock widget" title="Add mock widget">+</button>
   </div>
   <div id="fit-guide-left" class="fit-marker guide" aria-hidden="true" hidden></div>
   <div id="fit-guide-right" class="fit-marker guide" aria-hidden="true" hidden></div>
@@ -1181,6 +1243,10 @@
     const mobileUndoBtn = document.getElementById("mobile-undo-btn");
     const mobileRedoBtn = document.getElementById("mobile-redo-btn");
     const mobileDeleteBtn = document.getElementById("mobile-delete-btn");
+    const playgroundControls = document.getElementById("playground-controls");
+    const playgroundRemoveBtn = document.getElementById("playground-remove-btn");
+    const playgroundAddBtn = document.getElementById("playground-add-btn");
+    const playgroundCount = document.getElementById("playground-count");
 
     const BASE_TEXT_PX = 28;
     const ZOOM_SENSITIVITY = 0.012;
@@ -1245,7 +1311,9 @@
     const DELOREAN_COMMAND_ID = "delorean";
     const DELOREAN_SPACE_PREFIX = "delorean";
     const SVG_NS = "http://www.w3.org/2000/svg";
-    const RESERVED_SHARED_SPACE_SLUGS = new Set(["agents", "api"]);
+    const PLAYGROUND_SLUG = "playground";
+    const IS_PLAYGROUND = isPlaygroundPath();
+    const RESERVED_SHARED_SPACE_SLUGS = new Set(["agents", "api", PLAYGROUND_SLUG]);
     const SHARED_SPACE_PARTS = getSharedSpacePathParts();
     const SHARED_SPACE_SLUG = getSharedSpaceSlug();
     const TARGET_NODE_ID = new URLSearchParams(window.location.search).get("n") || "";
@@ -1270,6 +1338,11 @@
     const QUICK_RESIZE_MIN_LEVEL = 1;
     const QUICK_RESIZE_MAX_LEVEL = 9;
     const TEMPLATE_COMMAND_ID_PATTERN = /^[a-z0-9_-]{1,64}$/;
+    const PLAYGROUND_WIDGET_BASE_FONT_SIZE = 44;
+    const PLAYGROUND_SLOT_GAP_X = 360;
+    const PLAYGROUND_SLOT_GAP_Y = 240;
+    const PLAYGROUND_INITIAL_COLUMNS = 3;
+    const PLAYGROUND_INITIAL_ROWS = 2;
     const FILE_TYPES = [{
       description: "Mind Map JSON",
       accept: { "application/json": [".mind.json", ".json"] }
@@ -1375,6 +1448,11 @@
     };
 
     versionCounter.textContent = `v${APP_VERSION}`;
+
+    function isPlaygroundPath() {
+      const parts = window.location.pathname.split("/").filter(Boolean).map((part) => decodePathPart(part).toLowerCase());
+      return parts.length === 1 && parts[0] === PLAYGROUND_SLUG;
+    }
 
     function detectMobileDevice() {
       const userAgent = navigator.userAgent || "";
@@ -1504,6 +1582,7 @@
     }
 
     function getBaseDocumentTitle() {
+      if (IS_PLAYGROUND) return "Skydive - playground";
       if (!SHARED_SPACE_SLUG) return "Skydive";
       if (DELOREAN_SPACE_INFO.active) {
         return `Skydive - ${DELOREAN_SPACE_INFO.originalSlug} @ ${DELOREAN_SPACE_INFO.dateSlug}`;
@@ -7483,6 +7562,7 @@
     }
 
     async function saveCurrentState() {
+      if (IS_PLAYGROUND) return;
       if (isSharedEditLocked()) return;
       markDeloreanModified();
       const state = serializeState();
@@ -7641,6 +7721,11 @@
 
     function scheduleAutosave() {
       if (suppressAutosave || applyingSharedState || isSharedEditLocked()) return;
+      if (IS_PLAYGROUND) {
+        scheduleHistoryCommit();
+        updatePlaygroundControls();
+        return;
+      }
       if (SHARED_SPACE_SLUG) sharedLocalMutationPending = true;
       markDeloreanModified();
       scheduleHistoryCommit();
@@ -7654,6 +7739,7 @@
     }
 
     function saveViewportToSession() {
+      if (IS_PLAYGROUND) return false;
       try {
         sessionStorage.setItem(getViewportStorageKey(), JSON.stringify({
           x: camera.x,
@@ -7685,6 +7771,7 @@
     }
 
     function loadViewportFromSession() {
+      if (IS_PLAYGROUND) return false;
       let raw = "";
       try {
         raw = sessionStorage.getItem(getViewportStorageKey()) || "";
@@ -7924,6 +8011,7 @@
     }
 
     async function requestPersistentStorage() {
+      if (IS_PLAYGROUND) return;
       if (!navigator.storage || !navigator.storage.persist) return;
       try {
         await navigator.storage.persist();
@@ -8560,6 +8648,156 @@
       return node;
     }
 
+    function getPlaygroundWidgetId(index) {
+      return `playground-widget-${index}`;
+    }
+
+    function getPlaygroundSlot(index) {
+      let remaining = Math.max(1, Math.floor(Number(index) || 1));
+      let columns = PLAYGROUND_INITIAL_COLUMNS;
+      let rows = PLAYGROUND_INITIAL_ROWS;
+      const initialSlots = columns * rows;
+
+      if (remaining <= initialSlots) {
+        const zeroIndex = remaining - 1;
+        return {
+          column: zeroIndex % columns,
+          row: Math.floor(zeroIndex / columns)
+        };
+      }
+
+      remaining -= initialSlots;
+      while (true) {
+        columns += 1;
+        if (remaining <= rows) {
+          return {
+            column: columns - 1,
+            row: remaining - 1
+          };
+        }
+        remaining -= rows;
+
+        rows += 1;
+        if (remaining <= columns) {
+          return {
+            column: remaining - 1,
+            row: rows - 1
+          };
+        }
+        remaining -= columns;
+      }
+    }
+
+    function getPlaygroundSlotCenter(index) {
+      const slot = getPlaygroundSlot(index);
+      return {
+        x: (slot.column - (PLAYGROUND_INITIAL_COLUMNS - 1) / 2) * PLAYGROUND_SLOT_GAP_X,
+        y: (slot.row - (PLAYGROUND_INITIAL_ROWS - 1) / 2) * PLAYGROUND_SLOT_GAP_Y
+      };
+    }
+
+    function getPlaygroundWidgetCount() {
+      let count = 0;
+      for (const node of world.children) {
+        if (!(node instanceof HTMLElement) || isNodeDeleted(node)) continue;
+        const match = /^playground-widget-(\d+)$/.exec(node.dataset.nodeId || "");
+        if (!match) continue;
+        const index = Number(match[1]);
+        if (Number.isFinite(index)) count = Math.max(count, index);
+      }
+      return count;
+    }
+
+    function updatePlaygroundControls() {
+      if (!IS_PLAYGROUND || !playgroundControls) return;
+      const count = getPlaygroundWidgetCount();
+      playgroundCount.textContent = String(count);
+      playgroundRemoveBtn.disabled = count <= 0;
+      playgroundAddBtn.disabled = false;
+    }
+
+    function createPlaygroundWidget(index) {
+      const widgetId = getPlaygroundWidgetId(index);
+      const existing = getNodeById(widgetId, { includeDeleted: true });
+      if (existing && !isNodeDeleted(existing)) return existing;
+      if (existing) removeNodeImmediately(existing);
+
+      const center = getPlaygroundSlotCenter(index);
+      const node = createTextNode(
+        center.x,
+        center.y,
+        "",
+        PLAYGROUND_WIDGET_BASE_FONT_SIZE,
+        widgetId
+      );
+      node.dataset.playgroundMock = "true";
+      const card = createExternalLinkCard(
+        `https://skydive.zenberry.one/playground/mock/${index}`,
+        String(index)
+      );
+      if (card) {
+        node.replaceChildren(card);
+        normalizeNodeMarkup(node);
+      } else {
+        node.textContent = String(index);
+      }
+      renderNode(node);
+      setNodeCenteredAtWorldPoint(node, center.x, center.y);
+      return node;
+    }
+
+    function addPlaygroundWidget() {
+      if (!IS_PLAYGROUND) return;
+      const nextIndex = getPlaygroundWidgetCount() + 1;
+      createPlaygroundWidget(nextIndex);
+      clearSelection();
+      scheduleAutosave();
+      updatePlaygroundControls();
+    }
+
+    function removeNodeImmediately(node) {
+      if (!(node instanceof HTMLElement) || !world.contains(node)) return false;
+      if (selectedNodes.has(node)) selectedNodes.delete(node);
+      destroyCommandNodeContent(node);
+      unobserveNodeForLines(node);
+      removeLineConnectionsForNodes([node]);
+      node.remove();
+      refreshSelectionBounds();
+      renderLineConnections();
+      updateDocumentTitle();
+      return true;
+    }
+
+    function removePlaygroundWidget() {
+      if (!IS_PLAYGROUND) return;
+      const count = getPlaygroundWidgetCount();
+      if (count <= 0) return;
+      const node = getNodeById(getPlaygroundWidgetId(count));
+      if (removeNodeImmediately(node)) {
+        scheduleAutosave();
+        updatePlaygroundControls();
+      }
+    }
+
+    function setupPlaygroundControls() {
+      if (!IS_PLAYGROUND || !playgroundControls) return;
+      playgroundControls.hidden = false;
+      playgroundControls.addEventListener("pointerdown", (event) => {
+        event.stopPropagation();
+      });
+      playgroundRemoveBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        removePlaygroundWidget();
+      });
+      playgroundAddBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        addPlaygroundWidget();
+      });
+      updatePlaygroundControls();
+    }
+
     window.addEventListener("pointerdown", blockSharedEditUntilValidated, { capture: true });
     window.addEventListener("click", blockSharedEditUntilValidated, { capture: true });
     window.addEventListener("dblclick", blockSharedEditUntilValidated, { capture: true });
@@ -9173,6 +9411,7 @@
     });
 
     async function loadFromLocalStorage(options = {}) {
+      if (IS_PLAYGROUND) return false;
       const reportProgress = typeof options.onProgress === "function" ? options.onProgress : null;
       const raw = localStorage.getItem(getStorageKey());
       if (!raw) return false;
@@ -9388,6 +9627,13 @@
       void requestPersistentStorage();
       try {
         await loadGlobalTemplates();
+        if (IS_PLAYGROUND) {
+          if (loadingScreenShown) setLoadingProgress(90);
+          await loadState({ version: 1, nodes: [], lines: [] }, { autosave: false });
+          setupPlaygroundControls();
+          render();
+          return;
+        }
         if (SHARED_SPACE_SLUG) {
           if (loadingScreenShown) setLoadingProgress(20);
           try {
