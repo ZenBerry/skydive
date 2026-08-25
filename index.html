@@ -98,13 +98,6 @@
       vector-effect: non-scaling-stroke;
     }
 
-    .spacing-guide-label {
-      fill: #111;
-      font: 500 12px/1 "Roboto", "Helvetica Neue", Arial, sans-serif;
-      dominant-baseline: central;
-      text-anchor: start;
-    }
-
     .connection-line {
       stroke: none;
       shape-rendering: geometricPrecision;
@@ -1321,7 +1314,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 143; // Increment once for each commit.
+    const APP_VERSION = 144; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const DEFAULT_TEMPLATE_DESCRIPTION = "A pre-saved template";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
@@ -1378,7 +1371,7 @@
     const QUICK_RESIZE_MAX_LEVEL = 9;
     const SPACING_GUIDE_MAX_LOOKUP_NODES = 12;
     const SPACING_GUIDE_MAX_CHAIN_GAPS = 4;
-    const SPACING_GUIDE_PIXEL_TOLERANCE = 2;
+    const SPACING_GUIDE_PIXEL_TOLERANCE = 1;
     const SPACING_GUIDE_SIZE_RATIO_TOLERANCE = 0.35;
     const SPACING_GUIDE_HORIZONTAL_TOLERANCE_VIEWPORT_RATIO = 0.06;
     const SPACING_GUIDE_MIN_GAP_SCREEN_PX = 1;
@@ -3680,36 +3673,26 @@
     function createSpacingGuidePair(upper, lower) {
       return {
         upper: upper.bounds,
-        lower: lower.bounds,
-        gap: getSpacingGuideUnits(upper, lower),
-        label: ""
+        lower: lower.bounds
       };
     }
 
-    function addMatchingSpacingPairs(pairs, entries, startIndex, step, targetUnits, targetLabel) {
+    function addMatchingSpacingPairs(pairs, entries, startIndex, step, targetUnits) {
       for (
         let index = startIndex;
         index >= 0 && index < entries.length - 1 && pairs.length < SPACING_GUIDE_MAX_CHAIN_GAPS;
         index += step
       ) {
         const units = getSpacingGuideUnits(entries[index], entries[index + 1]);
-        if (
-          Math.abs(units - targetUnits) > SPACING_GUIDE_PIXEL_TOLERANCE ||
-          Math.round(units) !== targetLabel
-        ) break;
+        if (Math.abs(units - targetUnits) > SPACING_GUIDE_PIXEL_TOLERANCE) break;
         const pair = createSpacingGuidePair(entries[index], entries[index + 1]);
         if (step < 0) pairs.unshift(pair);
         else pairs.push(pair);
       }
     }
 
-    function createSpacingGuideFromPairs(pairs, referenceUnits) {
-      if (pairs.length < 2) return null;
-      const referenceLabel = Math.round(referenceUnits);
-      if (!Number.isFinite(referenceLabel) || pairs.some((pair) => Math.round(pair.gap) !== referenceLabel)) return null;
-      const label = String(referenceLabel);
-      for (const pair of pairs) pair.label = label;
-      return { pairs };
+    function createSpacingGuideFromPairs(pairs) {
+      return pairs.length >= 2 ? { pairs } : null;
     }
 
     function findSpacingGuidesForNodes(nodes) {
@@ -3749,18 +3732,16 @@
         const targetGap = getVerticalBoundsGap(entries[aboveIndex].bounds, draggedBounds);
         const targetUnits = getSpacingGuideUnits(entries[aboveIndex], draggedEntry);
         const referenceUnits = getSpacingGuideUnits(entries[aboveIndex - 1], entries[aboveIndex]);
-        const referenceLabel = Math.round(referenceUnits);
         if (
           targetGap >= SPACING_GUIDE_MIN_GAP_SCREEN_PX &&
-          Math.abs(targetUnits - referenceUnits) <= SPACING_GUIDE_PIXEL_TOLERANCE &&
-          Math.round(targetUnits) === referenceLabel
+          Math.abs(targetUnits - referenceUnits) <= SPACING_GUIDE_PIXEL_TOLERANCE
         ) {
           const pairs = [
             createSpacingGuidePair(entries[aboveIndex - 1], entries[aboveIndex]),
             createSpacingGuidePair(entries[aboveIndex], draggedEntry)
           ];
-          addMatchingSpacingPairs(pairs, entries, aboveIndex - 2, -1, referenceUnits, referenceLabel);
-          const guide = createSpacingGuideFromPairs(pairs, referenceUnits);
+          addMatchingSpacingPairs(pairs, entries, aboveIndex - 2, -1, referenceUnits);
+          const guide = createSpacingGuideFromPairs(pairs);
           if (guide) guides.push(guide);
         }
       }
@@ -3769,18 +3750,16 @@
         const targetGap = getVerticalBoundsGap(draggedBounds, entries[belowIndex].bounds);
         const targetUnits = getSpacingGuideUnits(draggedEntry, entries[belowIndex]);
         const referenceUnits = getSpacingGuideUnits(entries[belowIndex], entries[belowIndex + 1]);
-        const referenceLabel = Math.round(referenceUnits);
         if (
           targetGap >= SPACING_GUIDE_MIN_GAP_SCREEN_PX &&
-          Math.abs(targetUnits - referenceUnits) <= SPACING_GUIDE_PIXEL_TOLERANCE &&
-          Math.round(targetUnits) === referenceLabel
+          Math.abs(targetUnits - referenceUnits) <= SPACING_GUIDE_PIXEL_TOLERANCE
         ) {
           const pairs = [
             createSpacingGuidePair(draggedEntry, entries[belowIndex]),
             createSpacingGuidePair(entries[belowIndex], entries[belowIndex + 1])
           ];
-          addMatchingSpacingPairs(pairs, entries, belowIndex + 1, 1, referenceUnits, referenceLabel);
-          const guide = createSpacingGuideFromPairs(pairs, referenceUnits);
+          addMatchingSpacingPairs(pairs, entries, belowIndex + 1, 1, referenceUnits);
+          const guide = createSpacingGuideFromPairs(pairs);
           if (guide) guides.push(guide);
         }
       }
@@ -3793,13 +3772,12 @@
         if (
           aboveGap >= SPACING_GUIDE_MIN_GAP_SCREEN_PX &&
           belowGap >= SPACING_GUIDE_MIN_GAP_SCREEN_PX &&
-          Math.abs(aboveUnits - belowUnits) <= SPACING_GUIDE_PIXEL_TOLERANCE &&
-          Math.round(aboveUnits) === Math.round(belowUnits)
+          Math.abs(aboveUnits - belowUnits) <= SPACING_GUIDE_PIXEL_TOLERANCE
         ) {
           const guide = createSpacingGuideFromPairs([
             createSpacingGuidePair(entries[aboveIndex], draggedEntry),
             createSpacingGuidePair(draggedEntry, entries[belowIndex])
-          ], aboveUnits);
+          ]);
           if (guide) guides.unshift(guide);
         }
       }
@@ -3880,12 +3858,6 @@
           line.setAttribute("y2", String(end.y));
           spacingGuideLayer.appendChild(line);
 
-          const label = document.createElementNS(SVG_NS, "text");
-          label.setAttribute("class", "spacing-guide-label");
-          label.setAttribute("x", String((start.x + end.x) * 0.5 + 6));
-          label.setAttribute("y", String((start.y + end.y) * 0.5));
-          label.textContent = pair.label;
-          spacingGuideLayer.appendChild(label);
         }
       }
       setSpacingGuideOpacity(1);
