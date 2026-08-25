@@ -1377,9 +1377,10 @@
     const QUICK_RESIZE_MAX_LEVEL = 9;
     const SPACING_GUIDE_MAX_LOOKUP_NODES = 12;
     const SPACING_GUIDE_MAX_CHAIN_GAPS = 4;
-    const SPACING_GUIDE_TOLERANCE_SCREEN_PX = 4;
-    const SPACING_GUIDE_HORIZONTAL_TOLERANCE_SCREEN_PX = 80;
-    const SPACING_GUIDE_MIN_GAP_WORLD_PX = 1;
+    const SPACING_GUIDE_PIXEL_TOLERANCE = 2;
+    const SPACING_GUIDE_SIZE_RATIO_TOLERANCE = 0.35;
+    const SPACING_GUIDE_HORIZONTAL_TOLERANCE_VIEWPORT_RATIO = 0.06;
+    const SPACING_GUIDE_MIN_GAP_SCREEN_PX = 1;
     const TEMPLATE_COMMAND_ID_PATTERN = /^[a-z0-9_-]{1,64}$/;
     const LANDSCAPE_WIDGET_BASE_FONT_SIZE = 44;
     const LANDSCAPE_SLOT_GAP_X = 360;
@@ -3570,6 +3571,59 @@
       };
     }
 
+    function getNodeScreenBounds(node) {
+      const rect = node.getBoundingClientRect();
+      if (!Number.isFinite(rect.left) || !Number.isFinite(rect.top) || !Number.isFinite(rect.right) || !Number.isFinite(rect.bottom)) return null;
+      return {
+        minX: rect.left,
+        minY: rect.top,
+        maxX: rect.right,
+        maxY: rect.bottom,
+        width: Math.max(0.001, rect.width),
+        height: Math.max(0.001, rect.height)
+      };
+    }
+
+    function getNodeScreenBoundsForGroup(nodes) {
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+
+      for (const node of nodes) {
+        if (!(node instanceof HTMLElement) || !world.contains(node) || isNodeDeleted(node)) continue;
+        const bounds = getNodeScreenBounds(node);
+        if (!bounds) continue;
+        minX = Math.min(minX, bounds.minX);
+        minY = Math.min(minY, bounds.minY);
+        maxX = Math.max(maxX, bounds.maxX);
+        maxY = Math.max(maxY, bounds.maxY);
+      }
+
+      if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) return null;
+      return {
+        minX,
+        minY,
+        maxX,
+        maxY,
+        width: Math.max(0.001, maxX - minX),
+        height: Math.max(0.001, maxY - minY)
+      };
+    }
+
+    function getNodeGroupAverageScreenHeight(nodes) {
+      let total = 0;
+      let count = 0;
+      for (const node of nodes) {
+        if (!(node instanceof HTMLElement) || !world.contains(node) || isNodeDeleted(node)) continue;
+        const bounds = getNodeScreenBounds(node);
+        if (!bounds) continue;
+        total += bounds.height;
+        count += 1;
+      }
+      return count > 0 ? total / count : 1;
+    }
+
     function getSpacingGuideX(a, b) {
       const overlapMin = Math.max(a.minX, b.minX);
       const overlapMax = Math.min(a.maxX, b.maxX);
@@ -3581,17 +3635,35 @@
       return lower.minY - upper.maxY;
     }
 
+    function getSpacingGuideHorizontalTolerance() {
+      return Math.max(
+        SPACING_GUIDE_MIN_GAP_SCREEN_PX,
+        viewport.clientWidth * SPACING_GUIDE_HORIZONTAL_TOLERANCE_VIEWPORT_RATIO
+      );
+    }
+
+    function getSpacingGuideUnits(upper, lower) {
+      return getVerticalBoundsGap(upper.bounds, lower.bounds);
+    }
+
+    function hasSpacingGuideSimilarSize(baseSize, candidateSize) {
+      if (!Number.isFinite(baseSize) || !Number.isFinite(candidateSize) || baseSize <= 0 || candidateSize <= 0) return false;
+      const ratio = candidateSize / baseSize;
+      return ratio >= 1 - SPACING_GUIDE_SIZE_RATIO_TOLERANCE &&
+        ratio <= 1 + SPACING_GUIDE_SIZE_RATIO_TOLERANCE;
+    }
+
     function getBoundsCenterX(bounds) {
       return bounds.minX + bounds.width * 0.5;
     }
 
-    function hasSpacingGuideHorizontalRelation(a, b, toleranceWorld) {
+    function hasSpacingGuideHorizontalRelation(a, b, toleranceScreen) {
       if (Math.max(a.minX, b.minX) <= Math.min(a.maxX, b.maxX)) return true;
       const aCenter = getBoundsCenterX(a);
       const bCenter = getBoundsCenterX(b);
-      if (aCenter >= b.minX - toleranceWorld && aCenter <= b.maxX + toleranceWorld) return true;
-      if (bCenter >= a.minX - toleranceWorld && bCenter <= a.maxX + toleranceWorld) return true;
-      return Math.abs(aCenter - bCenter) <= toleranceWorld;
+      if (aCenter >= b.minX - toleranceScreen && aCenter <= b.maxX + toleranceScreen) return true;
+      if (bCenter >= a.minX - toleranceScreen && bCenter <= a.maxX + toleranceScreen) return true;
+      return Math.abs(aCenter - bCenter) <= toleranceScreen;
     }
 
     function getSpacingGuideCandidateDistance(draggedBounds, bounds) {
@@ -3604,46 +3676,55 @@
       return {
         upper: upper.bounds,
         lower: lower.bounds,
-        gap: getVerticalBoundsGap(upper.bounds, lower.bounds)
+        gap: getSpacingGuideUnits(upper, lower),
+        label: ""
       };
     }
 
-    function addMatchingSpacingPairs(pairs, entries, startIndex, step, targetGap, toleranceWorld) {
+    function addMatchingSpacingPairs(pairs, entries, startIndex, step, targetUnits, targetLabel) {
       for (
         let index = startIndex;
         index >= 0 && index < entries.length - 1 && pairs.length < SPACING_GUIDE_MAX_CHAIN_GAPS;
         index += step
       ) {
-        const gap = getVerticalBoundsGap(entries[index].bounds, entries[index + 1].bounds);
-        if (Math.abs(gap - targetGap) > toleranceWorld) break;
+        const units = getSpacingGuideUnits(entries[index], entries[index + 1]);
+        if (
+          Math.abs(units - targetUnits) > SPACING_GUIDE_PIXEL_TOLERANCE ||
+          Math.round(units) !== targetLabel
+        ) break;
         const pair = createSpacingGuidePair(entries[index], entries[index + 1]);
         if (step < 0) pairs.unshift(pair);
         else pairs.push(pair);
       }
     }
 
-    function createSpacingGuideFromPairs(pairs) {
+    function createSpacingGuideFromPairs(pairs, referenceUnits) {
       if (pairs.length < 2) return null;
+      const referenceLabel = Math.round(referenceUnits);
+      if (!Number.isFinite(referenceLabel) || pairs.some((pair) => Math.round(pair.gap) !== referenceLabel)) return null;
+      const label = String(referenceLabel);
+      for (const pair of pairs) pair.label = label;
       return { pairs };
     }
 
     function findSpacingGuidesForNodes(nodes) {
       const draggedNodes = new Set(nodes);
-      const draggedBounds = getNodeGroupWorldBounds(nodes);
+      const draggedBounds = getNodeScreenBoundsForGroup(nodes);
       if (!draggedBounds) return [];
 
-      const scale = getCameraScale();
-      const toleranceWorld = SPACING_GUIDE_TOLERANCE_SCREEN_PX / scale;
-      const horizontalToleranceWorld = SPACING_GUIDE_HORIZONTAL_TOLERANCE_SCREEN_PX / scale;
+      const horizontalTolerance = getSpacingGuideHorizontalTolerance();
+      const draggedSize = getNodeGroupAverageScreenHeight(nodes);
       const candidates = [];
 
       for (const node of world.children) {
         if (!(node instanceof HTMLElement)) continue;
         if (draggedNodes.has(node) || isNodeDeleted(node)) continue;
-        const bounds = getNodeWorldBounds(node);
+        const bounds = getNodeScreenBounds(node);
         if (!bounds) continue;
-        if (!hasSpacingGuideHorizontalRelation(draggedBounds, bounds, horizontalToleranceWorld)) continue;
-        candidates.push({ node, bounds });
+        const size = bounds.height;
+        if (!hasSpacingGuideSimilarSize(draggedSize, size)) continue;
+        if (!hasSpacingGuideHorizontalRelation(draggedBounds, bounds, horizontalTolerance)) continue;
+        candidates.push({ node, bounds, size });
       }
 
       const entries = candidates
@@ -3653,7 +3734,7 @@
         )
         .slice(0, SPACING_GUIDE_MAX_LOOKUP_NODES)
         .sort((a, b) => a.bounds.minY - b.bounds.minY);
-      const draggedEntry = { node: null, bounds: draggedBounds };
+      const draggedEntry = { node: null, bounds: draggedBounds, size: draggedSize };
       const guides = [];
 
       const aboveIndex = entries.findLastIndex((entry) => entry.bounds.maxY <= draggedBounds.minY);
@@ -3661,34 +3742,40 @@
 
       if (aboveIndex >= 1) {
         const targetGap = getVerticalBoundsGap(entries[aboveIndex].bounds, draggedBounds);
-        const referenceGap = getVerticalBoundsGap(entries[aboveIndex - 1].bounds, entries[aboveIndex].bounds);
+        const targetUnits = getSpacingGuideUnits(entries[aboveIndex], draggedEntry);
+        const referenceUnits = getSpacingGuideUnits(entries[aboveIndex - 1], entries[aboveIndex]);
+        const referenceLabel = Math.round(referenceUnits);
         if (
-          targetGap >= SPACING_GUIDE_MIN_GAP_WORLD_PX &&
-          Math.abs(targetGap - referenceGap) <= toleranceWorld
+          targetGap >= SPACING_GUIDE_MIN_GAP_SCREEN_PX &&
+          Math.abs(targetUnits - referenceUnits) <= SPACING_GUIDE_PIXEL_TOLERANCE &&
+          Math.round(targetUnits) === referenceLabel
         ) {
           const pairs = [
             createSpacingGuidePair(entries[aboveIndex - 1], entries[aboveIndex]),
             createSpacingGuidePair(entries[aboveIndex], draggedEntry)
           ];
-          addMatchingSpacingPairs(pairs, entries, aboveIndex - 2, -1, referenceGap, toleranceWorld);
-          const guide = createSpacingGuideFromPairs(pairs);
+          addMatchingSpacingPairs(pairs, entries, aboveIndex - 2, -1, referenceUnits, referenceLabel);
+          const guide = createSpacingGuideFromPairs(pairs, referenceUnits);
           if (guide) guides.push(guide);
         }
       }
 
       if (belowIndex >= 0 && belowIndex < entries.length - 1) {
         const targetGap = getVerticalBoundsGap(draggedBounds, entries[belowIndex].bounds);
-        const referenceGap = getVerticalBoundsGap(entries[belowIndex].bounds, entries[belowIndex + 1].bounds);
+        const targetUnits = getSpacingGuideUnits(draggedEntry, entries[belowIndex]);
+        const referenceUnits = getSpacingGuideUnits(entries[belowIndex], entries[belowIndex + 1]);
+        const referenceLabel = Math.round(referenceUnits);
         if (
-          targetGap >= SPACING_GUIDE_MIN_GAP_WORLD_PX &&
-          Math.abs(targetGap - referenceGap) <= toleranceWorld
+          targetGap >= SPACING_GUIDE_MIN_GAP_SCREEN_PX &&
+          Math.abs(targetUnits - referenceUnits) <= SPACING_GUIDE_PIXEL_TOLERANCE &&
+          Math.round(targetUnits) === referenceLabel
         ) {
           const pairs = [
             createSpacingGuidePair(draggedEntry, entries[belowIndex]),
             createSpacingGuidePair(entries[belowIndex], entries[belowIndex + 1])
           ];
-          addMatchingSpacingPairs(pairs, entries, belowIndex + 1, 1, referenceGap, toleranceWorld);
-          const guide = createSpacingGuideFromPairs(pairs);
+          addMatchingSpacingPairs(pairs, entries, belowIndex + 1, 1, referenceUnits, referenceLabel);
+          const guide = createSpacingGuideFromPairs(pairs, referenceUnits);
           if (guide) guides.push(guide);
         }
       }
@@ -3696,15 +3783,18 @@
       if (aboveIndex >= 0 && belowIndex >= 0) {
         const aboveGap = getVerticalBoundsGap(entries[aboveIndex].bounds, draggedBounds);
         const belowGap = getVerticalBoundsGap(draggedBounds, entries[belowIndex].bounds);
+        const aboveUnits = getSpacingGuideUnits(entries[aboveIndex], draggedEntry);
+        const belowUnits = getSpacingGuideUnits(draggedEntry, entries[belowIndex]);
         if (
-          aboveGap >= SPACING_GUIDE_MIN_GAP_WORLD_PX &&
-          belowGap >= SPACING_GUIDE_MIN_GAP_WORLD_PX &&
-          Math.abs(aboveGap - belowGap) <= toleranceWorld
+          aboveGap >= SPACING_GUIDE_MIN_GAP_SCREEN_PX &&
+          belowGap >= SPACING_GUIDE_MIN_GAP_SCREEN_PX &&
+          Math.abs(aboveUnits - belowUnits) <= SPACING_GUIDE_PIXEL_TOLERANCE &&
+          Math.round(aboveUnits) === Math.round(belowUnits)
         ) {
           const guide = createSpacingGuideFromPairs([
             createSpacingGuidePair(entries[aboveIndex], draggedEntry),
             createSpacingGuidePair(draggedEntry, entries[belowIndex])
-          ]);
+          ], aboveUnits);
           if (guide) guides.unshift(guide);
         }
       }
@@ -3734,8 +3824,8 @@
       for (const guide of guides) {
         for (const pair of guide.pairs) {
           const x = getSpacingGuideX(pair.upper, pair.lower);
-          const start = worldToScreen(x, pair.upper.maxY);
-          const end = worldToScreen(x, pair.lower.minY);
+          const start = { x, y: pair.upper.maxY };
+          const end = { x, y: pair.lower.minY };
           const line = document.createElementNS(SVG_NS, "line");
           line.setAttribute("class", "spacing-guide-line");
           line.setAttribute("x1", String(start.x));
@@ -3748,7 +3838,7 @@
           label.setAttribute("class", "spacing-guide-label");
           label.setAttribute("x", String((start.x + end.x) * 0.5 + 6));
           label.setAttribute("y", String((start.y + end.y) * 0.5));
-          label.textContent = String(Math.round(pair.gap));
+          label.textContent = pair.label;
           spacingGuideLayer.appendChild(label);
         }
       }
