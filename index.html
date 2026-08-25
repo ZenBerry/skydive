@@ -85,6 +85,7 @@
       height: 100%;
       overflow: visible;
       pointer-events: none;
+      will-change: opacity;
     }
 
     #spacing-guide-layer[hidden] {
@@ -1381,6 +1382,7 @@
     const SPACING_GUIDE_SIZE_RATIO_TOLERANCE = 0.35;
     const SPACING_GUIDE_HORIZONTAL_TOLERANCE_VIEWPORT_RATIO = 0.06;
     const SPACING_GUIDE_MIN_GAP_SCREEN_PX = 1;
+    const SPACING_GUIDE_FADE_DURATION_MS = 140;
     const TEMPLATE_COMMAND_ID_PATTERN = /^[a-z0-9_-]{1,64}$/;
     const LANDSCAPE_WIDGET_BASE_FONT_SIZE = 44;
     const LANDSCAPE_SLOT_GAP_X = 360;
@@ -1409,6 +1411,9 @@
     let nodeLayoutAnimationFrame = null;
     let lineRenderFrame = null;
     let lineDraftAnimationFrame = null;
+    let spacingGuideFadeFrame = null;
+    let spacingGuideFadeTarget = 0;
+    let spacingGuideOpacity = 0;
     let contextMenuNode = null;
     let contextMenuWidget = null;
     let contextMenuLineId = null;
@@ -3802,9 +3807,46 @@
       return guides.slice(0, 2);
     }
 
+    function setSpacingGuideOpacity(targetOpacity, onComplete) {
+      const target = clamp(targetOpacity, 0, 1);
+      if (spacingGuideFadeFrame !== null && spacingGuideFadeTarget === target) return;
+      if (spacingGuideFadeFrame !== null) cancelAnimationFrame(spacingGuideFadeFrame);
+
+      const startOpacity = spacingGuideOpacity;
+      spacingGuideFadeTarget = target;
+      if (Math.abs(startOpacity - target) < 0.001) {
+        spacingGuideOpacity = target;
+        spacingGuideLayer.style.opacity = String(target);
+        spacingGuideFadeFrame = null;
+        if (onComplete) onComplete();
+        return;
+      }
+
+      const startTime = performance.now();
+      const tick = (now) => {
+        const progress = clamp((now - startTime) / SPACING_GUIDE_FADE_DURATION_MS, 0, 1);
+        const eased = easeInOutNatural(progress);
+        spacingGuideOpacity = startOpacity + (target - startOpacity) * eased;
+        spacingGuideLayer.style.opacity = String(spacingGuideOpacity);
+        if (progress < 1) {
+          spacingGuideFadeFrame = requestAnimationFrame(tick);
+          return;
+        }
+
+        spacingGuideOpacity = target;
+        spacingGuideLayer.style.opacity = String(target);
+        spacingGuideFadeFrame = null;
+        if (onComplete) onComplete();
+      };
+      spacingGuideFadeFrame = requestAnimationFrame(tick);
+    }
+
     function clearSpacingGuides() {
-      spacingGuideLayer.replaceChildren();
-      spacingGuideLayer.setAttribute("hidden", "");
+      if (spacingGuideLayer.hasAttribute("hidden")) return;
+      setSpacingGuideOpacity(0, () => {
+        spacingGuideLayer.replaceChildren();
+        spacingGuideLayer.setAttribute("hidden", "");
+      });
     }
 
     function renderSpacingGuides(guides) {
@@ -3819,7 +3861,11 @@
       spacingGuideLayer.setAttribute("width", String(width));
       spacingGuideLayer.setAttribute("height", String(height));
       spacingGuideLayer.replaceChildren();
-      spacingGuideLayer.removeAttribute("hidden");
+      if (spacingGuideLayer.hasAttribute("hidden")) {
+        spacingGuideOpacity = 0;
+        spacingGuideLayer.style.opacity = "0";
+        spacingGuideLayer.removeAttribute("hidden");
+      }
 
       for (const guide of guides) {
         for (const pair of guide.pairs) {
@@ -3842,6 +3888,7 @@
           spacingGuideLayer.appendChild(label);
         }
       }
+      setSpacingGuideOpacity(1);
     }
 
     function updateSpacingGuidesForNodes(nodes) {
