@@ -882,8 +882,9 @@ async function searchNodes(collection, query, options = {}) {
 
   const matches = [];
   for (const space of spaces) {
-    const state = normalizeState(space.state);
-    for (const node of state.nodes) {
+    const nodes = space.state && Array.isArray(space.state.nodes) ? space.state.nodes : [];
+    for (const node of nodes) {
+      if (!node || typeof node !== "object") continue;
       if (node.deletedAt) continue;
       const haystack = nodeSearchText(node);
       const wordMatch = wordPattern ? wordPattern.exec(haystack) : null;
