@@ -804,6 +804,9 @@ async function searchNodes(event, args) {
 
   const result = await callSkydive(event, `/api/agent?${params.toString()}`);
   if (result.ok) {
+    if (!Array.isArray(result.data && result.data.matches)) {
+      return legacySearchNodes(event, args);
+    }
     return {
       ok: true,
       query: result.data && typeof result.data.query === "string" ? result.data.query : query,
@@ -811,7 +814,7 @@ async function searchNodes(event, args) {
       contextSpace: result.data && typeof result.data.contextSpace === "string" ? result.data.contextSpace : contextSpace,
       spacesScanned: Number(result.data && result.data.spacesScanned) || 0,
       failedSpaces: Array.isArray(result.data && result.data.failedSpaces) ? result.data.failedSpaces : [],
-      matches: Array.isArray(result.data && result.data.matches) ? result.data.matches : [],
+      matches: result.data.matches,
       truncated: Boolean(result.data && result.data.truncated)
     };
   }

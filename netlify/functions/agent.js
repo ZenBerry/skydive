@@ -975,16 +975,6 @@ exports.handler = async (event) => {
 
   try {
     const query = getQuery(event);
-    if (event.httpMethod === "GET" && (query.manifest || (!query.spaces && !query.space))) {
-      return json(200, buildManifest(event));
-    }
-
-    if (event.httpMethod === "GET" && query.spaces) {
-      requireAuth(event);
-      const collection = await getCollection();
-      return json(200, { spaces: await listSpaces(collection) });
-    }
-
     if (event.httpMethod === "GET" && query.search) {
       requireAuth(event);
       const collection = await getCollection();
@@ -999,6 +989,16 @@ exports.handler = async (event) => {
           ownedOnly: query.ownedOnly === "true"
         })
       });
+    }
+
+    if (event.httpMethod === "GET" && (query.manifest || (!query.spaces && !query.space))) {
+      return json(200, buildManifest(event));
+    }
+
+    if (event.httpMethod === "GET" && query.spaces) {
+      requireAuth(event);
+      const collection = await getCollection();
+      return json(200, { spaces: await listSpaces(collection) });
     }
 
     if (event.httpMethod === "GET" && query.space) {
