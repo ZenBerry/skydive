@@ -567,7 +567,17 @@ function nodeSearchText(node) {
   const commandState = node.commandState && typeof node.commandState === "object"
     ? JSON.stringify(node.commandState)
     : "";
-  return decodeHtmlEntities(`${text}\n${html}\n${commandId}\n${commandState}`).replace(/\s+/g, " ").trim();
+  const seen = new Set();
+  const parts = [];
+  for (const value of [text, html, commandId, commandState]) {
+    const normalized = decodeHtmlEntities(value).replace(/\s+/g, " ").trim();
+    if (!normalized) continue;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    parts.push(normalized);
+  }
+  return parts.join(" ");
 }
 
 async function mapWithConcurrency(items, limit, worker) {

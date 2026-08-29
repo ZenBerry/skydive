@@ -332,6 +332,10 @@
     const params = new URLSearchParams(window.location.search);
     const markDebug = params.get("debug") === "true";
     const markContextSpace = String(params.get("space") || "").trim();
+    const queuedQuery = String(params.get("q") || "").trim();
+    if (queuedQuery || markContextSpace) {
+      window.history.replaceState({}, "", `${window.location.pathname}${window.location.hash}`);
+    }
     const history = [];
     let waiting = false;
     let secretExpected = false;
@@ -820,7 +824,6 @@
     renderCurrentUserBullet();
     addMessage("assistant", greeting, { speaker: currentAssistantName() });
     void loadCurrentUser();
-    const queuedQuery = String(params.get("q") || "").trim();
     if (queuedQuery) {
       prompt.value = queuedQuery;
       resizePrompt();
