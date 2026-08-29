@@ -589,7 +589,7 @@
 
     function appendLinkedText(parent, text) {
       const source = String(text || "");
-      const pattern = /\[([^\]\n]{1,240})\]\((\/[^)\s]{0,1000})\)/g;
+      const pattern = /\[([^\]\n]{1,4000})\]\((\/[^)\s]{0,1000})\)/g;
       let lastIndex = 0;
       let match;
       while ((match = pattern.exec(source)) !== null) {

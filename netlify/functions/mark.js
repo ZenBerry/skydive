@@ -754,9 +754,6 @@ async function searchNodes(event, args) {
           ? -1
           : haystack.toLowerCase().indexOf(normalizedQuery);
       if (matchIndex === -1) continue;
-      const start = Math.max(0, matchIndex - 70);
-      const end = Math.min(haystack.length, matchIndex + query.length + 120);
-      const snippet = haystack.slice(start, end).trim();
       matches.push({
         space: read.slug,
         nodeId: String(node.id || ""),
@@ -766,7 +763,7 @@ async function searchNodes(event, args) {
         spaceUpdatedAt: Number(read.updatedAt) || 0,
         ownedByViewer: Boolean(viewer && read.createdBy && String(viewer.id) === String(read.createdBy.id)),
         inContextSpace: Boolean(contextSpace && read.slug === contextSpace),
-        text: snippet || haystack.slice(0, 240)
+        text: haystack
       });
       if (matches.length >= 500) break;
     }
@@ -847,7 +844,7 @@ async function findNodesForSlashCommand(event, query) {
 
   function formatMatches(group) {
     return group.sort(compareMatches).map((match) => {
-      const label = String(match.text || `(${match.kind} node)`).replace(/\s+/g, " ").trim().slice(0, 140);
+      const label = String(match.text || `(${match.kind} node)`).replace(/\s+/g, " ").trim();
       return `• ${markdownLink(label, getNodePath(match.space, match.nodeId))} in ${markdownLink(match.space, getSpacePath(match.space))}`;
     });
   }
