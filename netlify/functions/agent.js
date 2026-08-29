@@ -15,6 +15,7 @@ const MAX_OPS = 120;
 const MAX_TEXT_LENGTH = 40000;
 const MAX_HTML_LENGTH = 80000;
 const MAX_COMMAND_STATE_LENGTH = 50000;
+const MAX_SEARCH_RESULTS = 500;
 const CALC_OPERATIONS = new Set(["+", "-", "*", "÷", "="]);
 
 let collectionPromise = null;
@@ -193,6 +194,30 @@ function htmlToPlainText(value) {
   return decodeBasicEntities(String(value || "")
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<[^>]*>/g, ""));
+}
+
+function escapeRegExp(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function nodeSearchText(node) {
+  const html = typeof node.html === "string" ? node.html.replace(/<[^>]*>/g, " ") : "";
+  const text = typeof node.text === "string" ? node.text : "";
+  const commandId = typeof node.commandId === "string" ? node.commandId : "";
+  const commandState = node.commandState && typeof node.commandState === "object"
+    ? JSON.stringify(node.commandState)
+    : "";
+  const seen = new Set();
+  const parts = [];
+  for (const value of [text, html, commandId, commandState]) {
+    const normalized = decodeBasicEntities(value).replace(/\s+/g, " ").trim();
+    if (!normalized) continue;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    parts.push(normalized);
+  }
+  return parts.join(" ");
 }
 
 function createInternalLinkHtml(label, targetId) {
@@ -708,7 +733,7 @@ function buildManifest(event) {
     authenticated: authed,
     auth: {
       required: agentAuthRequired,
-      requiredFor: agentAuthRequired ? ["list_spaces", "read_space", "apply_ops"] : [],
+      requiredFor: agentAuthRequired ? ["list_spaces", "read_space", "search_nodes", "apply_ops"] : [],
       header: "Authorization: Bearer <SKYDIVE_AGENT_TOKEN>",
       queryFallback: "token=<SKYDIVE_AGENT_TOKEN>",
       privateMode: "Set SKYDIVE_AGENT_AUTH_MODE=token and SKYDIVE_AGENT_TOKEN to require auth."
@@ -717,6 +742,7 @@ function buildManifest(event) {
       manifest: "GET /api/agent?manifest=1",
       listSpaces: "GET /api/agent?spaces=1",
       readSpace: "GET /api/agent?space=<slug>",
+      searchNodes: "GET /api/agent?search=1&query=<text>",
       applyOps: "POST /api/agent"
     },
     stateShape: {
@@ -805,6 +831,96 @@ async function listSpaces(collection) {
   }));
 }
 
+async function searchNodes(collection, query, options = {}) {
+  const normalizedQuery = String(query || "").trim();
+  if (!normalizedQuery) throw new HttpError(400, "A search query is required.");
+
+  const includeArchives = options.includeArchives === true;
+  const contextSpace = getSlug(options.contextSpace || "");
+  const viewer = options.viewer || null;
+  const ownedOnly = options.ownedOnly === true;
+  const mongoFilter = {};
+  const andClauses = [];
+
+  if (!includeArchives) {
+    andClauses.push({ slug: { $not: /^delorean\// } });
+  }
+
+  if (ownedOnly) {
+    const ownerClauses = [];
+    if (viewer && viewer.id) ownerClauses.push({ "createdBy.id": String(viewer.id) });
+    if (contextSpace) ownerClauses.push({ slug: contextSpace });
+    if (!ownerClauses.length) {
+      return {
+        query: normalizedQuery,
+        includeArchives,
+        contextSpace,
+        spacesScanned: 0,
+        failedSpaces: [],
+        matches: [],
+        truncated: false
+      };
+    }
+    andClauses.push({ $or: ownerClauses });
+  }
+
+  if (andClauses.length === 1) {
+    Object.assign(mongoFilter, andClauses[0]);
+  } else if (andClauses.length > 1) {
+    mongoFilter.$and = andClauses;
+  }
+
+  const wholeWordQuery = /^[\p{L}\p{N}_-]+$/u.test(normalizedQuery);
+  const wordPattern = wholeWordQuery
+    ? new RegExp(`(^|[^\\p{L}\\p{N}_-])(${escapeRegExp(normalizedQuery)})(?=$|[^\\p{L}\\p{N}_-])`, "iu")
+    : null;
+  const normalizedLowerQuery = normalizedQuery.toLowerCase();
+  const spaces = await collection.find(
+    mongoFilter,
+    { projection: { _id: 0, slug: 1, updatedAt: 1, createdBy: 1, "state.nodes": 1 } }
+  ).sort({ updatedAt: -1 }).limit(500).toArray();
+
+  const matches = [];
+  for (const space of spaces) {
+    const state = normalizeState(space.state);
+    for (const node of state.nodes) {
+      if (node.deletedAt) continue;
+      const haystack = nodeSearchText(node);
+      const wordMatch = wordPattern ? wordPattern.exec(haystack) : null;
+      const matchIndex = wordMatch
+        ? wordMatch.index + wordMatch[1].length
+        : wholeWordQuery
+          ? -1
+          : haystack.toLowerCase().indexOf(normalizedLowerQuery);
+      if (matchIndex === -1) continue;
+      matches.push({
+        space: space.slug,
+        nodeId: String(node.id || ""),
+        kind: node.kind === "command" ? "command" : "text",
+        createdAt: Number(node.createdAt) || 0,
+        updatedAt: Number(node.updatedAt) || Number(space.updatedAt) || Number(node.createdAt) || 0,
+        spaceUpdatedAt: Number(space.updatedAt) || 0,
+        ownedByViewer: Boolean(viewer && space.createdBy && String(viewer.id) === String(space.createdBy.id)),
+        inContextSpace: Boolean(contextSpace && space.slug === contextSpace),
+        text: haystack
+      });
+      if (matches.length >= MAX_SEARCH_RESULTS) break;
+    }
+    if (matches.length >= MAX_SEARCH_RESULTS) break;
+  }
+
+  matches.sort((a, b) => (Number(b.updatedAt) || Number(b.createdAt) || 0) - (Number(a.updatedAt) || Number(a.createdAt) || 0));
+  return {
+    query: normalizedQuery,
+    includeArchives,
+    contextSpace,
+    spacesScanned: spaces.length,
+    failedSpaces: [],
+    matches,
+    truncated: matches.length >= MAX_SEARCH_RESULTS
+  };
+}
+
 async function applySpaceOps(collection, payload, viewer = null) {
   const slug = getSlug(payload.space);
   if (!slug) throw new HttpError(400, "A valid space slug is required.");
@@ -867,6 +983,22 @@ exports.handler = async (event) => {
       requireAuth(event);
       const collection = await getCollection();
       return json(200, { spaces: await listSpaces(collection) });
+    }
+
+    if (event.httpMethod === "GET" && query.search) {
+      requireAuth(event);
+      const collection = await getCollection();
+      const viewer = await getSessionUser(event);
+      const queryText = typeof query.query === "string" ? query.query : query.q;
+      return json(200, {
+        ok: true,
+        ...await searchNodes(collection, queryText, {
+          viewer,
+          includeArchives: query.includeArchives === "true",
+          contextSpace: query.contextSpace || "",
+          ownedOnly: query.ownedOnly === "true"
+        })
+      });
     }
 
     if (event.httpMethod === "GET" && query.space) {

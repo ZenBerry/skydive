@@ -710,7 +710,7 @@ async function findCreatedToday(event, args, defaultTimeZone) {
   };
 }
 
-async function searchNodes(event, args) {
+async function legacySearchNodes(event, args) {
   const query = args && typeof args.query === "string" ? args.query.trim() : "";
   if (!query) return { ok: false, status: 400, error: "skydive_search_nodes requires a query." };
 
@@ -781,6 +781,45 @@ async function searchNodes(event, args) {
     matches,
     truncated: matches.length >= 500
   };
+}
+
+function isTagFindQuery(query) {
+  return /^#[\p{L}\p{N}_][\p{L}\p{N}_-]*$/u.test(String(query || "").trim());
+}
+
+async function searchNodes(event, args) {
+  const query = args && typeof args.query === "string" ? args.query.trim() : "";
+  if (!query) return { ok: false, status: 400, error: "skydive_search_nodes requires a query." };
+
+  const includeArchives = args && args.includeArchives === true;
+  const contextSpace = cleanFindContextSpace(args && args.contextSpace);
+  const ownedOnly = Boolean(contextSpace && isTagFindQuery(query));
+  const params = new URLSearchParams({
+    search: "1",
+    query
+  });
+  if (includeArchives) params.set("includeArchives", "true");
+  if (contextSpace) params.set("contextSpace", contextSpace);
+  if (ownedOnly) params.set("ownedOnly", "true");
+
+  const result = await callSkydive(event, `/api/agent?${params.toString()}`);
+  if (result.ok) {
+    return {
+      ok: true,
+      query: result.data && typeof result.data.query === "string" ? result.data.query : query,
+      includeArchives: Boolean(result.data && result.data.includeArchives),
+      contextSpace: result.data && typeof result.data.contextSpace === "string" ? result.data.contextSpace : contextSpace,
+      spacesScanned: Number(result.data && result.data.spacesScanned) || 0,
+      failedSpaces: Array.isArray(result.data && result.data.failedSpaces) ? result.data.failedSpaces : [],
+      matches: Array.isArray(result.data && result.data.matches) ? result.data.matches : [],
+      truncated: Boolean(result.data && result.data.truncated)
+    };
+  }
+
+  if (result.status === 404 || result.status === 405) {
+    return legacySearchNodes(event, args);
+  }
+  return result;
 }
 
 async function listSpacesForSlashCommand(event, timeZone) {
