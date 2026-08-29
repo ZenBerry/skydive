@@ -331,6 +331,7 @@
     const send = document.getElementById("send");
     const params = new URLSearchParams(window.location.search);
     const markDebug = params.get("debug") === "true";
+    const markContextSpace = String(params.get("space") || "").trim();
     const history = [];
     let waiting = false;
     let secretExpected = false;
@@ -591,6 +592,8 @@
         if (match.index > lastIndex) parent.append(document.createTextNode(source.slice(lastIndex, match.index)));
         const link = document.createElement("a");
         link.href = match[2];
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
         link.textContent = match[1].replace(/\\([[\]\\])/g, "$1");
         parent.append(link);
         lastIndex = pattern.lastIndex;
@@ -724,7 +727,10 @@
       const pending = addMessage("assistant", "…", { pending: true, speaker: assistantName });
 
       try {
-        const response = await fetch("/api/mark", {
+        const markUrl = markContextSpace
+          ? `/api/mark?space=${encodeURIComponent(markContextSpace)}`
+          : "/api/mark";
+        const response = await fetch(markUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -814,7 +820,14 @@
     renderCurrentUserBullet();
     addMessage("assistant", greeting, { speaker: currentAssistantName() });
     void loadCurrentUser();
-    prompt.focus();
+    const queuedQuery = String(params.get("q") || "").trim();
+    if (queuedQuery) {
+      prompt.value = queuedQuery;
+      resizePrompt();
+      void submitMessage();
+    } else {
+      prompt.focus();
+    }
   </script>
 </body>
 </html>

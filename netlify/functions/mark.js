@@ -368,6 +368,10 @@ function getNodePath(space, nodeId) {
   return id ? `${path}?n=${encodeURIComponent(id)}` : path;
 }
 
+function cleanFindContextSpace(value) {
+  return cleanSpaceSlug(value);
+}
+
 function escapeMarkdownLinkText(value) {
   return String(value || "").replace(/[[\]\\]/g, "").replace(/\s+/g, " ").trim();
 }
@@ -704,6 +708,7 @@ async function searchNodes(event, args) {
   if (!listResult.ok) return listResult;
 
   const includeArchives = args && args.includeArchives === true;
+  const contextSpace = cleanFindContextSpace(args && args.contextSpace);
   const normalizedQuery = query.toLowerCase();
   const wholeWordQuery = /^[\p{L}\p{N}_-]+$/u.test(query);
   const wordPattern = wholeWordQuery
@@ -714,11 +719,14 @@ async function searchNodes(event, args) {
     : [];
   const reads = await mapWithConcurrency(spaces, 16, async (space) => ({
     slug: space.slug,
+    updatedAt: Number(space.updatedAt) || 0,
+    createdBy: space.createdBy || null,
     result: await callSkydive(event, `/api/agent?space=${encodeURIComponent(space.slug)}`)
   }));
 
   const matches = [];
   const failedSpaces = [];
+  const { user: viewer } = await getSessionUserWithRefresh(event);
   for (const read of reads) {
     if (!read.result.ok) {
       failedSpaces.push(read.slug);
@@ -744,6 +752,10 @@ async function searchNodes(event, args) {
         nodeId: String(node.id || ""),
         kind: node.kind === "command" ? "command" : "text",
         createdAt: Number(node.createdAt) || 0,
+        updatedAt: Number(node.updatedAt) || Number(read.updatedAt) || Number(node.createdAt) || 0,
+        spaceUpdatedAt: Number(read.updatedAt) || 0,
+        ownedByViewer: Boolean(viewer && read.createdBy && String(viewer.id) === String(read.createdBy.id)),
+        inContextSpace: Boolean(contextSpace && read.slug === contextSpace),
         text: snippet || haystack.slice(0, 240)
       });
       if (matches.length >= 500) break;
@@ -751,11 +763,12 @@ async function searchNodes(event, args) {
     if (matches.length >= 500) break;
   }
 
-  matches.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  matches.sort((a, b) => (Number(b.updatedAt) || Number(b.createdAt) || 0) - (Number(a.updatedAt) || Number(a.createdAt) || 0));
   return {
     ok: true,
     query,
     includeArchives,
+    contextSpace,
     spacesScanned: reads.length - failedSpaces.length,
     failedSpaces,
     matches,
@@ -809,16 +822,43 @@ async function listSpacesForSlashCommand(event, timeZone) {
 }
 
 async function findNodesForSlashCommand(event, query) {
-  const result = await searchNodes(event, { query, includeArchives: false });
+  const params = new URLSearchParams(String(event.rawQuery || ""));
+  const result = await searchNodes(event, { query, includeArchives: false, contextSpace: params.get("space") || "" });
   if (!result.ok) return `I couldn’t search nodes: ${result.error || "Skydive returned an error."}`;
   const matches = Array.isArray(result.matches) ? result.matches.slice(0, MAX_COMMAND_RESULTS) : [];
   if (!matches.length) return `I found no nodes containing "${result.query}".`;
-  const lines = matches.map((match) => {
-    const label = String(match.text || `(${match.kind} node)`).replace(/\s+/g, " ").trim().slice(0, 140);
-    return `• ${markdownLink(label, getNodePath(match.space, match.nodeId))} in ${markdownLink(match.space, getSpacePath(match.space))}`;
-  });
+
+  function compareMatches(left, right) {
+    const leftTime = Number(left.updatedAt) || Number(left.createdAt) || 0;
+    const rightTime = Number(right.updatedAt) || Number(right.createdAt) || 0;
+    if (leftTime !== rightTime) return rightTime - leftTime;
+    return String(left.space || "").localeCompare(String(right.space || ""));
+  }
+
+  function formatMatches(group) {
+    return group.sort(compareMatches).map((match) => {
+      const label = String(match.text || `(${match.kind} node)`).replace(/\s+/g, " ").trim().slice(0, 140);
+      return `• ${markdownLink(label, getNodePath(match.space, match.nodeId))} in ${markdownLink(match.space, getSpacePath(match.space))}`;
+    });
+  }
+
+  const groups = [];
+  if (result.contextSpace) {
+    const contextMatches = matches.filter((match) => match.inContextSpace);
+    groups.push(`In ${result.contextSpace}:\n${contextMatches.length ? formatMatches(contextMatches).join("\n") : "No matches in this space."}`);
+  }
+
+  const ownedMatches = matches.filter((match) => match.ownedByViewer);
+  const ownedLines = formatMatches(ownedMatches);
+  groups.push(`In your spaces:\n${ownedLines.length ? ownedLines.join("\n") : "No matches in spaces you own."}`);
+
+  if (!result.contextSpace) {
+    const otherMatches = matches.filter((match) => !match.ownedByViewer);
+    if (otherMatches.length) groups.push(`Other matching spaces:\n${formatMatches(otherMatches).join("\n")}`);
+  }
+
   const suffix = result.truncated ? "\n\nShowing the first 500 matching nodes." : "";
-  return `Nodes containing "${result.query}":\n${lines.join("\n")}${suffix}`;
+  return `Nodes containing "${result.query}":\n\n${groups.join("\n\n")}${suffix}`;
 }
 
 async function handleSlashCommand(event, messages, timeZone) {

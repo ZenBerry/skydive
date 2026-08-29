@@ -481,11 +481,19 @@
       cursor: pointer;
     }
 
+    .tag-link {
+      color: #111;
+      text-decoration: underline;
+      text-decoration-thickness: from-font;
+      cursor: pointer;
+    }
+
     .text-node.editing .internal-link {
       cursor: text;
     }
 
-    .text-node.editing .external-link-plain {
+    .text-node.editing .external-link-plain,
+    .text-node.editing .tag-link {
       cursor: text;
     }
 
@@ -1314,7 +1322,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 144; // Increment once for each commit.
+    const APP_VERSION = 145; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const DEFAULT_TEMPLATE_DESCRIPTION = "A pre-saved template";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
@@ -2490,6 +2498,70 @@
       }
     }
 
+    function unwrapTagLinks(node) {
+      if (!(node instanceof HTMLElement)) return false;
+      const links = Array.from(node.querySelectorAll(".tag-link"));
+      for (const link of links) {
+        link.replaceWith(document.createTextNode(link.textContent || ""));
+      }
+      return links.length > 0;
+    }
+
+    function renderTagLinks(node) {
+      if (!(node instanceof HTMLElement) || isCommandNode(node) || node.classList.contains("editing")) return false;
+      const pattern = /(^|[^\p{L}\p{N}_-])(#[\p{L}\p{N}_][\p{L}\p{N}_-]*)/gu;
+      const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, {
+        acceptNode(textNode) {
+          const parent = textNode.parentElement;
+          if (!parent) return NodeFilter.FILTER_REJECT;
+          if (parent.closest(".tag-link, .external-link-card, .external-link-plain, .internal-link")) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      });
+      const textNodes = [];
+      let textNode = walker.nextNode();
+      while (textNode) {
+        textNodes.push(textNode);
+        textNode = walker.nextNode();
+      }
+
+      let changed = false;
+      for (const currentTextNode of textNodes) {
+        const text = currentTextNode.textContent || "";
+        let lastIndex = 0;
+        let match;
+        pattern.lastIndex = 0;
+        const fragment = document.createDocumentFragment();
+        let textNodeChanged = false;
+
+        while ((match = pattern.exec(text)) !== null) {
+          const prefix = match[1] || "";
+          const tag = match[2] || "";
+          const tagStart = match.index + prefix.length;
+          if (tagStart > lastIndex) {
+            fragment.appendChild(document.createTextNode(text.slice(lastIndex, tagStart)));
+          }
+          const link = document.createElement("span");
+          link.className = "tag-link";
+          link.dataset.tag = tag;
+          link.textContent = tag;
+          fragment.appendChild(link);
+          lastIndex = tagStart + tag.length;
+          textNodeChanged = true;
+        }
+
+        if (!textNodeChanged) continue;
+        if (lastIndex < text.length) {
+          fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
+        }
+        currentTextNode.replaceWith(fragment);
+        changed = true;
+      }
+      return changed;
+    }
+
     function isMarkdownViewNode(node) {
       return node instanceof HTMLElement && node.dataset.viewMode === "markdown";
     }
@@ -2926,6 +2998,7 @@
     function renderMarkdownNode(node) {
       if (!isMarkdownViewNode(node) || node.classList.contains("editing")) return;
       node.replaceChildren(renderMarkdownToFragment(getMarkdownSource(node)));
+      renderTagLinks(node);
     }
 
     function setNodeMarkdownView(node, enabled) {
@@ -5931,6 +6004,14 @@
       return `/mark?notice=${encodeURIComponent(message)}`;
     }
 
+    function getMarkFindPathForTag(tag) {
+      const normalizedTag = String(tag || "").trim();
+      if (!normalizedTag) return "/mark";
+      const params = new URLSearchParams({ q: `/find ${normalizedTag}` });
+      if (SHARED_SPACE_SLUG) params.set("space", SHARED_SPACE_SLUG);
+      return `/mark?${params.toString()}`;
+    }
+
     function getAbsoluteSpaceUrl(slug) {
       return new URL(getSpacePathFromSlug(slug), window.location.origin).href;
     }
@@ -7676,6 +7757,7 @@
     function startEditing(node, selectAll = false, caretOffset = null) {
       if (isCommandNode(node)) return;
       if (isCalcVariableNode(node)) return;
+      unwrapTagLinks(node);
       prepareMarkdownNodeForEditing(node);
       node.classList.add("editing");
       node.contentEditable = "true";
@@ -7688,6 +7770,7 @@
       node.contentEditable = "false";
       node.classList.remove("editing");
       finishMarkdownNodeEditing(node);
+      renderTagLinks(node);
     }
 
     function serializeState() {
@@ -8757,7 +8840,7 @@
 
       node.addEventListener("pointerdown", (event) => {
         if (event.button !== 0 || node.classList.contains("editing")) return;
-        if (event.target instanceof Element && event.target.closest(".internal-link")) return;
+        if (event.target instanceof Element && event.target.closest(".internal-link, .tag-link")) return;
         if (event.target instanceof Element) {
           const externalLinkCard = event.target.closest(".external-link-card");
           const externalLinkPlain = event.target.closest(".external-link-plain");
@@ -8840,6 +8923,14 @@
         if (handleExternalLinkVisit(node, event)) return;
         if (node.classList.contains("editing")) return;
         if (!(event.target instanceof Element)) return;
+        const tagLink = event.target.closest(".tag-link");
+        if (tagLink && node.contains(tagLink)) {
+          const tag = tagLink.dataset.tag || tagLink.textContent || "";
+          event.preventDefault();
+          event.stopPropagation();
+          window.open(getMarkFindPathForTag(tag), "_blank", "noopener,noreferrer");
+          return;
+        }
         const markdownLink = isMarkdownViewNode(node) ? event.target.closest("a[href]") : null;
         if (markdownLink && node.contains(markdownLink)) {
           event.preventDefault();
@@ -8982,6 +9073,7 @@
         node.textContent = initialText;
       }
       normalizeNodeMarkup(node);
+      renderTagLinks(node);
       node.contentEditable = "false";
 
       // Keeps newly-created text visually consistent regardless of current zoom.
