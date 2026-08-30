@@ -246,7 +246,7 @@
     runtime.waveScaleX = scaleX;
     runtime.waveScaleY = scaleY;
     surface.style.transformOrigin = "left center";
-    surface.style.transform = `scale(${scaleX}, ${scaleY})`;
+    surface.style.transform = `translateY(-50%) scale(${scaleX}, ${scaleY})`;
   }
 
   function scheduleWaveformScale(elements, runtime) {
@@ -562,7 +562,12 @@
           background: rgba(98, 78, 60, 0.08);
         }
         .rec-wave-surface {
+          position: absolute;
+          left: 0;
+          top: 50%;
           height: 100%;
+          transform: translateY(-50%);
+          transform-origin: left center;
           will-change: transform;
         }
         .rec-wave::after {
