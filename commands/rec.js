@@ -4,6 +4,7 @@
   const runtimes = new WeakMap();
   const PLAYBACK_SPEEDS = [1, 1.5, 2];
   const WAVE_RESIZE_EPSILON_PX = 0.5;
+  const WAVE_RESIZE_IDLE_MS = 140;
   const MIME_TYPES = [
     "audio/webm;codecs=opus",
     "audio/mp4;codecs=mp4a.40.2",
@@ -219,6 +220,24 @@
     return Boolean(card && card.isConnected);
   }
 
+  function getWaveformSurface(wave) {
+    return wave && wave.firstElementChild instanceof HTMLElement ? wave.firstElementChild : null;
+  }
+
+  function setWaveformPreviewScale(wave, scaleX, scaleY) {
+    const surface = getWaveformSurface(wave);
+    if (!surface) return;
+    surface.style.transformOrigin = "left center";
+    surface.style.transform = `scale(${scaleX}, ${scaleY})`;
+  }
+
+  function clearWaveformPreviewScale(wave) {
+    const surface = getWaveformSurface(wave);
+    if (!surface) return;
+    surface.style.transform = "";
+    surface.style.transformOrigin = "";
+  }
+
   function scheduleWaveformResize(elements, runtime) {
     if (!runtime.wavesurfer || runtime.resizeFrame !== null) return;
     runtime.resizeFrame = requestAnimationFrame(() => {
@@ -231,11 +250,28 @@
       const heightChanged = Math.abs(height - runtime.waveHeight) > WAVE_RESIZE_EPSILON_PX;
       if (!widthChanged && !heightChanged) return;
 
-      runtime.waveWidth = width;
-      runtime.waveHeight = height;
-      if (typeof runtime.wavesurfer.setOptions === "function") {
-        runtime.wavesurfer.setOptions({ height: "auto" });
-      }
+      setWaveformPreviewScale(elements.wave, width / runtime.waveWidth, height / runtime.waveHeight);
+      clearTimeout(runtime.resizeTimer);
+      runtime.resizeTimer = setTimeout(() => {
+        runtime.resizeTimer = null;
+        if (runtime.discard || !runtime.wavesurfer || !containerIsLive(elements.card)) return;
+
+        const settledWidth = Math.max(1, elements.wave.clientWidth);
+        const settledHeight = Math.max(1, elements.wave.clientHeight);
+        const settledWidthChanged = Math.abs(settledWidth - runtime.waveWidth) > WAVE_RESIZE_EPSILON_PX;
+        const settledHeightChanged = Math.abs(settledHeight - runtime.waveHeight) > WAVE_RESIZE_EPSILON_PX;
+        if (!settledWidthChanged && !settledHeightChanged) {
+          clearWaveformPreviewScale(elements.wave);
+          return;
+        }
+
+        runtime.waveWidth = settledWidth;
+        runtime.waveHeight = settledHeight;
+        clearWaveformPreviewScale(elements.wave);
+        if (typeof runtime.wavesurfer.setOptions === "function") {
+          runtime.wavesurfer.setOptions({ height: "auto" });
+        }
+      }, WAVE_RESIZE_IDLE_MS);
     });
   }
 
@@ -605,6 +641,7 @@
         loop: false,
         liveFrame: null,
         resizeFrame: null,
+        resizeTimer: null,
         animationFrame: null,
         waveWidth: 0,
         waveHeight: 0,
@@ -846,6 +883,7 @@
       runtime.discard = true;
       if (runtime.animationFrame !== null) cancelAnimationFrame(runtime.animationFrame);
       if (runtime.resizeFrame !== null) cancelAnimationFrame(runtime.resizeFrame);
+      clearTimeout(runtime.resizeTimer);
       if (runtime.recorder && runtime.recorder.state !== "inactive") runtime.recorder.stop();
       stopStream(runtime.stream);
       stopLiveWaveform(null, runtime);
