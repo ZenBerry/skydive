@@ -1322,7 +1322,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 152; // Increment once for each commit.
+    const APP_VERSION = 153; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const DEFAULT_TEMPLATE_DESCRIPTION = "A pre-saved template";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
@@ -7758,6 +7758,22 @@
         node.style.minWidth = `${getTextNodeMinWidthScreenPx(metrics.visualFontPx) / metrics.screenScale}px`;
         node.style.transform = `rotate(${totalRotation}rad) scale(${metrics.screenScale})`;
         node.style.transformOrigin = "top left";
+      }
+      notifyCommandNodeRendered(node, metrics);
+    }
+
+    function notifyCommandNodeRendered(node, metrics) {
+      if (!isCommandNode(node)) return;
+      const command = getLoadedStaticCommand(node.dataset.commandId || "");
+      if (!command || typeof command.renderFrame !== "function") return;
+      try {
+        command.renderFrame(node, {
+          cameraScale: metrics.cameraScale,
+          screenScale: metrics.screenScale,
+          layoutFontPx: metrics.layoutFontPx
+        });
+      } catch (error) {
+        console.error("Command renderFrame failed:", error);
       }
     }
 

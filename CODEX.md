@@ -1,5 +1,6 @@
 # Codex Notes
 
+- 2026-08-30: Added a command post-render hook and used it to resize `/rec` WaveSurfer waveforms during layout zoom without touching transform-only scaling. Bumped `APP_VERSION` to 153 and `rec` to 1.0.3.
 - 2026-08-30: Updated widget and book highlight red, blue, purple, and gray palette colors to translucent hex values, aliased prior saved colors forward, and bumped `APP_VERSION` to 151.
 - 2026-08-23: Updated the soft-green widget color to `#ecfce8`, mapped prior green widget colors to the new shade, and bumped `APP_VERSION` to 143.
 - 2026-08-23: Added `text-decoration-thickness: from-font` to external link widget labels, made computed widget button colors render at 44% alpha, and bumped `APP_VERSION` to 142.

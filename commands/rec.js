@@ -3,6 +3,7 @@
 
   const runtimes = new WeakMap();
   const PLAYBACK_SPEEDS = [1, 1.5, 2];
+  const WAVE_RESIZE_EPSILON_PX = 0.5;
   const MIME_TYPES = [
     "audio/webm;codecs=opus",
     "audio/mp4;codecs=mp4a.40.2",
@@ -218,6 +219,26 @@
     return Boolean(card && card.isConnected);
   }
 
+  function scheduleWaveformResize(elements, runtime) {
+    if (!runtime.wavesurfer || runtime.resizeFrame !== null) return;
+    runtime.resizeFrame = requestAnimationFrame(() => {
+      runtime.resizeFrame = null;
+      if (runtime.discard || !runtime.wavesurfer || !containerIsLive(elements.card)) return;
+
+      const width = Math.max(1, elements.wave.clientWidth);
+      const height = Math.max(1, elements.wave.clientHeight);
+      const widthChanged = Math.abs(width - runtime.waveWidth) > WAVE_RESIZE_EPSILON_PX;
+      const heightChanged = Math.abs(height - runtime.waveHeight) > WAVE_RESIZE_EPSILON_PX;
+      if (!widthChanged && !heightChanged) return;
+
+      runtime.waveWidth = width;
+      runtime.waveHeight = height;
+      if (typeof runtime.wavesurfer.setOptions === "function") {
+        runtime.wavesurfer.setOptions({ height: "auto" });
+      }
+    });
+  }
+
   function buildUploadedState(file, upload, context, showSpeedControl, label) {
     if (context && typeof context.createUploadedFileState === "function") {
       return {
@@ -270,6 +291,8 @@
       return false;
     }
     runtime.wavesurfer = wavesurfer;
+    runtime.waveWidth = Math.max(1, elements.wave.clientWidth);
+    runtime.waveHeight = Math.max(1, elements.wave.clientHeight);
 
     wavesurfer.on("ready", (duration) => {
       if (!container.isConnected) return;
@@ -581,7 +604,10 @@
         mediaSource: null,
         loop: false,
         liveFrame: null,
+        resizeFrame: null,
         animationFrame: null,
+        waveWidth: 0,
+        waveHeight: 0,
         uploading: false,
         discard: false
       };
@@ -819,6 +845,7 @@
       if (!runtime) return;
       runtime.discard = true;
       if (runtime.animationFrame !== null) cancelAnimationFrame(runtime.animationFrame);
+      if (runtime.resizeFrame !== null) cancelAnimationFrame(runtime.resizeFrame);
       if (runtime.recorder && runtime.recorder.state !== "inactive") runtime.recorder.stop();
       stopStream(runtime.stream);
       stopLiveWaveform(null, runtime);
@@ -829,6 +856,17 @@
         runtime.audio.load();
       }
       runtimes.delete(container);
+    },
+
+    renderFrame(container) {
+      const runtime = runtimes.get(container);
+      if (!runtime || runtime.discard || !runtime.wavesurfer) return;
+      const elements = {
+        card: container.querySelector(".rec-card"),
+        wave: container.querySelector(".rec-wave")
+      };
+      if (!elements.card || !elements.wave) return;
+      scheduleWaveformResize(elements, runtime);
     }
   });
 })();
