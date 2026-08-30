@@ -308,7 +308,7 @@
         cursorWidth: 1,
         height: "auto",
         width,
-        fillParent: false,
+        fillParent: true,
         normalize: true,
         barWidth: 2,
         barGap: 2,

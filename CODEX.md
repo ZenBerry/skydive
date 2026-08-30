@@ -1,5 +1,6 @@
 # Codex Notes
 
+- 2026-08-30: Fixed the frozen `/rec` waveform surface to let WaveSurfer fill the fixed parent once instead of rendering a zero-width `fillParent: false` waveform. Bumped `APP_VERSION` to 156 and `rec` to 1.0.6.
 - 2026-08-30: Changed `/rec` WaveSurfer playback waveforms to render once inside a fixed-size surface and scale with the widget instead of redrawing after zoom. Bumped `APP_VERSION` to 155 and `rec` to 1.0.5.
 - 2026-08-30: Reworked `/rec` waveform zoom handling to preview layout changes with a cheap CSS scale and debounce the expensive WaveSurfer redraw until zoom settles. Bumped `APP_VERSION` to 154 and `rec` to 1.0.4.
 - 2026-08-30: Added a command post-render hook and used it to resize `/rec` WaveSurfer waveforms during layout zoom without touching transform-only scaling. Bumped `APP_VERSION` to 153 and `rec` to 1.0.3.
