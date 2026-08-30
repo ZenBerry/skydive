@@ -28,11 +28,11 @@
         position: relative;
         min-height: 4.75em;
         transform-style: preserve-3d;
-        transition: transform 520ms cubic-bezier(0.9, 0, 0.1, 1);
+        transition: transform 800ms cubic-bezier(0.9, 0, 0.1, 1);
       }
 
       .flashcard-card[data-flipped="true"] .flashcard-stage {
-        transform: rotateY(180deg);
+        transform: rotate3d(0.02, 1, 0.02, 180deg);
       }
 
       .flashcard-face {
@@ -50,41 +50,24 @@
       }
 
       .flashcard-back {
-        transform: rotateY(180deg);
+        transform: rotate3d(0.02, 1, 0.02, 180deg);
       }
 
       .flashcard-text {
         overflow: hidden;
+        min-height: 1.16em;
         color: #4b3b2d;
         font: 500 0.72em/1.16 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
         letter-spacing: 0;
         text-align: center;
         white-space: pre-wrap;
         overflow-wrap: anywhere;
-      }
-
-      .flashcard-editor {
-        display: grid;
-        gap: 0.3em;
-      }
-
-      .flashcard-editor[hidden] {
-        display: none;
-      }
-
-      .flashcard-editor textarea {
-        width: 100%;
-        min-height: 3.2em;
-        box-sizing: border-box;
-        resize: vertical;
-        border: 0.04em solid var(--widget-field-border-color, #d6d6d6);
-        border-radius: 0.38em;
-        background: var(--widget-field-color, #ffffff);
-        padding: 0.36em 0.44em;
-        color: #3f3328;
-        font: 400 0.48em/1.2 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
-        letter-spacing: 0;
         outline: none;
+      }
+
+      .flashcard-text[contenteditable="true"] {
+        cursor: text;
+        user-select: text;
       }
 
       .flashcard-actions {
@@ -133,6 +116,18 @@
     };
   }
 
+  function placeCaretAtEnd(element) {
+    if (!element || !document.createRange || !window.getSelection) return;
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    range.collapse(false);
+    const selection = window.getSelection();
+    if (!selection) return;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    element.focus();
+  }
+
   window.SkydiveCommands.push({
     id: "flashcard",
     aliases: ["card", "study"],
@@ -161,38 +156,34 @@
 
       container.innerHTML = `
         <div class="flashcard-card" data-flipped="${flipped ? "true" : "false"}" data-editing="${editing ? "true" : "false"}">
-          <div class="flashcard-stage" ${editing ? "hidden" : ""}>
+          <div class="flashcard-stage">
             <div class="flashcard-face flashcard-front">
-              <div class="flashcard-text" data-role="front-text"></div>
+              <div class="flashcard-text" data-command-interactive data-side="front"></div>
             </div>
             <div class="flashcard-face flashcard-back">
-              <div class="flashcard-text" data-role="back-text"></div>
+              <div class="flashcard-text" data-command-interactive data-side="back"></div>
             </div>
-          </div>
-          <div class="flashcard-editor" ${editing ? "" : "hidden"}>
-            <textarea data-command-interactive data-field="front" aria-label="Front"></textarea>
-            <textarea data-command-interactive data-field="back" aria-label="Back"></textarea>
           </div>
           <div class="flashcard-actions">
             <button type="button" data-command-interactive data-action="flip">Flip</button>
-            <button type="button" data-command-interactive data-action="edit">Edit</button>
+            <button type="button" data-command-interactive data-action="edit">${editing ? "Save" : "Edit"}</button>
           </div>
         </div>
       `;
 
-      const frontText = container.querySelector('[data-role="front-text"]');
-      const backText = container.querySelector('[data-role="back-text"]');
-      const frontInput = container.querySelector('[data-field="front"]');
-      const backInput = container.querySelector('[data-field="back"]');
+      const card = container.querySelector(".flashcard-card");
+      const frontText = container.querySelector('[data-side="front"]');
+      const backText = container.querySelector('[data-side="back"]');
+      const activeText = flipped ? backText : frontText;
       if (frontText) frontText.textContent = front;
       if (backText) backText.textContent = back;
-      if (frontInput) frontInput.value = front;
-      if (backInput) backInput.value = back;
+      if (frontText) frontText.contentEditable = editing && !flipped ? "true" : "false";
+      if (backText) backText.contentEditable = editing && flipped ? "true" : "false";
 
       function readCurrentState(next = {}) {
         return {
-          front: normalizeText(frontInput && frontInput.value, DEFAULT_FRONT),
-          back: normalizeText(backInput && backInput.value, DEFAULT_BACK),
+          front: normalizeText(frontText && frontText.textContent, DEFAULT_FRONT),
+          back: normalizeText(backText && backText.textContent, DEFAULT_BACK),
           flipped,
           editing,
           ...next
@@ -200,12 +191,18 @@
       }
 
       container.querySelector('[data-action="flip"]').addEventListener("click", () => {
-        updateState(readCurrentState({ flipped: !flipped }));
+        const nextState = readCurrentState({ flipped: !flipped });
+        if (card) card.dataset.flipped = nextState.flipped ? "true" : "false";
+        window.setTimeout(() => updateState(nextState), 800);
       });
 
       container.querySelector('[data-action="edit"]').addEventListener("click", () => {
         updateState(readCurrentState({ editing: !editing }));
       });
+
+      if (editing && activeText) {
+        window.requestAnimationFrame(() => placeCaretAtEnd(activeText));
+      }
     }
   });
 })();
