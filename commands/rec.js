@@ -3,8 +3,6 @@
 
   const runtimes = new WeakMap();
   const PLAYBACK_SPEEDS = [1, 1.5, 2];
-  const WAVE_RESIZE_EPSILON_PX = 0.5;
-  const WAVE_RESIZE_IDLE_MS = 140;
   const MIME_TYPES = [
     "audio/webm;codecs=opus",
     "audio/mp4;codecs=mp4a.40.2",
@@ -220,58 +218,43 @@
     return Boolean(card && card.isConnected);
   }
 
-  function getWaveformSurface(wave) {
-    return wave && wave.firstElementChild instanceof HTMLElement ? wave.firstElementChild : null;
+  function createWaveformSurface(wave) {
+    const surface = document.createElement("div");
+    surface.className = "rec-wave-surface";
+    wave.appendChild(surface);
+    return surface;
   }
 
-  function setWaveformPreviewScale(wave, scaleX, scaleY) {
-    const surface = getWaveformSurface(wave);
+  function getWaveformSurface(elements) {
+    if (elements.surface instanceof HTMLElement) return elements.surface;
+    return elements.wave && elements.wave.firstElementChild instanceof HTMLElement
+      ? elements.wave.firstElementChild
+      : null;
+  }
+
+  function setWaveformScale(elements, runtime) {
+    const surface = getWaveformSurface(elements);
     if (!surface) return;
+    const width = Math.max(1, elements.wave.clientWidth);
+    const height = Math.max(1, elements.wave.clientHeight);
+    const scaleX = width / runtime.waveWidth;
+    const scaleY = height / runtime.waveHeight;
+    if (
+      Math.abs(scaleX - runtime.waveScaleX) <= 0.001 &&
+      Math.abs(scaleY - runtime.waveScaleY) <= 0.001
+    ) return;
+    runtime.waveScaleX = scaleX;
+    runtime.waveScaleY = scaleY;
     surface.style.transformOrigin = "left center";
     surface.style.transform = `scale(${scaleX}, ${scaleY})`;
   }
 
-  function clearWaveformPreviewScale(wave) {
-    const surface = getWaveformSurface(wave);
-    if (!surface) return;
-    surface.style.transform = "";
-    surface.style.transformOrigin = "";
-  }
-
-  function scheduleWaveformResize(elements, runtime) {
+  function scheduleWaveformScale(elements, runtime) {
     if (!runtime.wavesurfer || runtime.resizeFrame !== null) return;
     runtime.resizeFrame = requestAnimationFrame(() => {
       runtime.resizeFrame = null;
       if (runtime.discard || !runtime.wavesurfer || !containerIsLive(elements.card)) return;
-
-      const width = Math.max(1, elements.wave.clientWidth);
-      const height = Math.max(1, elements.wave.clientHeight);
-      const widthChanged = Math.abs(width - runtime.waveWidth) > WAVE_RESIZE_EPSILON_PX;
-      const heightChanged = Math.abs(height - runtime.waveHeight) > WAVE_RESIZE_EPSILON_PX;
-      if (!widthChanged && !heightChanged) return;
-
-      setWaveformPreviewScale(elements.wave, width / runtime.waveWidth, height / runtime.waveHeight);
-      clearTimeout(runtime.resizeTimer);
-      runtime.resizeTimer = setTimeout(() => {
-        runtime.resizeTimer = null;
-        if (runtime.discard || !runtime.wavesurfer || !containerIsLive(elements.card)) return;
-
-        const settledWidth = Math.max(1, elements.wave.clientWidth);
-        const settledHeight = Math.max(1, elements.wave.clientHeight);
-        const settledWidthChanged = Math.abs(settledWidth - runtime.waveWidth) > WAVE_RESIZE_EPSILON_PX;
-        const settledHeightChanged = Math.abs(settledHeight - runtime.waveHeight) > WAVE_RESIZE_EPSILON_PX;
-        if (!settledWidthChanged && !settledHeightChanged) {
-          clearWaveformPreviewScale(elements.wave);
-          return;
-        }
-
-        runtime.waveWidth = settledWidth;
-        runtime.waveHeight = settledHeight;
-        clearWaveformPreviewScale(elements.wave);
-        if (typeof runtime.wavesurfer.setOptions === "function") {
-          runtime.wavesurfer.setOptions({ height: "auto" });
-        }
-      }, WAVE_RESIZE_IDLE_MS);
+      setWaveformScale(elements, runtime);
     });
   }
 
@@ -308,15 +291,24 @@
   function createWaveSurfer(container, url, elements, runtime) {
     if (!window.WaveSurfer || typeof window.WaveSurfer.create !== "function") return false;
 
+    const surface = createWaveformSurface(elements.wave);
+    const width = Math.max(1, Math.round(elements.wave.clientWidth));
+    const height = Math.max(1, Math.round(elements.wave.clientHeight));
+    surface.style.width = `${width}px`;
+    surface.style.height = `${height}px`;
+    elements.surface = surface;
+
     let wavesurfer = null;
     try {
       wavesurfer = window.WaveSurfer.create({
-        container: elements.wave,
+        container: surface,
         waveColor: "#332a23",
         progressColor: "#332a23",
         cursorColor: "#332a23",
         cursorWidth: 1,
         height: "auto",
+        width,
+        fillParent: false,
         normalize: true,
         barWidth: 2,
         barGap: 2,
@@ -327,8 +319,10 @@
       return false;
     }
     runtime.wavesurfer = wavesurfer;
-    runtime.waveWidth = Math.max(1, elements.wave.clientWidth);
-    runtime.waveHeight = Math.max(1, elements.wave.clientHeight);
+    runtime.waveWidth = width;
+    runtime.waveHeight = height;
+    runtime.waveScaleX = 1;
+    runtime.waveScaleY = 1;
 
     wavesurfer.on("ready", (duration) => {
       if (!container.isConnected) return;
@@ -567,6 +561,10 @@
           border-radius: 0.42em;
           background: rgba(98, 78, 60, 0.08);
         }
+        .rec-wave-surface {
+          height: 100%;
+          will-change: transform;
+        }
         .rec-wave::after {
           content: "";
           position: absolute;
@@ -641,10 +639,11 @@
         loop: false,
         liveFrame: null,
         resizeFrame: null,
-        resizeTimer: null,
         animationFrame: null,
         waveWidth: 0,
         waveHeight: 0,
+        waveScaleX: 1,
+        waveScaleY: 1,
         uploading: false,
         discard: false
       };
@@ -883,7 +882,6 @@
       runtime.discard = true;
       if (runtime.animationFrame !== null) cancelAnimationFrame(runtime.animationFrame);
       if (runtime.resizeFrame !== null) cancelAnimationFrame(runtime.resizeFrame);
-      clearTimeout(runtime.resizeTimer);
       if (runtime.recorder && runtime.recorder.state !== "inactive") runtime.recorder.stop();
       stopStream(runtime.stream);
       stopLiveWaveform(null, runtime);
@@ -901,10 +899,11 @@
       if (!runtime || runtime.discard || !runtime.wavesurfer) return;
       const elements = {
         card: container.querySelector(".rec-card"),
-        wave: container.querySelector(".rec-wave")
+        wave: container.querySelector(".rec-wave"),
+        surface: container.querySelector(".rec-wave-surface")
       };
       if (!elements.card || !elements.wave) return;
-      scheduleWaveformResize(elements, runtime);
+      scheduleWaveformScale(elements, runtime);
     }
   });
 })();
