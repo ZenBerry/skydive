@@ -195,6 +195,25 @@
       }
     },
     {
+      "id": "flashcard",
+      "version": "1.0.0",
+      "title": "Flashcard",
+      "description": "Study a two-sided card.",
+      "aliases": ["card", "study"],
+      "acceptsArgs": true,
+      "source": "static",
+      "dynamicExecutable": false,
+      "stateSchema": {
+        "type": "object",
+        "properties": {
+          "front": { "type": "string" },
+          "back": { "type": "string" },
+          "flipped": { "type": "boolean" },
+          "editing": { "type": "boolean" }
+        }
+      }
+    },
+    {
       "id": "today",
       "version": "1.0.0",
       "title": "Today",
