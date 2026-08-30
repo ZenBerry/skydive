@@ -1322,7 +1322,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 151; // Increment once for each commit.
+    const APP_VERSION = 152; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const DEFAULT_TEMPLATE_DESCRIPTION = "A pre-saved template";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
@@ -1462,6 +1462,18 @@
     let userSpacesSyncInFlight = false;
     let slashCommandSession = null;
     let slashCommandSelectedIndex = 0;
+    const lazyCommandLoads = new Map();
+    const LAZY_STATIC_COMMANDS = new Map([
+      ["cam", {
+        id: "cam",
+        title: "Camera",
+        description: "Show a local webcam bubble.",
+        aliases: ["camera", "webcam"],
+        source: "static",
+        dynamicExecutable: false,
+        script: "/commands/cam.js"
+      }]
+    ]);
     let externalLinkCardPointer = null;
     let loadingProgressValue = 0;
     let loadingDisplayedProgress = 0;
@@ -5815,6 +5827,9 @@
 
     function getRegisteredCommands() {
       const commands = Array.isArray(window.SkydiveCommands) ? window.SkydiveCommands : [];
+      const loadedCommandIds = new Set(commands.map((command) => command && command.id).filter(Boolean));
+      const lazyCommands = Array.from(LAZY_STATIC_COMMANDS.values())
+        .filter((command) => !loadedCommandIds.has(command.id));
       const templateCommands = globalTemplates.map((template) => ({
         id: template.id,
         title: template.name || "Template",
@@ -5822,16 +5837,42 @@
         kind: "template",
         template
       }));
-      return commands.concat(templateCommands);
+      return commands.concat(lazyCommands, templateCommands);
     }
 
     function getCommand(commandId) {
       return getRegisteredCommands().find((command) => command && command.id === commandId) || null;
     }
 
+    function getLoadedStaticCommand(commandId) {
+      const commands = Array.isArray(window.SkydiveCommands) ? window.SkydiveCommands : [];
+      return commands.find((command) => command && command.id === commandId) || null;
+    }
+
+    function loadLazyCommand(commandId) {
+      const lazyCommand = LAZY_STATIC_COMMANDS.get(commandId);
+      if (!lazyCommand || !lazyCommand.script) return Promise.resolve(null);
+      if (getLoadedStaticCommand(commandId)) return Promise.resolve(getLoadedStaticCommand(commandId));
+      if (lazyCommandLoads.has(commandId)) return lazyCommandLoads.get(commandId);
+
+      const loadPromise = new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = lazyCommand.script;
+        script.async = true;
+        script.onload = () => resolve(getLoadedStaticCommand(commandId));
+        script.onerror = () => reject(new Error(`Could not load /${commandId}.`));
+        document.head.appendChild(script);
+      }).finally(() => {
+        lazyCommandLoads.delete(commandId);
+      });
+
+      lazyCommandLoads.set(commandId, loadPromise);
+      return loadPromise;
+    }
+
     function getStaticCommandIds() {
       const commands = Array.isArray(window.SkydiveCommands) ? window.SkydiveCommands : [];
-      return new Set(commands.flatMap((command) => [
+      return new Set(commands.concat(Array.from(LAZY_STATIC_COMMANDS.values())).flatMap((command) => [
         command && command.id,
         ...(Array.isArray(command && command.aliases) ? command.aliases : [])
       ]).map((value) => String(value || "").toLowerCase()).filter(Boolean));
@@ -6119,10 +6160,46 @@
     }
 
     function renderCommandNodeContent(node) {
-      const command = getCommand(node.dataset.commandId || "");
+      const commandId = node.dataset.commandId || "";
+      const command = getLoadedStaticCommand(commandId) || getCommand(commandId);
       destroyCommandNodeContent(node);
       node.replaceChildren();
       if (!command || typeof command.render !== "function") {
+        const lazyCommand = LAZY_STATIC_COMMANDS.get(commandId);
+        if (lazyCommand) {
+          const loading = document.createElement("div");
+          loading.textContent = "Loading command";
+          loading.style.padding = "0.55em 0.7em";
+          loading.style.border = "1px solid #e2d7c7";
+          loading.style.borderRadius = "0.5em";
+          loading.style.background = "#fffaf3";
+          loading.style.color = "#7b6a58";
+          node.appendChild(loading);
+          applyWidgetColor(node);
+          loadLazyCommand(commandId)
+            .then((loadedCommand) => {
+              if (!loadedCommand || !world.contains(node) || isNodeDeleted(node)) return;
+              renderCommandNodeContent(node);
+              refreshSelectionBounds();
+              updateDocumentTitle();
+            })
+            .catch((error) => {
+              console.error(error);
+              if (!world.contains(node) || isNodeDeleted(node)) return;
+              node.replaceChildren();
+              const failed = document.createElement("div");
+              failed.textContent = "Could not load command";
+              failed.style.padding = "0.55em 0.7em";
+              failed.style.border = "1px solid #e2d7c7";
+              failed.style.borderRadius = "0.5em";
+              failed.style.background = "#fffaf3";
+              failed.style.color = "#7b6a58";
+              node.appendChild(failed);
+              applyWidgetColor(node);
+            });
+          return;
+        }
+
         const missing = document.createElement("div");
         missing.textContent = "Missing command";
         missing.style.padding = "0.55em 0.7em";
