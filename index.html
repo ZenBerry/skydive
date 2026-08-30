@@ -1176,12 +1176,12 @@
     <button id="link-selection-btn" type="button">Link selection to node ID...</button>
     <div id="widget-color-picker" role="radiogroup" aria-label="Widget color" hidden>
       <button class="widget-color-swatch" type="button" role="radio" aria-label="White" data-widget-color="#ffffff" style="--swatch-color: #ffffff"></button>
-      <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft peach" data-widget-color="#f4cbb9" style="--swatch-color: #f4cbb9"></button>
+      <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft red" data-widget-color="#ffd4b570" style="--swatch-color: #ffd4b570"></button>
       <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft beige" data-widget-color="#fff8ed" style="--swatch-color: #fff8ed"></button>
       <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft green" data-widget-color="#ecfce8" style="--swatch-color: #ecfce8"></button>
-      <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft blue" data-widget-color="#c8def1" style="--swatch-color: #c8def1"></button>
-      <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft purple" data-widget-color="#ddcfed" style="--swatch-color: #ddcfed"></button>
-      <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft gray" data-widget-color="#dfddd9" style="--swatch-color: #dfddd9"></button>
+      <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft blue" data-widget-color="#d2f7ff70" style="--swatch-color: #d2f7ff70"></button>
+      <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft purple" data-widget-color="#f6e0ff9e" style="--swatch-color: #f6e0ff9e"></button>
+      <button class="widget-color-swatch" type="button" role="radio" aria-label="Soft gray" data-widget-color="#e0e0e066" style="--swatch-color: #e0e0e066"></button>
     </div>
   </div>
   <div id="line-context-menu" hidden>
@@ -1322,7 +1322,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 150; // Increment once for each commit.
+    const APP_VERSION = 151; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const DEFAULT_TEMPLATE_DESCRIPTION = "A pre-saved template";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
@@ -1330,10 +1330,14 @@
     const AUDIO_WIDGET_COMMAND_ID = "rec";
     const WIDGET_COLOR_STATE_KEY = "_widgetColor";
     const DEFAULT_WIDGET_COLOR = "#ffffff";
-    const WIDGET_COLORS = new Set(["#ffffff", "#f4cbb9", "#fff8ed", "#ecfce8", "#c8def1", "#ddcfed", "#dfddd9"]);
+    const WIDGET_COLORS = new Set(["#ffffff", "#ffd4b570", "#fff8ed", "#ecfce8", "#d2f7ff70", "#f6e0ff9e", "#e0e0e066"]);
     const LEGACY_WIDGET_COLOR_ALIASES = new Map([
+      ["#f4cbb9", "#ffd4b570"],
       ["#c9e1ce", "#ecfce8"],
-      ["#e8fced", "#ecfce8"]
+      ["#e8fced", "#ecfce8"],
+      ["#c8def1", "#d2f7ff70"],
+      ["#ddcfed", "#f6e0ff9e"],
+      ["#dfddd9", "#e0e0e066"]
     ]);
     const CALC_OPERATIONS = new Set(["+", "-", "*", "÷", "="]);
     const SANITIZED_INLINE_TAGS = new Map([
@@ -5882,12 +5886,13 @@
     }
 
     function adjustWidgetColorLightness(color, delta, alpha = 1) {
-      const match = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(color);
+      const match = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})([\da-f]{2})?$/i.exec(color);
       if (!match) return color;
 
       const red = parseInt(match[1], 16) / 255;
       const green = parseInt(match[2], 16) / 255;
       const blue = parseInt(match[3], 16) / 255;
+      const sourceAlpha = match[4] ? parseInt(match[4], 16) / 255 : 1;
       const max = Math.max(red, green, blue);
       const min = Math.min(red, green, blue);
       const lightness = (max + min) / 2;
@@ -5903,7 +5908,8 @@
         hue = (hue * 60 + 360) % 360;
       }
 
-      const alphaSuffix = alpha < 1 ? ` / ${Math.round(alpha * 100)}%` : "";
+      const effectiveAlpha = clamp(sourceAlpha * alpha, 0, 1);
+      const alphaSuffix = effectiveAlpha < 1 ? ` / ${Math.round(effectiveAlpha * 100)}%` : "";
       return `hsl(${hue.toFixed(1)} ${Math.round(saturation * 100)}% ${clamp(lightness * 100 + delta, 0, 100).toFixed(1)}%${alphaSuffix})`;
     }
 

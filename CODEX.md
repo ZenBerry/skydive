@@ -1,5 +1,6 @@
 # Codex Notes
 
+- 2026-08-30: Updated widget and book highlight red, blue, purple, and gray palette colors to translucent hex values, aliased prior saved colors forward, and bumped `APP_VERSION` to 151.
 - 2026-08-23: Updated the soft-green widget color to `#ecfce8`, mapped prior green widget colors to the new shade, and bumped `APP_VERSION` to 143.
 - 2026-08-23: Added `text-decoration-thickness: from-font` to external link widget labels, made computed widget button colors render at 44% alpha, and bumped `APP_VERSION` to 142.
 - 2026-08-23: Updated the soft-green widget color to `#e8fced`, preserved old saved green widget state through a color alias, set links to use `text-decoration-thickness: from-font`, and bumped `APP_VERSION` to 141.

@@ -178,8 +178,8 @@
       -webkit-box-decoration-break: clone;
     }
 
-    ::highlight(epub-highlight-peach) {
-      background-color: #f4cbb9;
+    ::highlight(epub-highlight-red) {
+      background-color: #ffd4b570;
     }
 
     ::highlight(epub-highlight-beige) {
@@ -191,15 +191,15 @@
     }
 
     ::highlight(epub-highlight-blue) {
-      background-color: #c8def1;
+      background-color: #d2f7ff70;
     }
 
     ::highlight(epub-highlight-purple) {
-      background-color: #ddcfed;
+      background-color: #f6e0ff9e;
     }
 
     ::highlight(epub-highlight-gray) {
-      background-color: #dfddd9;
+      background-color: #e0e0e066;
     }
 
     ::highlight(epub-highlight-yellow) {
@@ -313,12 +313,12 @@
   </main>
   <div id="menu" hidden>
     <div id="highlight-colors" role="group" aria-label="Highlight color">
-      <button class="highlight-swatch" type="button" aria-label="Highlight peach" data-highlight-color="#f4cbb9" style="--swatch-color: #f4cbb9"></button>
+      <button class="highlight-swatch" type="button" aria-label="Highlight red" data-highlight-color="#ffd4b570" style="--swatch-color: #ffd4b570"></button>
       <button class="highlight-swatch" type="button" aria-label="Highlight beige" data-highlight-color="#fff8ed" style="--swatch-color: #fff8ed"></button>
       <button class="highlight-swatch" type="button" aria-label="Highlight green" data-highlight-color="#c9e1ce" style="--swatch-color: #c9e1ce"></button>
-      <button class="highlight-swatch" type="button" aria-label="Highlight blue" data-highlight-color="#c8def1" style="--swatch-color: #c8def1"></button>
-      <button class="highlight-swatch" type="button" aria-label="Highlight purple" data-highlight-color="#ddcfed" style="--swatch-color: #ddcfed"></button>
-      <button class="highlight-swatch" type="button" aria-label="Highlight gray" data-highlight-color="#dfddd9" style="--swatch-color: #dfddd9"></button>
+      <button class="highlight-swatch" type="button" aria-label="Highlight blue" data-highlight-color="#d2f7ff70" style="--swatch-color: #d2f7ff70"></button>
+      <button class="highlight-swatch" type="button" aria-label="Highlight purple" data-highlight-color="#f6e0ff9e" style="--swatch-color: #f6e0ff9e"></button>
+      <button class="highlight-swatch" type="button" aria-label="Highlight gray" data-highlight-color="#e0e0e066" style="--swatch-color: #e0e0e066"></button>
       <button class="highlight-swatch" type="button" aria-label="Highlight yellow" data-highlight-color="#fff3a3" style="--swatch-color: #fff3a3"></button>
     </div>
     <button id="discuss" type="button">Discuss with Mark</button>
@@ -339,13 +339,19 @@
     const highlightColors = document.getElementById("highlight-colors");
 
     const HIGHLIGHT_COLORS = new Map([
-      ["#f4cbb9", "epub-highlight-peach"],
+      ["#ffd4b570", "epub-highlight-red"],
       ["#fff8ed", "epub-highlight-beige"],
       ["#c9e1ce", "epub-highlight-green"],
-      ["#c8def1", "epub-highlight-blue"],
-      ["#ddcfed", "epub-highlight-purple"],
-      ["#dfddd9", "epub-highlight-gray"],
+      ["#d2f7ff70", "epub-highlight-blue"],
+      ["#f6e0ff9e", "epub-highlight-purple"],
+      ["#e0e0e066", "epub-highlight-gray"],
       ["#fff3a3", "epub-highlight-yellow"]
+    ]);
+    const LEGACY_HIGHLIGHT_COLOR_ALIASES = new Map([
+      ["#f4cbb9", "#ffd4b570"],
+      ["#c8def1", "#d2f7ff70"],
+      ["#ddcfed", "#f6e0ff9e"],
+      ["#dfddd9", "#e0e0e066"]
     ]);
     let sourceUrl = "";
     let requestedName = "Book";
@@ -373,6 +379,7 @@
 
     function normalizeHighlightColor(value) {
       const color = String(value || "").trim().toLowerCase();
+      if (LEGACY_HIGHLIGHT_COLOR_ALIASES.has(color)) return LEGACY_HIGHLIGHT_COLOR_ALIASES.get(color);
       return HIGHLIGHT_COLORS.has(color) ? color : "";
     }
 
