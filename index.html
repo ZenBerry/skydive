@@ -232,9 +232,25 @@
       animation: float-bounce-out 340ms cubic-bezier(0.2, 0, 0, 1) both;
     }
 
+    .text-node[data-floating="true"].float-bounce-in:not(.command-node):not(:has(.external-link-card)) {
+      animation:
+        float-bounce-in 360ms cubic-bezier(0.2, 0, 0, 1) both,
+        float-text-shadow-in 360ms cubic-bezier(0.2, 0, 0, 1) both;
+    }
+
+    .text-node.float-bounce-out:not(.command-node):not(:has(.external-link-card)) {
+      animation:
+        float-bounce-out 340ms cubic-bezier(0.2, 0, 0, 1) both,
+        float-text-shadow-out 340ms cubic-bezier(0.2, 0, 0, 1) both;
+    }
+
     @media (prefers-reduced-motion: reduce) {
       .text-node.float-bounce-in,
-      .text-node.float-bounce-out {
+      .text-node.float-bounce-out,
+      .command-node[data-floating="true"].float-bounce-in > :first-child,
+      .command-node.float-bounce-out > :first-child,
+      .text-node[data-floating="true"].float-bounce-in .external-link-card,
+      .text-node.float-bounce-out .external-link-card {
         animation: none;
       }
     }
@@ -249,6 +265,18 @@
       0% { --float-transition-scale: 1.012; }
       46% { --float-transition-scale: 0.988; }
       100% { --float-transition-scale: 1; }
+    }
+
+    @keyframes float-text-shadow-in {
+      0% { text-shadow: 0 0px 0 #00000000; }
+      54% { text-shadow: 0 0px 9px #0000007a; }
+      100% { text-shadow: 0 0px 7px #00000096; }
+    }
+
+    @keyframes float-text-shadow-out {
+      0% { text-shadow: 0 0px 7px #00000096; }
+      46% { text-shadow: 0 0px 5px #00000062; }
+      100% { text-shadow: 0 0px 0 #00000000; }
     }
 
     .text-node.selected {
@@ -482,6 +510,15 @@
 
     .command-node[data-floating="true"] > :first-child {
       box-shadow: 0 0 14px 0 var(--widget-float-shadow-color) !important;
+      filter: drop-shadow(0 0 7px var(--widget-float-shadow-color));
+    }
+
+    .command-node[data-floating="true"].float-bounce-in > :first-child {
+      animation: float-command-shadow-in 360ms cubic-bezier(0.2, 0, 0, 1) both;
+    }
+
+    .command-node.float-bounce-out > :first-child {
+      animation: float-command-shadow-out 340ms cubic-bezier(0.2, 0, 0, 1) both;
     }
 
     .external-link-card {
@@ -587,6 +624,38 @@
 
     .text-node[data-floating="true"] .external-link-card {
       box-shadow: 0 0 14px 0 var(--widget-float-shadow-color);
+    }
+
+    .text-node[data-floating="true"].float-bounce-in .external-link-card {
+      animation: float-widget-shadow-in 360ms cubic-bezier(0.2, 0, 0, 1) both;
+    }
+
+    .text-node.float-bounce-out .external-link-card {
+      animation: float-widget-shadow-out 340ms cubic-bezier(0.2, 0, 0, 1) both;
+    }
+
+    @keyframes float-widget-shadow-in {
+      0% { box-shadow: 0 0 0 0 #00000000; }
+      54% { box-shadow: 0 0 16px 0 var(--widget-float-shadow-color); }
+      100% { box-shadow: 0 0 14px 0 var(--widget-float-shadow-color); }
+    }
+
+    @keyframes float-widget-shadow-out {
+      0% { box-shadow: 0 0 14px 0 var(--widget-float-shadow-color); }
+      46% { box-shadow: 0 0 9px 0 var(--widget-float-shadow-color); }
+      100% { box-shadow: 0 0 0 0 #00000000; }
+    }
+
+    @keyframes float-command-shadow-in {
+      0% { filter: drop-shadow(0 0 0 #00000000); }
+      54% { filter: drop-shadow(0 0 8px var(--widget-float-shadow-color)); }
+      100% { filter: drop-shadow(0 0 7px var(--widget-float-shadow-color)); }
+    }
+
+    @keyframes float-command-shadow-out {
+      0% { filter: drop-shadow(0 0 7px var(--widget-float-shadow-color)); }
+      46% { filter: drop-shadow(0 0 5px var(--widget-float-shadow-color)); }
+      100% { filter: drop-shadow(0 0 0 #00000000); }
     }
 
     .external-link-label {
@@ -1402,7 +1471,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 172; // Increment once for each commit.
+    const APP_VERSION = 173; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const DEFAULT_TEMPLATE_DESCRIPTION = "A pre-saved template";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
@@ -8499,32 +8568,48 @@
       setNodePosition(node, centerX - offsetX, centerY - offsetY, options);
     }
 
+    function getNodeTransform(node, rotation, scale) {
+      const baseScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+      const centerX = Math.max(node.offsetWidth, 1) * baseScale * 0.5;
+      const centerY = Math.max(node.offsetHeight, 1) * baseScale * 0.5;
+      return [
+        `rotate(${rotation}rad)`,
+        `translate(${centerX}px, ${centerY}px)`,
+        "scale(var(--float-transition-scale, 1))",
+        `translate(${-centerX}px, ${-centerY}px)`,
+        `scale(${baseScale})`
+      ].join(" ");
+    }
+
     function renderNode(node) {
       const x = Number(node.dataset.x);
       const y = Number(node.dataset.y);
       const metrics = getNodeRenderMetrics(node);
       const totalRotation = getNodeTotalRotation(node);
       const screenPoint = pointToScreenForNode(node, x, y);
-      const transitionScale = "var(--float-transition-scale, 1)";
       node.style.left = `${screenPoint.x}px`;
       node.style.top = `${screenPoint.y}px`;
       node.style.setProperty("--camera-scale", String(metrics.screenScale));
       if (isCommandNode(node)) {
         node.style.fontSize = `${metrics.layoutFontPx}px`;
         node.style.minWidth = "0px";
-        node.style.transform = `rotate(${totalRotation}rad) scale(calc(${metrics.screenScale} * ${transitionScale}))`;
+        node.style.transform = getNodeTransform(node, totalRotation, metrics.screenScale);
         node.style.transformOrigin = "top left";
       } else if (isHtmlViewNode(node)) {
         const frame = node.querySelector("iframe[data-html-view-token]");
         if (frame) applyHtmlViewFrameSize(frame);
         node.style.fontSize = `${BASE_TEXT_PX}px`;
         node.style.minWidth = "0px";
-        node.style.transform = `rotate(${totalRotation}rad) scale(calc(${metrics.cameraScale * metrics.baseFontSize / BASE_TEXT_PX} * ${transitionScale}))`;
+        node.style.transform = getNodeTransform(
+          node,
+          totalRotation,
+          metrics.cameraScale * metrics.baseFontSize / BASE_TEXT_PX
+        );
         node.style.transformOrigin = "top left";
       } else {
         node.style.fontSize = `${metrics.layoutFontPx}px`;
         node.style.minWidth = `${getTextNodeMinWidthScreenPx(metrics.visualFontPx) / metrics.screenScale}px`;
-        node.style.transform = `rotate(${totalRotation}rad) scale(calc(${metrics.screenScale} * ${transitionScale}))`;
+        node.style.transform = getNodeTransform(node, totalRotation, metrics.screenScale);
         node.style.transformOrigin = "top left";
       }
       notifyCommandNodeRendered(node, metrics);
