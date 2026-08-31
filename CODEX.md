@@ -1,5 +1,6 @@
 # Codex Notes
 
+- 2026-08-31: Restored `/rec` WaveSurfer loading to the direct known-good container path, moved freeze-and-scale behavior to after waveform readiness, disconnected post-ready WaveSurfer resize redraws, and added a bounded load watchdog so stuck long-file renders retry or fall back honestly. Bumped `APP_VERSION` to 170 and `rec` to 1.0.11.
 - 2026-08-31: Removed timeout-based `/rec` waveform fallback so long files can finish WaveSurfer decoding, keeping fallback only for real pre-ready errors; tightened recorder layout containment for long filenames. Bumped `APP_VERSION` to 169 and `rec` to 1.0.10.
 - 2026-08-31: Made `/rec` playback readiness truthful: uploaded audio shows loading until WaveSurfer is ready, falls back to native playback after bounded pre-ready waveform retries/timeouts, and labels fallback as playback-only. Bumped `APP_VERSION` to 168 and `rec` to 1.0.9.
 - 2026-08-31: Added bounded `/rec` WaveSurfer waveform retries before ready, while preserving the draw-once/no-redraw path after successful waveform render. Bumped `APP_VERSION` to 167 and `rec` to 1.0.8.
