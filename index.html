@@ -217,6 +217,7 @@
     .text-node[data-creator-initial]::before {
       content: attr(data-creator-initial);
       position: absolute;
+      z-index: 1;
       top: 50%;
       right: calc(100% + 0.34em);
       width: 0.9em;
@@ -364,7 +365,7 @@
 
     .text-node[data-view-mode="html"] {
       white-space: normal;
-      overflow: hidden;
+      overflow: visible;
     }
 
     .text-node[data-view-mode="html"] iframe {
@@ -373,7 +374,7 @@
       height: 100%;
       border: 0;
       background: transparent;
-      pointer-events: none;
+      pointer-events: auto;
     }
 
     .text-node.variable-node {
@@ -1339,7 +1340,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 164; // Increment once for each commit.
+    const APP_VERSION = 165; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const DEFAULT_TEMPLATE_DESCRIPTION = "A pre-saved template";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
@@ -1399,6 +1400,38 @@
     const QUICK_RESIZE_MIN_LEVEL = 1;
     const QUICK_RESIZE_MAX_LEVEL = 9;
     const HTML_VIEW_MAX_SIZE_PX = 4096;
+    const YOUTUBE_EMBED_DEFAULT_WIDTH = 560;
+    const YOUTUBE_EMBED_DEFAULT_HEIGHT = 315;
+    const HTML_VIEW_INTERACTIVE_SELECTOR = [
+      "a[href]",
+      "button",
+      "input",
+      "textarea",
+      "select",
+      "option",
+      "summary",
+      "label",
+      "audio",
+      "video",
+      "iframe",
+      "[contenteditable]",
+      "[tabindex]",
+      "[onclick]",
+      "[role='button']",
+      "[role='checkbox']",
+      "[role='combobox']",
+      "[role='link']",
+      "[role='listbox']",
+      "[role='menuitem']",
+      "[role='option']",
+      "[role='radio']",
+      "[role='searchbox']",
+      "[role='slider']",
+      "[role='spinbutton']",
+      "[role='switch']",
+      "[role='tab']",
+      "[role='textbox']"
+    ].join(",");
     const SPACING_GUIDE_MAX_LOOKUP_NODES = 12;
     const SPACING_GUIDE_MAX_CHAIN_GAPS = 4;
     const SPACING_GUIDE_PIXEL_TOLERANCE = 1;
@@ -3048,10 +3081,144 @@
       renderTagLinks(node);
     }
 
+    function getPositiveIntegerAttribute(element, name, fallback) {
+      const value = Number.parseInt(element.getAttribute(name) || "", 10);
+      return Number.isFinite(value) && value > 0 ? value : fallback;
+    }
+
+    function normalizeYouTubeEmbedUrl(rawUrl) {
+      let url;
+      try {
+        url = new URL(rawUrl, window.location.href);
+      } catch {
+        return "";
+      }
+
+      const host = url.hostname.replace(/^www\./, "");
+      const isYouTube = host === "youtube.com" || host === "youtube-nocookie.com";
+      const isShort = host === "youtu.be";
+      let videoId = "";
+
+      if (isYouTube && url.pathname.startsWith("/embed/")) {
+        videoId = url.pathname.split("/").filter(Boolean)[1] || "";
+      } else if (isYouTube && url.pathname === "/watch") {
+        videoId = url.searchParams.get("v") || "";
+      } else if (isYouTube && url.pathname.startsWith("/shorts/")) {
+        videoId = url.pathname.split("/").filter(Boolean)[1] || "";
+      } else if (isShort) {
+        videoId = url.pathname.split("/").filter(Boolean)[0] || "";
+      }
+
+      if (!/^[A-Za-z0-9_-]{6,}$/.test(videoId)) return "";
+      const embedHost = host === "youtube-nocookie.com" ? "www.youtube-nocookie.com" : "www.youtube.com";
+      const embed = new URL(`https://${embedHost}/embed/${videoId}`);
+      for (const [key, value] of url.searchParams) {
+        if (key !== "v") embed.searchParams.set(key, value);
+      }
+      return embed.href;
+    }
+
+    function getYouTubeEmbedFromHtml(source) {
+      const html = String(source || "").trim();
+      if (!html) return null;
+
+      const wrapper = document.createElement("div");
+      wrapper.innerHTML = html;
+      const iframe = wrapper.querySelector("iframe[src]");
+      if (iframe) {
+        const src = normalizeYouTubeEmbedUrl(iframe.getAttribute("src") || "");
+        if (!src) return null;
+        return {
+          src,
+          width: getPositiveIntegerAttribute(iframe, "width", YOUTUBE_EMBED_DEFAULT_WIDTH),
+          height: getPositiveIntegerAttribute(iframe, "height", YOUTUBE_EMBED_DEFAULT_HEIGHT)
+        };
+      }
+
+      const linkedUrl = wrapper.querySelector("a[href]")?.getAttribute("href") || html;
+      const src = normalizeYouTubeEmbedUrl(linkedUrl);
+      return src
+        ? { src, width: YOUTUBE_EMBED_DEFAULT_WIDTH, height: YOUTUBE_EMBED_DEFAULT_HEIGHT }
+        : null;
+    }
+
+    function renderYouTubeHtmlNode(node, embed) {
+      const frame = document.createElement("iframe");
+      frame.src = embed.src;
+      frame.loading = "lazy";
+      frame.referrerPolicy = "strict-origin-when-cross-origin";
+      frame.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share";
+      frame.allowFullscreen = true;
+      frame.style.width = `${embed.width}px`;
+      frame.style.height = `${embed.height}px`;
+      node.dataset.htmlViewWidth = String(embed.width);
+      node.dataset.htmlViewHeight = String(embed.height);
+      node.replaceChildren(frame);
+    }
+
+    let htmlViewDrag = null;
+
+    function getHtmlViewFrameClientPoint(frame, data) {
+      const rect = frame.getBoundingClientRect();
+      const width = Math.max(1, frame.clientWidth || rect.width || 1);
+      const height = Math.max(1, frame.clientHeight || rect.height || 1);
+      return {
+        x: rect.left + Number(data.x || 0) * (rect.width / width),
+        y: rect.top + Number(data.y || 0) * (rect.height / height)
+      };
+    }
+
+    function beginHtmlViewDrag(frame, data) {
+      const node = frame.closest(".text-node");
+      if (!(node instanceof HTMLElement) || node.classList.contains("editing")) return;
+      if (selectedNodes.size > 0 && !selectedNodes.has(node)) clearSelection();
+      closeNodeContextMenu();
+      cancelCameraAnimation();
+      cancelNodeLayoutAnimation();
+      const point = getHtmlViewFrameClientPoint(frame, data);
+      const pointer = screenToWorld(point.x, point.y);
+      htmlViewDrag = {
+        node,
+        token: frame.dataset.htmlViewToken || "",
+        pointerId: Number(data.pointerId),
+        dragOffsetX: Number(node.dataset.x) - pointer.x,
+        dragOffsetY: Number(node.dataset.y) - pointer.y,
+        startClientX: point.x,
+        startClientY: point.y,
+        moved: false
+      };
+    }
+
+    function updateHtmlViewDrag(frame, data) {
+      if (!htmlViewDrag || htmlViewDrag.token !== (frame.dataset.htmlViewToken || "")) return;
+      if (htmlViewDrag.pointerId !== Number(data.pointerId)) return;
+      const point = getHtmlViewFrameClientPoint(frame, data);
+      if (!htmlViewDrag.moved && Math.hypot(point.x - htmlViewDrag.startClientX, point.y - htmlViewDrag.startClientY) >= MARQUEE_DRAG_THRESHOLD_PX) {
+        htmlViewDrag.moved = true;
+      }
+      const pointer = screenToWorld(point.x, point.y);
+      setNodePosition(htmlViewDrag.node, pointer.x + htmlViewDrag.dragOffsetX, pointer.y + htmlViewDrag.dragOffsetY);
+      updateSpacingGuidesForNodes([htmlViewDrag.node]);
+    }
+
+    function endHtmlViewDrag(frame, data) {
+      if (!htmlViewDrag || htmlViewDrag.token !== (frame.dataset.htmlViewToken || "")) return;
+      if (htmlViewDrag.pointerId !== Number(data.pointerId)) return;
+      const moved = htmlViewDrag.moved;
+      htmlViewDrag = null;
+      clearSpacingGuides();
+      if (moved) scheduleAutosave();
+    }
+
     function renderHtmlNode(node) {
       if (!isHtmlViewNode(node)) return;
       const oldFrame = node.querySelector("iframe[data-html-view-token]");
       if (oldFrame) htmlViewFrames.delete(oldFrame.dataset.htmlViewToken || "");
+      const youtubeEmbed = getYouTubeEmbedFromHtml(getHtmlSource(node));
+      if (youtubeEmbed) {
+        renderYouTubeHtmlNode(node, youtubeEmbed);
+        return;
+      }
       const frame = document.createElement("iframe");
       const token = `html-view-${nextHtmlViewFrameToken++}`;
       htmlViewFrames.set(token, frame);
@@ -3064,6 +3231,53 @@
 <script>
 (() => {
   const token = ${JSON.stringify(token)};
+  const interactiveSelector = ${JSON.stringify(HTML_VIEW_INTERACTIVE_SELECTOR)};
+  const isInteractiveTarget = (target) => {
+    if (!(target instanceof Element)) return false;
+    const element = target.closest(interactiveSelector);
+    if (element) return true;
+    return getComputedStyle(target).cursor === "pointer";
+  };
+  let dragPointerId = null;
+  const postDrag = (phase, event) => {
+    parent.postMessage({
+      type: "skydive-html-view-drag",
+      token,
+      phase,
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY
+    }, "*");
+  };
+  addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || isInteractiveTarget(event.target)) return;
+    dragPointerId = event.pointerId;
+    if (event.target instanceof Element && event.target.setPointerCapture) {
+      try {
+        event.target.setPointerCapture(event.pointerId);
+      } catch {}
+    }
+    postDrag("start", event);
+    event.preventDefault();
+  }, { capture: true });
+  addEventListener("pointermove", (event) => {
+    if (event.pointerId !== dragPointerId) return;
+    postDrag("move", event);
+    event.preventDefault();
+  }, { capture: true });
+  const endDrag = (event) => {
+    if (event.pointerId !== dragPointerId) return;
+    postDrag("end", event);
+    if (event.target instanceof Element && event.target.releasePointerCapture) {
+      try {
+        event.target.releasePointerCapture(event.pointerId);
+      } catch {}
+    }
+    dragPointerId = null;
+    event.preventDefault();
+  };
+  addEventListener("pointerup", endDrag, { capture: true });
+  addEventListener("pointercancel", endDrag, { capture: true });
   const sendSize = () => {
     const body = document.body;
     let width = 1;
@@ -3099,9 +3313,20 @@
 
     function handleHtmlViewSizeMessage(event) {
       const data = event.data;
-      if (!data || data.type !== "skydive-html-view-size" || typeof data.token !== "string") return;
+      if (!data || typeof data.token !== "string") return;
       const frame = htmlViewFrames.get(data.token);
       if (!frame || frame.contentWindow !== event.source || !world.contains(frame)) return;
+      if (data.type === "skydive-html-view-drag") {
+        if (data.phase === "start") {
+          beginHtmlViewDrag(frame, data);
+        } else if (data.phase === "move") {
+          updateHtmlViewDrag(frame, data);
+        } else if (data.phase === "end") {
+          endHtmlViewDrag(frame, data);
+        }
+        return;
+      }
+      if (data.type !== "skydive-html-view-size") return;
       const width = clamp(Math.ceil(Number(data.width) || 1), 1, HTML_VIEW_MAX_SIZE_PX);
       const height = clamp(Math.ceil(Number(data.height) || 1), 1, HTML_VIEW_MAX_SIZE_PX);
       const node = frame.closest(".text-node");
