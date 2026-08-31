@@ -4,6 +4,7 @@
   const runtimes = new WeakMap();
   const PLAYBACK_SPEEDS = [1, 1.5, 2];
   const WAVESURFER_RETRY_DELAYS_MS = [600, 1800];
+  const WAVESURFER_READY_TIMEOUT_MS = 12000;
   const MIME_TYPES = [
     "audio/webm;codecs=opus",
     "audio/mp4;codecs=mp4a.40.2",
@@ -264,6 +265,8 @@
       cancelAnimationFrame(runtime.resizeFrame);
       runtime.resizeFrame = null;
     }
+    clearTimeout(runtime.waveReadyTimer);
+    runtime.waveReadyTimer = null;
     if (runtime.wavesurfer) {
       runtime.wavesurfer.destroy();
       runtime.wavesurfer = null;
@@ -291,6 +294,12 @@
       }
     }, delay);
     return true;
+  }
+
+  function fallBackToNativePlayback(url, elements, runtime) {
+    resetWaveSurferSurface(elements, runtime);
+    elements.wave.dataset.mode = "empty";
+    createNativeFallback(url, elements, runtime);
   }
 
   function buildUploadedState(file, upload, context, showSpeedControl, label) {
@@ -358,10 +367,19 @@
     runtime.waveHeight = height;
     runtime.waveScaleX = 1;
     runtime.waveScaleY = 1;
+    runtime.waveReadyTimer = setTimeout(() => {
+      runtime.waveReadyTimer = null;
+      if (runtime.discard || runtime.waveReady || !container.isConnected) return;
+      if (retryWaveSurfer(container, url, elements, runtime)) return;
+      fallBackToNativePlayback(url, elements, runtime);
+    }, WAVESURFER_READY_TIMEOUT_MS);
 
     wavesurfer.on("ready", (duration) => {
       if (!container.isConnected) return;
+      clearTimeout(runtime.waveReadyTimer);
+      runtime.waveReadyTimer = null;
       runtime.waveReady = true;
+      elements.status.textContent = "Ready";
       elements.time.textContent = `0:00 / ${formatTime(duration)}`;
       elements.start.disabled = false;
       elements.pause.disabled = false;
@@ -384,9 +402,8 @@
       if (!container.isConnected) return;
       if (!runtime.waveReady) {
         if (retryWaveSurfer(container, url, elements, runtime)) return;
-        resetWaveSurferSurface(elements, runtime);
-        elements.wave.dataset.mode = "empty";
-        createNativeFallback(url, elements, runtime);
+        fallBackToNativePlayback(url, elements, runtime);
+        return;
       }
       elements.status.textContent = "Could not load audio";
     });
@@ -406,7 +423,7 @@
     const getDuration = () => Number.isFinite(audio.duration) ? audio.duration : 0;
 
     audio.addEventListener("loadedmetadata", () => {
-      elements.status.textContent = "Ready";
+      elements.status.textContent = "Playback only";
       elements.time.textContent = `0:00 / ${formatTime(getDuration())}`;
       elements.start.disabled = false;
       elements.pause.disabled = false;
@@ -687,6 +704,7 @@
         loop: false,
         liveFrame: null,
         resizeFrame: null,
+        waveReadyTimer: null,
         waveRetryTimer: null,
         animationFrame: null,
         waveWidth: 0,
@@ -741,7 +759,7 @@
       });
 
       if (hasAudio) {
-        elements.status.textContent = "Ready";
+        elements.status.textContent = "Loading waveform...";
         elements.playbackActions.hidden = false;
         elements.wave.dataset.mode = "playback";
         elements.wave.replaceChildren();
@@ -933,6 +951,7 @@
       runtime.discard = true;
       if (runtime.animationFrame !== null) cancelAnimationFrame(runtime.animationFrame);
       if (runtime.resizeFrame !== null) cancelAnimationFrame(runtime.resizeFrame);
+      clearTimeout(runtime.waveReadyTimer);
       clearTimeout(runtime.waveRetryTimer);
       if (runtime.recorder && runtime.recorder.state !== "inactive") runtime.recorder.stop();
       stopStream(runtime.stream);
