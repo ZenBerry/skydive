@@ -1,5 +1,6 @@
 # Codex Notes
 
+- 2026-08-31: Added bounded `/rec` WaveSurfer waveform retries before ready, while preserving the draw-once/no-redraw path after successful waveform render. Bumped `APP_VERSION` to 167 and `rec` to 1.0.8.
 - 2026-08-30: Center-anchored the fixed `/rec` WaveSurfer surface so CSS zoom scaling no longer drifts vertically or clips out of the waveform slot. Bumped `APP_VERSION` to 157 and `rec` to 1.0.7.
 - 2026-08-30: Fixed the frozen `/rec` waveform surface to let WaveSurfer fill the fixed parent once instead of rendering a zero-width `fillParent: false` waveform. Bumped `APP_VERSION` to 156 and `rec` to 1.0.6.
 - 2026-08-30: Changed `/rec` WaveSurfer playback waveforms to render once inside a fixed-size surface and scale with the widget instead of redrawing after zoom. Bumped `APP_VERSION` to 155 and `rec` to 1.0.5.

@@ -3,6 +3,7 @@
 
   const runtimes = new WeakMap();
   const PLAYBACK_SPEEDS = [1, 1.5, 2];
+  const WAVESURFER_RETRY_DELAYS_MS = [600, 1800];
   const MIME_TYPES = [
     "audio/webm;codecs=opus",
     "audio/mp4;codecs=mp4a.40.2",
@@ -258,6 +259,40 @@
     });
   }
 
+  function resetWaveSurferSurface(elements, runtime) {
+    if (runtime.resizeFrame !== null) {
+      cancelAnimationFrame(runtime.resizeFrame);
+      runtime.resizeFrame = null;
+    }
+    if (runtime.wavesurfer) {
+      runtime.wavesurfer.destroy();
+      runtime.wavesurfer = null;
+    }
+    runtime.waveReady = false;
+    runtime.waveScaleX = 1;
+    runtime.waveScaleY = 1;
+    elements.wave.replaceChildren();
+    delete elements.wave.dataset.fallback;
+  }
+
+  function retryWaveSurfer(container, url, elements, runtime) {
+    if (runtime.waveReady || runtime.waveRetryCount >= WAVESURFER_RETRY_DELAYS_MS.length) return false;
+    const delay = WAVESURFER_RETRY_DELAYS_MS[runtime.waveRetryCount];
+    runtime.waveRetryCount += 1;
+    resetWaveSurferSurface(elements, runtime);
+    elements.status.textContent = "Retrying waveform...";
+    runtime.waveRetryTimer = setTimeout(() => {
+      runtime.waveRetryTimer = null;
+      if (runtime.discard || !container.isConnected) return;
+      if (!createWaveSurfer(container, url, elements, runtime)) {
+        elements.wave.dataset.mode = "empty";
+        elements.wave.replaceChildren();
+        createNativeFallback(url, elements, runtime);
+      }
+    }, delay);
+    return true;
+  }
+
   function buildUploadedState(file, upload, context, showSpeedControl, label) {
     if (context && typeof context.createUploadedFileState === "function") {
       return {
@@ -326,6 +361,7 @@
 
     wavesurfer.on("ready", (duration) => {
       if (!container.isConnected) return;
+      runtime.waveReady = true;
       elements.time.textContent = `0:00 / ${formatTime(duration)}`;
       elements.start.disabled = false;
       elements.pause.disabled = false;
@@ -346,6 +382,12 @@
     });
     wavesurfer.on("error", () => {
       if (!container.isConnected) return;
+      if (!runtime.waveReady) {
+        if (retryWaveSurfer(container, url, elements, runtime)) return;
+        resetWaveSurferSurface(elements, runtime);
+        elements.wave.dataset.mode = "empty";
+        createNativeFallback(url, elements, runtime);
+      }
       elements.status.textContent = "Could not load audio";
     });
     return true;
@@ -364,6 +406,7 @@
     const getDuration = () => Number.isFinite(audio.duration) ? audio.duration : 0;
 
     audio.addEventListener("loadedmetadata", () => {
+      elements.status.textContent = "Ready";
       elements.time.textContent = `0:00 / ${formatTime(getDuration())}`;
       elements.start.disabled = false;
       elements.pause.disabled = false;
@@ -644,11 +687,14 @@
         loop: false,
         liveFrame: null,
         resizeFrame: null,
+        waveRetryTimer: null,
         animationFrame: null,
         waveWidth: 0,
         waveHeight: 0,
         waveScaleX: 1,
         waveScaleY: 1,
+        waveReady: false,
+        waveRetryCount: 0,
         uploading: false,
         discard: false
       };
@@ -887,6 +933,7 @@
       runtime.discard = true;
       if (runtime.animationFrame !== null) cancelAnimationFrame(runtime.animationFrame);
       if (runtime.resizeFrame !== null) cancelAnimationFrame(runtime.resizeFrame);
+      clearTimeout(runtime.waveRetryTimer);
       if (runtime.recorder && runtime.recorder.state !== "inactive") runtime.recorder.stop();
       stopStream(runtime.stream);
       stopLiveWaveform(null, runtime);
