@@ -374,7 +374,16 @@
       height: 100%;
       border: 0;
       background: transparent;
+      pointer-events: none;
+    }
+
+    .text-node[data-view-mode="html"].html-widget-active iframe {
       pointer-events: auto;
+    }
+
+    #viewport.panning .text-node[data-view-mode="html"] iframe,
+    #viewport.html-wheel-through .text-node[data-view-mode="html"] iframe {
+      pointer-events: none;
     }
 
     .text-node.variable-node {
@@ -1340,7 +1349,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 165; // Increment once for each commit.
+    const APP_VERSION = 166; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const DEFAULT_TEMPLATE_DESCRIPTION = "A pre-saved template";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
@@ -1492,6 +1501,7 @@
     let physicalWheelZoomAnimation = null;
     let physicalWheelZoomAnimationFrame = null;
     let hasPhysicalWheelInput = false;
+    let htmlWheelThroughKeyDepth = 0;
     let groupTransform = null;
     let selectionBoundsWorld = null;
     let selectionHandleMode = "resize";
@@ -3151,12 +3161,37 @@
       frame.allowFullscreen = true;
       frame.style.width = `${embed.width}px`;
       frame.style.height = `${embed.height}px`;
+      frame.addEventListener("wheel", handleHtmlViewFrameWheel, { passive: false });
       node.dataset.htmlViewWidth = String(embed.width);
       node.dataset.htmlViewHeight = String(embed.height);
       node.replaceChildren(frame);
     }
 
     let htmlViewDrag = null;
+    const htmlWidgetActiveTimers = new WeakMap();
+
+    function setHtmlWidgetActive(node, enabled) {
+      if (!isHtmlViewNode(node)) return;
+      const oldTimer = htmlWidgetActiveTimers.get(node);
+      if (oldTimer) {
+        clearTimeout(oldTimer);
+        htmlWidgetActiveTimers.delete(node);
+      }
+      node.classList.toggle("html-widget-active", Boolean(enabled));
+      if (!enabled) return;
+      const timer = setTimeout(() => {
+        htmlWidgetActiveTimers.delete(node);
+        node.classList.remove("html-widget-active");
+      }, 1800);
+      htmlWidgetActiveTimers.set(node, timer);
+    }
+
+    function clearHtmlWidgetActive(target = null) {
+      for (const node of world.querySelectorAll(".text-node[data-view-mode='html'].html-widget-active")) {
+        if (target && node.contains(target)) continue;
+        setHtmlWidgetActive(node, false);
+      }
+    }
 
     function getHtmlViewFrameClientPoint(frame, data) {
       const rect = frame.getBoundingClientRect();
@@ -3210,6 +3245,49 @@
       if (moved) scheduleAutosave();
     }
 
+    function updateHtmlWheelThroughMode() {
+      viewport.classList.toggle("html-wheel-through", htmlWheelThroughKeyDepth > 0);
+    }
+
+    function setHtmlWheelThroughKey(event, enabled) {
+      if (event.key !== "Control" && event.key !== "Meta" && event.key !== "Shift") return;
+      htmlWheelThroughKeyDepth = enabled
+        ? Math.max(1, htmlWheelThroughKeyDepth + (event.repeat ? 0 : 1))
+        : 0;
+      updateHtmlWheelThroughMode();
+    }
+
+    function handleHtmlViewWheel(frame, data, sourceEvent = null) {
+      const point = getHtmlViewFrameClientPoint(frame, data);
+      handleCanvasWheelInput({
+        clientX: point.x,
+        clientY: point.y,
+        deltaX: Number(data.deltaX) || 0,
+        deltaY: Number(data.deltaY) || 0,
+        altKey: Boolean(data.altKey),
+        ctrlKey: Boolean(data.ctrlKey),
+        metaKey: Boolean(data.metaKey),
+        sourceEvent
+      });
+    }
+
+    function handleHtmlViewFrameWheel(event) {
+      const frame = event.currentTarget;
+      if (!(frame instanceof HTMLIFrameElement)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      handleCanvasWheelInput({
+        clientX: event.clientX,
+        clientY: event.clientY,
+        deltaX: event.deltaX,
+        deltaY: event.deltaY,
+        altKey: event.altKey,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        sourceEvent: event
+      });
+    }
+
     function renderHtmlNode(node) {
       if (!isHtmlViewNode(node)) return;
       const oldFrame = node.querySelector("iframe[data-html-view-token]");
@@ -3225,6 +3303,7 @@
       frame.dataset.htmlViewToken = token;
       frame.style.width = "1px";
       frame.style.height = "1px";
+      frame.addEventListener("wheel", handleHtmlViewFrameWheel, { passive: false });
       frame.setAttribute("sandbox", "allow-scripts allow-forms allow-modals allow-popups");
       frame.referrerPolicy = "no-referrer";
       frame.srcdoc = `${getHtmlSource(node)}
@@ -3278,6 +3357,21 @@
   };
   addEventListener("pointerup", endDrag, { capture: true });
   addEventListener("pointercancel", endDrag, { capture: true });
+  addEventListener("wheel", (event) => {
+    parent.postMessage({
+      type: "skydive-html-view-wheel",
+      token,
+      deltaX: event.deltaX,
+      deltaY: event.deltaY,
+      altKey: event.altKey,
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey,
+      x: event.clientX,
+      y: event.clientY
+    }, "*");
+    event.preventDefault();
+    event.stopPropagation();
+  }, { capture: true, passive: false });
   const sendSize = () => {
     const body = document.body;
     let width = 1;
@@ -3324,6 +3418,10 @@
         } else if (data.phase === "end") {
           endHtmlViewDrag(frame, data);
         }
+        return;
+      }
+      if (data.type === "skydive-html-view-wheel") {
+        handleHtmlViewWheel(frame, data);
         return;
       }
       if (data.type !== "skydive-html-view-size") return;
@@ -9401,6 +9499,12 @@
       });
 
       node.addEventListener("click", (event) => {
+        if (isHtmlViewNode(node) && !dragMoved) {
+          setHtmlWidgetActive(node, true);
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
         if (handleExternalLinkAction(node, event)) return;
         if (suppressExternalLinkVisit) {
           suppressExternalLinkVisit = false;
@@ -9499,6 +9603,10 @@
         closeSlashCommandMenu();
         updateDocumentTitle();
         scheduleAutosave();
+      });
+
+      node.addEventListener("mouseleave", () => {
+        setHtmlWidgetActive(node, false);
       });
 
       node.addEventListener("keydown", (event) => {
@@ -10221,6 +10329,7 @@
     }, { capture: true });
 
     window.addEventListener("pointerdown", (event) => {
+      clearHtmlWidgetActive(event.target instanceof Node ? event.target : null);
       deactivateEditingNodeOnOutsidePointerDown(event.target);
       if (!slashCommandMenu.hidden && event.target instanceof Node && !slashCommandMenu.contains(event.target)) {
         const editingNode = getActiveEditingNode();
@@ -10270,37 +10379,51 @@
     viewport.addEventListener("pointerup", endMarqueeSelection);
     viewport.addEventListener("pointercancel", endMarqueeSelection);
 
-    viewport.addEventListener("wheel", (event) => {
-      event.preventDefault();
+    function handleCanvasWheelInput(input) {
+      clearHtmlWidgetActive();
       closeNodeContextMenu();
       closeLineContextMenu();
       closeCanvasContextMenu();
       cancelCameraAnimation({ preservePhysicalWheelZoom: true });
       cancelNodeLayoutAnimation();
 
-      if (event.altKey) {
+      if (input.altKey) {
         cancelPhysicalWheelZoomAnimation();
-        rotateTo(camera.rotation + event.deltaY * ROTATION_SENSITIVITY, event.clientX, event.clientY);
-      } else if (event.ctrlKey || event.metaKey) {
-        const factor = Math.exp(-event.deltaY * ZOOM_SENSITIVITY);
-        const isPhysicalWheelStep = detectPhysicalWheelStep(event);
+        rotateTo(camera.rotation + input.deltaY * ROTATION_SENSITIVITY, input.clientX, input.clientY);
+      } else if (input.ctrlKey || input.metaKey) {
+        const factor = Math.exp(-input.deltaY * ZOOM_SENSITIVITY);
+        const isPhysicalWheelStep = input.sourceEvent ? detectPhysicalWheelStep(input.sourceEvent) : false;
         const isSuddenZoomJump =
-          Math.abs(event.deltaY * ZOOM_SENSITIVITY) >= PHYSICAL_WHEEL_MIN_ZOOM_LOG_DELTA;
+          Math.abs(input.deltaY * ZOOM_SENSITIVITY) >= PHYSICAL_WHEEL_MIN_ZOOM_LOG_DELTA;
         if (isPhysicalWheelStep && hasPhysicalWheelInput && isSuddenZoomJump) {
-          const physicalWheelFactor = Math.exp(-event.deltaY * PHYSICAL_WHEEL_ZOOM_SENSITIVITY);
-          smoothPhysicalWheelZoom(physicalWheelFactor, event.clientX, event.clientY);
+          const physicalWheelFactor = Math.exp(-input.deltaY * PHYSICAL_WHEEL_ZOOM_SENSITIVITY);
+          smoothPhysicalWheelZoom(physicalWheelFactor, input.clientX, input.clientY);
         } else {
           // Preserve native trackpad deltas and macOS momentum exactly as before.
           cancelPhysicalWheelZoomAnimation();
-          zoomTo(camera.scale * factor, event.clientX, event.clientY);
+          zoomTo(camera.scale * factor, input.clientX, input.clientY);
         }
       } else {
         cancelPhysicalWheelZoomAnimation();
-        camera.x -= event.deltaX;
-        camera.y -= event.deltaY;
+        camera.x -= input.deltaX;
+        camera.y -= input.deltaY;
         render();
         scheduleViewportSave();
       }
+    }
+
+    viewport.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      handleCanvasWheelInput({
+        clientX: event.clientX,
+        clientY: event.clientY,
+        deltaX: event.deltaX,
+        deltaY: event.deltaY,
+        altKey: event.altKey,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        sourceEvent: event
+      });
     }, { passive: false });
 
     let gestureStartScale = camera.scale;
@@ -10410,6 +10533,8 @@
     });
 
     window.addEventListener("keydown", (event) => {
+      setHtmlWheelThroughKey(event, true);
+
       if (event.key === "Escape") {
         cancelLineDraft();
         closeNodeContextMenu();
@@ -10516,6 +10641,21 @@
         void openFromFile();
       }
     }, { capture: true });
+
+    window.addEventListener("keyup", (event) => {
+      setHtmlWheelThroughKey(event, false);
+    }, { capture: true });
+
+    window.addEventListener("blur", () => {
+      htmlWheelThroughKeyDepth = 0;
+      updateHtmlWheelThroughMode();
+    });
+
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) return;
+      htmlWheelThroughKeyDepth = 0;
+      updateHtmlWheelThroughMode();
+    });
 
     window.addEventListener("resize", () => {
       closeNodeContextMenu();
