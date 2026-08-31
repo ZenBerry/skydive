@@ -362,6 +362,20 @@
       border-top: 0.05em solid rgba(17, 24, 39, 0.25);
     }
 
+    .text-node[data-view-mode="html"] {
+      white-space: normal;
+      overflow: hidden;
+    }
+
+    .text-node[data-view-mode="html"] iframe {
+      display: block;
+      width: 100%;
+      height: 100%;
+      border: 0;
+      background: transparent;
+      pointer-events: none;
+    }
+
     .text-node.variable-node {
       box-sizing: border-box;
       padding: 0.18em 0.34em 0.16em;
@@ -1169,6 +1183,7 @@
     <button id="copy-size-btn" type="button">Copy size</button>
     <button id="paste-size-btn" type="button">Paste size</button>
     <button id="view-markdown-btn" type="button">View as markdown</button>
+    <button id="view-html-btn" type="button">View as HTML</button>
     <button id="view-plain-text-btn" type="button">View as plain text</button>
     <button id="hook-title-btn" type="button">Hook node to window title</button>
     <button id="draw-line-btn" type="button">Line</button>
@@ -1245,6 +1260,7 @@
     const copySizeBtn = document.getElementById("copy-size-btn");
     const pasteSizeBtn = document.getElementById("paste-size-btn");
     const viewMarkdownBtn = document.getElementById("view-markdown-btn");
+    const viewHtmlBtn = document.getElementById("view-html-btn");
     const viewPlainTextBtn = document.getElementById("view-plain-text-btn");
     const hookTitleBtn = document.getElementById("hook-title-btn");
     const drawLineBtn = document.getElementById("draw-line-btn");
@@ -1323,7 +1339,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 159; // Increment once for each commit.
+    const APP_VERSION = 164; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const DEFAULT_TEMPLATE_DESCRIPTION = "A pre-saved template";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
@@ -1382,6 +1398,7 @@
     const QUICK_RESIZE_STEP_FACTOR = 3;
     const QUICK_RESIZE_MIN_LEVEL = 1;
     const QUICK_RESIZE_MAX_LEVEL = 9;
+    const HTML_VIEW_MAX_SIZE_PX = 4096;
     const SPACING_GUIDE_MAX_LOOKUP_NODES = 12;
     const SPACING_GUIDE_MAX_CHAIN_GAPS = 4;
     const SPACING_GUIDE_PIXEL_TOLERANCE = 1;
@@ -1425,6 +1442,8 @@
     let contextMenuLineId = null;
     let contextMenuSelectionRange = null;
     let contextMenuSizeTargets = [];
+    let nextHtmlViewFrameToken = 1;
+    const htmlViewFrames = new Map();
     let copiedNodeBaseFontSize = null;
     let titleHookNodeId = "";
     let titleHookTimer = null;
@@ -2525,7 +2544,7 @@
     }
 
     function renderTagLinks(node) {
-      if (!(node instanceof HTMLElement) || isCommandNode(node) || node.classList.contains("editing")) return false;
+      if (!(node instanceof HTMLElement) || isCommandNode(node) || isHtmlViewNode(node) || node.classList.contains("editing")) return false;
       const pattern = /(^|[^\p{L}\p{N}_-])(#[\p{L}\p{N}_][\p{L}\p{N}_-]*)/gu;
       const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, {
         acceptNode(textNode) {
@@ -2583,9 +2602,19 @@
       return node instanceof HTMLElement && node.dataset.viewMode === "markdown";
     }
 
+    function isHtmlViewNode(node) {
+      return node instanceof HTMLElement && node.dataset.viewMode === "html";
+    }
+
     function getMarkdownSource(node) {
       return typeof node.dataset.markdownSource === "string"
         ? node.dataset.markdownSource
+        : node.textContent || "";
+    }
+
+    function getHtmlSource(node) {
+      return typeof node.dataset.htmlSource === "string"
+        ? node.dataset.htmlSource
         : node.textContent || "";
     }
 
@@ -2624,6 +2653,7 @@
     }
 
     function getSerializableTextSource(node) {
+      if (isHtmlViewNode(node)) return getHtmlSource(node);
       return isMarkdownViewNode(node) ? getMarkdownSource(node) : getPlainTextSource(node);
     }
 
@@ -3018,10 +3048,87 @@
       renderTagLinks(node);
     }
 
+    function renderHtmlNode(node) {
+      if (!isHtmlViewNode(node)) return;
+      const oldFrame = node.querySelector("iframe[data-html-view-token]");
+      if (oldFrame) htmlViewFrames.delete(oldFrame.dataset.htmlViewToken || "");
+      const frame = document.createElement("iframe");
+      const token = `html-view-${nextHtmlViewFrameToken++}`;
+      htmlViewFrames.set(token, frame);
+      frame.dataset.htmlViewToken = token;
+      frame.style.width = "1px";
+      frame.style.height = "1px";
+      frame.setAttribute("sandbox", "allow-scripts allow-forms allow-modals allow-popups");
+      frame.referrerPolicy = "no-referrer";
+      frame.srcdoc = `${getHtmlSource(node)}
+<script>
+(() => {
+  const token = ${JSON.stringify(token)};
+  const sendSize = () => {
+    const body = document.body;
+    let width = 1;
+    let height = 1;
+    if (body) {
+      const range = document.createRange();
+      range.selectNodeContents(body);
+      const contentRect = range.getBoundingClientRect();
+      width = Math.max(width, Math.ceil(contentRect.right));
+      height = Math.max(height, Math.ceil(contentRect.bottom));
+      range.detach();
+      for (const element of body.children) {
+        const rect = element.getBoundingClientRect();
+        width = Math.max(width, Math.ceil(rect.right));
+        height = Math.max(height, Math.ceil(rect.bottom));
+      }
+    }
+    parent.postMessage({ type: "skydive-html-view-size", token, width, height }, "*");
+  };
+  addEventListener("load", sendSize);
+  if (typeof ResizeObserver === "function") {
+    const observer = new ResizeObserver(sendSize);
+    observer.observe(document.documentElement);
+    if (document.body) observer.observe(document.body);
+  }
+  setTimeout(sendSize, 0);
+  setInterval(sendSize, 500);
+})();
+<\/script>`;
+      node.replaceChildren(frame);
+      applyHtmlViewFrameSize(frame);
+    }
+
+    function handleHtmlViewSizeMessage(event) {
+      const data = event.data;
+      if (!data || data.type !== "skydive-html-view-size" || typeof data.token !== "string") return;
+      const frame = htmlViewFrames.get(data.token);
+      if (!frame || frame.contentWindow !== event.source || !world.contains(frame)) return;
+      const width = clamp(Math.ceil(Number(data.width) || 1), 1, HTML_VIEW_MAX_SIZE_PX);
+      const height = clamp(Math.ceil(Number(data.height) || 1), 1, HTML_VIEW_MAX_SIZE_PX);
+      const node = frame.closest(".text-node");
+      if (!node) return;
+      if (node.dataset.htmlViewWidth === String(width) && node.dataset.htmlViewHeight === String(height)) return;
+      node.dataset.htmlViewWidth = String(width);
+      node.dataset.htmlViewHeight = String(height);
+      applyHtmlViewFrameSize(frame);
+      if (node && selectedNodes.has(node)) refreshSelectionBounds();
+      requestLineRender();
+    }
+
+    function applyHtmlViewFrameSize(frame) {
+      const node = frame.closest(".text-node");
+      if (!node) return;
+      const naturalWidth = clamp(Math.ceil(Number(node.dataset.htmlViewWidth) || 1), 1, HTML_VIEW_MAX_SIZE_PX);
+      const naturalHeight = clamp(Math.ceil(Number(node.dataset.htmlViewHeight) || 1), 1, HTML_VIEW_MAX_SIZE_PX);
+      frame.style.width = `${naturalWidth}px`;
+      frame.style.height = `${naturalHeight}px`;
+    }
+
     function setNodeMarkdownView(node, enabled) {
       if (!(node instanceof HTMLElement) || isCommandNode(node) || isCalcVariableNode(node)) return;
       if (enabled) {
-        node.dataset.markdownSource = getSerializableTextSource(node);
+        const source = getSerializableTextSource(node);
+        delete node.dataset.htmlSource;
+        node.dataset.markdownSource = source;
         node.dataset.viewMode = "markdown";
         renderMarkdownNode(node);
       } else {
@@ -3030,6 +3137,31 @@
         delete node.dataset.markdownSource;
         node.textContent = source;
         normalizeNodeMarkup(node);
+      }
+      refreshSelectionBounds();
+      requestLineRender();
+      updateDocumentTitle();
+      scheduleAutosave();
+    }
+
+    function setNodeHtmlView(node, enabled) {
+      if (!(node instanceof HTMLElement) || isCommandNode(node) || isCalcVariableNode(node)) return;
+      if (enabled) {
+        node.dataset.htmlSource = getSerializableTextSource(node);
+        delete node.dataset.markdownSource;
+        node.dataset.viewMode = "html";
+        renderHtmlNode(node);
+      } else {
+        const source = getHtmlSource(node);
+        const frame = node.querySelector("iframe[data-html-view-token]");
+        if (frame) htmlViewFrames.delete(frame.dataset.htmlViewToken || "");
+        delete node.dataset.viewMode;
+        delete node.dataset.htmlSource;
+        delete node.dataset.htmlViewWidth;
+        delete node.dataset.htmlViewHeight;
+        node.textContent = source;
+        normalizeNodeMarkup(node);
+        renderTagLinks(node);
       }
       refreshSelectionBounds();
       requestLineRender();
@@ -3110,6 +3242,7 @@
       contextMenuSelectionRange = null;
       contextMenuSizeTargets = [];
       viewMarkdownBtn.hidden = false;
+      viewHtmlBtn.hidden = false;
       viewPlainTextBtn.hidden = false;
       widgetColorPicker.hidden = true;
       nodeContextMenu.hidden = true;
@@ -3361,13 +3494,16 @@
       contextMenuNode = node;
       contextMenuWidget = eventTargetExternalLinkCard(eventTarget, node);
       contextMenuSizeTargets = getContextMenuSizeTargets(node);
-      contextMenuSelectionRange = isCommandNode(node) || contextMenuWidget ? null : getSelectionRangeWithinNode(node);
+      contextMenuSelectionRange = isCommandNode(node) || isHtmlViewNode(node) || contextMenuWidget
+        ? null
+        : getSelectionRangeWithinNode(node);
       copySizeBtn.disabled = contextMenuSizeTargets.length !== 1;
       pasteSizeBtn.disabled = !canPasteSizeToTargets(contextMenuSizeTargets);
       linkSelectionBtn.disabled = !contextMenuSelectionRange;
       const canToggleMarkdown = !isCommandNode(node) && !isCalcVariableNode(node) && !contextMenuWidget;
-      viewMarkdownBtn.hidden = !canToggleMarkdown || isMarkdownViewNode(node);
-      viewPlainTextBtn.hidden = !canToggleMarkdown || !isMarkdownViewNode(node);
+      viewMarkdownBtn.hidden = !canToggleMarkdown || isMarkdownViewNode(node) || isHtmlViewNode(node);
+      viewHtmlBtn.hidden = !canToggleMarkdown || isHtmlViewNode(node);
+      viewPlainTextBtn.hidden = !canToggleMarkdown || (!isMarkdownViewNode(node) && !isHtmlViewNode(node));
       widgetColorPicker.hidden = !isWidgetColorable(contextMenuWidget || node);
       updateWidgetColorPicker(contextMenuWidget || node);
       nodeContextMenu.hidden = false;
@@ -3625,6 +3761,14 @@
     }
 
     function getNodeWorldSize(node) {
+      if (isHtmlViewNode(node)) {
+        const baseFontSize = getNodeBaseFontSize(node);
+        const htmlScale = baseFontSize / BASE_TEXT_PX;
+        return {
+          width: clamp(Math.ceil(Number(node.dataset.htmlViewWidth) || 1), 1, HTML_VIEW_MAX_SIZE_PX) * htmlScale,
+          height: clamp(Math.ceil(Number(node.dataset.htmlViewHeight) || 1), 1, HTML_VIEW_MAX_SIZE_PX) * htmlScale
+        };
+      }
       const metrics = getNodeRenderMetrics(node);
       return {
         width: Math.max(node.scrollWidth, node.offsetWidth, 1) * metrics.worldScale,
@@ -5211,6 +5355,10 @@
     }
 
     function solveNodeFitScale(node, guideWidthPx) {
+      if (isHtmlViewNode(node)) {
+        const size = getNodeWorldSize(node);
+        return Math.max(MIN_NAVIGATION_SCALE, guideWidthPx / Math.max(0.001, size.width));
+      }
       const baseFontSizeRaw = Number(node.dataset.baseFontSize);
       const baseFontSize = Number.isFinite(baseFontSizeRaw) && baseFontSizeRaw > 0
         ? baseFontSizeRaw
@@ -5343,7 +5491,12 @@
       const fallbackPoint = screenToWorld(rect.left, rect.top);
       const nodeX = Number.isFinite(nodeXRaw) ? nodeXRaw : fallbackPoint.x;
       const nodeY = Number.isFinite(nodeYRaw) ? nodeYRaw : fallbackPoint.y;
-      const finalMeasured = measureNodeRenderedSizePx(node, baseFontSize * targetScale);
+      const finalMeasured = isHtmlViewNode(node)
+        ? {
+            width: getNodeWorldSize(node).width * targetScale,
+            height: getNodeWorldSize(node).height * targetScale
+          }
+        : measureNodeRenderedSizePx(node, baseFontSize * targetScale);
       const targetOffset = getCameraScreenOffset(nodeX, nodeY, targetScale, camera.rotation);
       const targetX = guide.left - targetOffset.x;
       const targetY = guide.centerY - targetOffset.y - finalMeasured.height / 2;
@@ -6264,7 +6417,8 @@
         kind: "text",
         ...(isCalcVariableNode(node) ? { variable: true } : {}),
         ...(isMarkdownViewNode(node) ? { viewMode: "markdown" } : {}),
-        ...(!isMarkdownViewNode(node) ? { html: sanitizeNodeHtml(node.innerHTML) } : {}),
+        ...(isHtmlViewNode(node) ? { viewMode: "html" } : {}),
+        ...(!isMarkdownViewNode(node) && !isHtmlViewNode(node) ? { html: sanitizeNodeHtml(node.innerHTML) } : {}),
         text: getSerializableTextSource(node)
       };
     }
@@ -7754,6 +7908,13 @@
         node.style.minWidth = "0px";
         node.style.transform = `rotate(${totalRotation}rad) scale(${metrics.screenScale})`;
         node.style.transformOrigin = "top left";
+      } else if (isHtmlViewNode(node)) {
+        const frame = node.querySelector("iframe[data-html-view-token]");
+        if (frame) applyHtmlViewFrameSize(frame);
+        node.style.fontSize = `${BASE_TEXT_PX}px`;
+        node.style.minWidth = "0px";
+        node.style.transform = `rotate(${totalRotation}rad) scale(${metrics.cameraScale * metrics.baseFontSize / BASE_TEXT_PX})`;
+        node.style.transformOrigin = "top left";
       } else {
         node.style.fontSize = `${metrics.layoutFontPx}px`;
         node.style.minWidth = `${getTextNodeMinWidthScreenPx(metrics.visualFontPx) / metrics.screenScale}px`;
@@ -7857,6 +8018,7 @@
     function startEditing(node, selectAll = false, caretOffset = null) {
       if (isCommandNode(node)) return;
       if (isCalcVariableNode(node)) return;
+      if (isHtmlViewNode(node)) return;
       unwrapTagLinks(node);
       prepareMarkdownNodeForEditing(node);
       node.classList.add("editing");
@@ -8398,7 +8560,8 @@
       const y = Number.isFinite(Number(entry.y)) ? Number(entry.y) : 0;
       const text = typeof entry.text === "string" ? entry.text : "";
       const markdownView = entry.viewMode === "markdown";
-      const html = !markdownView && typeof entry.html === "string" ? sanitizeNodeHtml(entry.html) : null;
+      const htmlView = entry.viewMode === "html";
+      const html = !markdownView && !htmlView && typeof entry.html === "string" ? sanitizeNodeHtml(entry.html) : null;
       const id = typeof entry.id === "string" ? entry.id : "";
       const baseFontSize = Number.isFinite(Number(entry.baseFontSize)) && Number(entry.baseFontSize) > 0
         ? Number(entry.baseFontSize)
@@ -8426,7 +8589,7 @@
           createdBy: entry.createdBy,
           rotation,
           variable: entry.variable === true,
-          viewMode: markdownView ? "markdown" : "",
+          viewMode: markdownView ? "markdown" : htmlView ? "html" : "",
           preserveTimestamps: true
         });
       }
@@ -9172,8 +9335,11 @@
       } else {
         node.textContent = initialText;
       }
-      normalizeNodeMarkup(node);
-      renderTagLinks(node);
+      const htmlView = options.viewMode === "html";
+      if (!htmlView) {
+        normalizeNodeMarkup(node);
+        renderTagLinks(node);
+      }
       node.contentEditable = "false";
 
       // Keeps newly-created text visually consistent regardless of current zoom.
@@ -9191,6 +9357,10 @@
         node.dataset.markdownSource = node.textContent || "";
         node.dataset.viewMode = "markdown";
         renderMarkdownNode(node);
+      } else if (htmlView && !isCalcVariableNode(node)) {
+        node.dataset.htmlSource = initialText;
+        node.dataset.viewMode = "html";
+        renderHtmlNode(node);
       }
       attachNodeHandlers(node);
       world.appendChild(node);
@@ -9538,6 +9708,7 @@
     window.addEventListener("beforeinput", blockSharedEditUntilValidated, { capture: true });
     window.addEventListener("paste", blockSharedEditUntilValidated, { capture: true });
     window.addEventListener("drop", blockSharedEditUntilValidated, { capture: true });
+    window.addEventListener("message", handleHtmlViewSizeMessage);
 
     world.addEventListener("contextmenu", (event) => {
       if (!(event.target instanceof Element)) return;
@@ -9597,10 +9768,17 @@
       switchNodeMarkdownView(node, true);
     });
 
+    viewHtmlBtn.addEventListener("click", () => {
+      const node = contextMenuNode;
+      closeNodeContextMenu();
+      setNodeHtmlView(node, true);
+    });
+
     viewPlainTextBtn.addEventListener("click", () => {
       const node = contextMenuNode;
       closeNodeContextMenu();
-      switchNodeMarkdownView(node, false);
+      if (isHtmlViewNode(node)) setNodeHtmlView(node, false);
+      else switchNodeMarkdownView(node, false);
     });
 
     hookTitleBtn.addEventListener("click", () => {
