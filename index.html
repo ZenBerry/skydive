@@ -1196,6 +1196,7 @@
     <button id="view-html-btn" type="button">View as HTML</button>
     <button id="view-plain-text-btn" type="button">View as plain text</button>
     <button id="hook-title-btn" type="button">Hook node to window title</button>
+    <button id="float-node-btn" type="button">Float</button>
     <button id="draw-line-btn" type="button">Line</button>
     <button id="save-template-btn" type="button">Save as global template</button>
     <button id="link-selection-btn" type="button">Link selection to node ID...</button>
@@ -1273,6 +1274,7 @@
     const viewHtmlBtn = document.getElementById("view-html-btn");
     const viewPlainTextBtn = document.getElementById("view-plain-text-btn");
     const hookTitleBtn = document.getElementById("hook-title-btn");
+    const floatNodeBtn = document.getElementById("float-node-btn");
     const drawLineBtn = document.getElementById("draw-line-btn");
     const saveTemplateBtn = document.getElementById("save-template-btn");
     const linkSelectionBtn = document.getElementById("link-selection-btn");
@@ -1504,6 +1506,7 @@
     let htmlWheelThroughKeyDepth = 0;
     let groupTransform = null;
     let selectionBoundsWorld = null;
+    let selectionBoundsSpace = "world";
     let selectionHandleMode = "resize";
     let selectionOverlayRotation = 0;
     let suppressSelectionModeToggleUntil = 0;
@@ -3827,6 +3830,8 @@
       viewMarkdownBtn.hidden = !canToggleMarkdown || isMarkdownViewNode(node) || isHtmlViewNode(node);
       viewHtmlBtn.hidden = !canToggleMarkdown || isHtmlViewNode(node);
       viewPlainTextBtn.hidden = !canToggleMarkdown || (!isMarkdownViewNode(node) && !isHtmlViewNode(node));
+      floatNodeBtn.textContent = isFloatingNode(node) ? "Settle" : "Float";
+      drawLineBtn.disabled = isFloatingNode(node);
       widgetColorPicker.hidden = !isWidgetColorable(contextMenuWidget || node);
       updateWidgetColorPicker(contextMenuWidget || node);
       nodeContextMenu.hidden = false;
@@ -3898,6 +3903,10 @@
       return normalizeRotation(Number(node.dataset.rotation || 0));
     }
 
+    function isFloatingNode(node) {
+      return node instanceof HTMLElement && node.dataset.floating === "true";
+    }
+
     function getNewNodeRotation() {
       return normalizeRotation(-camera.rotation);
     }
@@ -3927,6 +3936,109 @@
         x: camera.x + offset.x,
         y: camera.y + offset.y
       };
+    }
+
+    function pointToScreenForNode(node, x, y) {
+      return isFloatingNode(node) ? { x, y } : worldToScreen(x, y);
+    }
+
+    function screenToNodeSpace(node, clientX, clientY) {
+      return isFloatingNode(node) ? { x: clientX, y: clientY } : screenToWorld(clientX, clientY);
+    }
+
+    function getNodePositionForSelectionSpace(node, space) {
+      const x = Number(node.dataset.x);
+      const y = Number(node.dataset.y);
+      return space === "screen" ? pointToScreenForNode(node, x, y) : { x, y };
+    }
+
+    function setNodePositionForSelectionSpace(node, point, space, options = {}) {
+      if (space === "screen" && !isFloatingNode(node)) {
+        const worldPoint = screenToWorld(point.x, point.y);
+        setNodePosition(node, worldPoint.x, worldPoint.y, options);
+        return;
+      }
+      setNodePosition(node, point.x, point.y, options);
+    }
+
+    function getNodeCenterForSelectionSpace(node, space) {
+      return space === "screen" ? getNodeScreenCenter(node) : getNodeWorldCenter(node);
+    }
+
+    function setNodeCenteredForSelectionSpace(node, center, space, options = {}) {
+      if (space !== "screen") {
+        setNodeCenteredAtWorldPoint(node, center.x, center.y, options);
+        return;
+      }
+
+      const size = getNodeScreenSize(node);
+      const rotation = getNodeTotalRotation(node);
+      const basis = getCameraBasis(rotation);
+      const offsetX = size.width * 0.5 * basis.cos - size.height * 0.5 * basis.sin;
+      const offsetY = size.width * 0.5 * basis.sin + size.height * 0.5 * basis.cos;
+      setNodePositionForSelectionSpace(
+        node,
+        { x: center.x - offsetX, y: center.y - offsetY },
+        space,
+        options
+      );
+    }
+
+    function nodeToSelectionLocal(node, point, rotation = selectionOverlayRotation) {
+      return worldToSelectionLocal(point, rotation);
+    }
+
+    function selectionLocalToNodeSpace(node, point, rotation = selectionOverlayRotation) {
+      return selectionLocalToWorld(point, rotation);
+    }
+
+    function getNodeTotalRotation(node) {
+      const nodeRotation = getNodeRotation(node);
+      return isFloatingNode(node)
+        ? nodeRotation
+        : normalizeRotation(getCameraRotation() + nodeRotation);
+    }
+
+    function setNodeFloating(node, floating) {
+      if (!(node instanceof HTMLElement) || !world.contains(node) || isNodeDeleted(node)) return false;
+      const isFloating = floating === true;
+      if (isFloatingNode(node) === isFloating) return false;
+
+      const origin = pointToScreenForNode(
+        node,
+        Number(node.dataset.x),
+        Number(node.dataset.y)
+      );
+      if (isFloating) {
+        node.dataset.x = String(origin.x);
+        node.dataset.y = String(origin.y);
+        const totalRotation = normalizeRotation(getCameraRotation() + getNodeRotation(node));
+        if (Math.abs(totalRotation) >= 0.000001) node.dataset.rotation = String(totalRotation);
+        else delete node.dataset.rotation;
+        node.dataset.baseFontSize = String(getNodeRenderedFontSize(node));
+        node.dataset.floating = "true";
+      } else {
+        const worldPoint = screenToWorld(origin.x, origin.y);
+        node.dataset.x = String(worldPoint.x);
+        node.dataset.y = String(worldPoint.y);
+        const worldRotation = normalizeRotation(getNodeRotation(node) - getCameraRotation());
+        if (Math.abs(worldRotation) >= 0.000001) node.dataset.rotation = String(worldRotation);
+        else delete node.dataset.rotation;
+        node.dataset.baseFontSize = String(getNodeBaseFontSize(node) / getCameraScale());
+        delete node.dataset.floating;
+      }
+
+      renderNode(node);
+      requestLineRender();
+      refreshSelectionBounds();
+      scheduleAutosave();
+      return true;
+    }
+
+    function toggleContextMenuNodeFloating() {
+      if (!contextMenuNode || !world.contains(contextMenuNode)) return;
+      setNodeFloating(contextMenuNode, !isFloatingNode(contextMenuNode));
+      closeNodeContextMenu();
     }
 
     function getTransformedWorldRectBounds(rect) {
@@ -4040,7 +4152,33 @@
     }
 
     function getNodeWorldCenter(node) {
+      if (isFloatingNode(node)) return getNodeScreenCenter(node);
       const corners = getNodeWorldCorners(node);
+      return corners.length === 4 ? getPointCenter(corners) : null;
+    }
+
+    function getNodeScreenCorners(node) {
+      const point = pointToScreenForNode(node, Number(node.dataset.x), Number(node.dataset.y));
+      const x = point.x;
+      const y = point.y;
+      const size = getNodeScreenSize(node);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return [];
+
+      const rotation = getNodeTotalRotation(node);
+      const basis = getCameraBasis(rotation);
+      return [
+        { x, y },
+        { x: x + size.width * basis.cos, y: y + size.width * basis.sin },
+        {
+          x: x + size.width * basis.cos - size.height * basis.sin,
+          y: y + size.width * basis.sin + size.height * basis.cos
+        },
+        { x: x - size.height * basis.sin, y: y + size.height * basis.cos }
+      ];
+    }
+
+    function getNodeScreenCenter(node) {
+      const corners = getNodeScreenCorners(node);
       return corners.length === 4 ? getPointCenter(corners) : null;
     }
 
@@ -4096,6 +4234,15 @@
       return {
         width: Math.max(node.scrollWidth, node.offsetWidth, 1) * metrics.worldScale,
         height: Math.max(node.scrollHeight, node.offsetHeight, 1) * metrics.worldScale
+      };
+    }
+
+    function getNodeScreenSize(node) {
+      if (isFloatingNode(node)) return getNodeWorldSize(node);
+      const worldSize = getNodeWorldSize(node);
+      return {
+        width: worldSize.width * getCameraScale(),
+        height: worldSize.height * getCameraScale()
       };
     }
 
@@ -4253,6 +4400,7 @@
     }
 
     function findSpacingGuidesForNodes(nodes) {
+      if (nodes.some((node) => isFloatingNode(node))) return [];
       const draggedNodes = new Set(nodes);
       const draggedBounds = getNodeScreenBoundsForGroup(nodes);
       if (!draggedBounds) return [];
@@ -4263,7 +4411,7 @@
 
       for (const node of world.children) {
         if (!(node instanceof HTMLElement)) continue;
-        if (draggedNodes.has(node) || isNodeDeleted(node)) continue;
+        if (draggedNodes.has(node) || isNodeDeleted(node) || isFloatingNode(node)) continue;
         const bounds = getNodeScreenBounds(node);
         if (!bounds) continue;
         const size = bounds.height;
@@ -4810,6 +4958,7 @@
     }
 
     function getNodeWorldCenter(node) {
+      if (isFloatingNode(node)) return getNodeScreenCenter(node);
       const corners = getNodeWorldCorners(node);
       if (corners.length === 4) {
         return {
@@ -4835,11 +4984,12 @@
     function getNodeRenderMetrics(node) {
       const baseFontSize = getNodeBaseFontSize(node);
       const cameraScale = getCameraScale();
-      const visualFontPx = baseFontSize * cameraScale;
+      const effectiveCameraScale = isFloatingNode(node) ? 1 : cameraScale;
+      const visualFontPx = baseFontSize * effectiveCameraScale;
       const layoutFontPx = clamp(visualFontPx, MIN_NODE_LAYOUT_FONT_PX, MAX_NODE_LAYOUT_FONT_PX);
       return {
         baseFontSize,
-        cameraScale,
+        cameraScale: effectiveCameraScale,
         visualFontPx,
         layoutFontPx,
         screenScale: visualFontPx / layoutFontPx,
@@ -4864,7 +5014,7 @@
     }
 
     function getNodeRenderedFontSize(node) {
-      return getNodeBaseFontSize(node) * getCameraScale();
+      return getNodeBaseFontSize(node) * (isFloatingNode(node) ? 1 : getCameraScale());
     }
 
     function getNodeScreenAffordanceScale(node) {
@@ -5289,6 +5439,7 @@
         const sourceNode = getNodeById(line.from);
         const targetNode = getNodeById(line.to);
         if (!sourceNode || !targetNode) continue;
+        if (isFloatingNode(sourceNode) || isFloatingNode(targetNode)) continue;
         const points = getLineAnchorPair(sourceNode, targetNode);
         if (!points) continue;
         appendConnectionPath(getNaturalLineGeometry(points.start, points.end, line.id), {
@@ -5300,7 +5451,7 @@
         });
       }
 
-      if (!lineDraft || !world.contains(lineDraft.sourceNode)) return;
+      if (!lineDraft || !world.contains(lineDraft.sourceNode) || isFloatingNode(lineDraft.sourceNode)) return;
       const start = getNodeAnchorPoint(lineDraft.sourceNode, {
         x: lineDraft.displayX,
         y: lineDraft.displayY
@@ -6718,6 +6869,7 @@
       };
       const rotation = getNodeRotation(node);
       if (Math.abs(rotation) >= 0.000001) base.rotation = rotation;
+      if (isFloatingNode(node)) base.floating = true;
       const createdAt = normalizeTimestamp(node.dataset.createdAt);
       const deletedAt = normalizeTimestamp(node.dataset.deletedAt);
       if (createdAt) base.createdAt = createdAt;
@@ -7232,7 +7384,7 @@
     function getSelectionOverlayRotationForNodes(nodes) {
       if (nodes.size === 1) {
         const [node] = nodes;
-        return getNodeRotation(node);
+        return isFloatingNode(node) ? getNodeTotalRotation(node) : getNodeRotation(node);
       }
       return 0;
     }
@@ -7246,9 +7398,9 @@
       const padding = getGroupSelectionPaddingScreenPx();
       const handleSize = getGroupSelectionHandleScreenPx();
       const handleOffset = -(handleSize / 2 + 1);
-      const scale = getCameraScale();
-      const centerWorld = selectionLocalToWorld(getBoundsCenter(selectionBoundsWorld));
-      const screenCenter = worldToScreen(centerWorld.x, centerWorld.y);
+      const scale = selectionBoundsSpace === "screen" ? 1 : getCameraScale();
+      const center = selectionLocalToWorld(getBoundsCenter(selectionBoundsWorld));
+      const screenCenter = selectionBoundsSpace === "screen" ? center : worldToScreen(center.x, center.y);
       const width = selectionBoundsWorld.width * scale + padding * 2;
       const height = selectionBoundsWorld.height * scale + padding * 2;
       const left = screenCenter.x - width * 0.5;
@@ -7259,7 +7411,10 @@
       groupSelectionBox.style.top = `${top}px`;
       groupSelectionBox.style.width = `${width}px`;
       groupSelectionBox.style.height = `${height}px`;
-      groupSelectionBox.style.transform = `rotate(${normalizeRotation(getCameraRotation() + selectionOverlayRotation)}rad)`;
+      const rotation = selectionBoundsSpace === "screen"
+        ? selectionOverlayRotation
+        : normalizeRotation(getCameraRotation() + selectionOverlayRotation);
+      groupSelectionBox.style.transform = `rotate(${rotation}rad)`;
       groupSelectionBox.style.transformOrigin = "50% 50%";
       groupSelectionBox.dataset.mode = selectionHandleMode;
 
@@ -7288,6 +7443,7 @@
     function refreshSelectionBounds() {
       if (selectedNodes.size === 0) {
         selectionBoundsWorld = null;
+        selectionBoundsSpace = "world";
         selectionOverlayRotation = 0;
         setSelectionHandleMode("resize");
         renderGroupSelectionBox();
@@ -7299,10 +7455,11 @@
       let minY = Infinity;
       let maxX = -Infinity;
       let maxY = -Infinity;
+      const useScreenSpace = Array.from(selectedNodes).some((node) => isFloatingNode(node));
 
       for (const node of selectedNodes) {
         if (!world.contains(node) || isNodeDeleted(node)) continue;
-        const corners = getNodeWorldCorners(node);
+        const corners = useScreenSpace ? getNodeScreenCorners(node) : getNodeWorldCorners(node);
         if (corners.length !== 4) continue;
         for (const corner of corners) {
           const local = worldToSelectionLocal(corner);
@@ -7316,6 +7473,7 @@
       if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
         selectedNodes.clear();
         selectionBoundsWorld = null;
+        selectionBoundsSpace = "world";
         selectionOverlayRotation = 0;
         applySelectionNodeClasses();
         renderGroupSelectionBox();
@@ -7331,6 +7489,7 @@
         width: Math.max(0.001, maxX - minX),
         height: Math.max(0.001, maxY - minY)
       };
+      selectionBoundsSpace = useScreenSpace ? "screen" : "world";
       renderGroupSelectionBox();
       updateMobileSelectionControls();
     }
@@ -7370,6 +7529,7 @@
     function clearSelection() {
       if (selectedNodes.size === 0) {
         selectionBoundsWorld = null;
+        selectionBoundsSpace = "world";
         renderGroupSelectionBox();
         return;
       }
@@ -8023,13 +8183,16 @@
       const selectionRotation = selectionOverlayRotation;
       const boundsCenterLocal = getBoundsCenter(selectionBoundsWorld);
       const boundsCenter = selectionLocalToWorld(boundsCenterLocal, selectionRotation);
-      const startPointer = screenToWorld(event.clientX, event.clientY);
+      const startPointer = selectionBoundsSpace === "screen"
+        ? { x: event.clientX, y: event.clientY }
+        : screenToWorld(event.clientX, event.clientY);
       groupTransform = {
         pointerId: event.pointerId,
         mode,
         captureElement,
         handle: captureElement.dataset.handle || "se",
         selectionRotation,
+        selectionBoundsSpace,
         startClientX: event.clientX,
         startClientY: event.clientY,
         startPointer,
@@ -8039,15 +8202,17 @@
         initialBounds: { ...selectionBoundsWorld },
         moved: false,
         nodeSnapshots: Array.from(selectedNodes).map((node) => {
-          const center = getNodeWorldCenter(node);
+          const center = getNodeCenterForSelectionSpace(node, selectionBoundsSpace);
+          const point = getNodePositionForSelectionSpace(node, selectionBoundsSpace);
+          const local = nodeToSelectionLocal(node, point, selectionRotation);
           return {
             node,
-            x: Number(node.dataset.x),
-            y: Number(node.dataset.y),
-            localX: worldToSelectionLocal({ x: Number(node.dataset.x), y: Number(node.dataset.y) }, selectionRotation).x,
-            localY: worldToSelectionLocal({ x: Number(node.dataset.x), y: Number(node.dataset.y) }, selectionRotation).y,
-            centerX: center ? center.x : Number(node.dataset.x),
-            centerY: center ? center.y : Number(node.dataset.y),
+            x: point.x,
+            y: point.y,
+            localX: local.x,
+            localY: local.y,
+            centerX: center ? center.x : point.x,
+            centerY: center ? center.y : point.y,
             baseFontSize: Number(node.dataset.baseFontSize),
             rotation: getNodeRotation(node)
           };
@@ -8088,7 +8253,9 @@
         return;
       }
 
-      const pointer = screenToWorld(event.clientX, event.clientY);
+      const pointer = groupTransform.selectionBoundsSpace === "screen"
+        ? { x: event.clientX, y: event.clientY }
+        : screenToWorld(event.clientX, event.clientY);
       const dx = pointer.x - groupTransform.startPointer.x;
       const dy = pointer.y - groupTransform.startPointer.y;
       if (!groupTransform.moved && Math.hypot(
@@ -8100,7 +8267,12 @@
 
       if (groupTransform.mode === "drag") {
         for (const snapshot of groupTransform.nodeSnapshots) {
-          setNodePosition(snapshot.node, snapshot.x + dx, snapshot.y + dy, { skipSelectionUpdate: true });
+          setNodePositionForSelectionSpace(
+            snapshot.node,
+            { x: snapshot.x + dx, y: snapshot.y + dy },
+            groupTransform.selectionBoundsSpace,
+            { skipSelectionUpdate: true }
+          );
         }
         refreshSelectionBounds();
         updateSpacingGuidesForNodes(groupTransform.nodeSnapshots.map((snapshot) => snapshot.node));
@@ -8128,7 +8300,12 @@
           } else {
             delete snapshot.node.dataset.rotation;
           }
-          setNodeCenteredAtWorldPoint(snapshot.node, nextCenter.x, nextCenter.y, { skipSelectionUpdate: true });
+          setNodeCenteredForSelectionSpace(
+            snapshot.node,
+            nextCenter,
+            groupTransform.selectionBoundsSpace,
+            { skipSelectionUpdate: true }
+          );
         }
         refreshSelectionBounds();
         return;
@@ -8149,11 +8326,16 @@
           x: anchor.x + (snapshot.localX - anchor.x) * scaleX,
           y: anchor.y + (snapshot.localY - anchor.y) * scaleY
         };
-        const nextWorld = selectionLocalToWorld(nextLocal, groupTransform.selectionRotation);
+        const nextWorld = selectionLocalToNodeSpace(snapshot.node, nextLocal, groupTransform.selectionRotation);
         snapshot.node.dataset.baseFontSize = String(
           Math.max(0.001, snapshot.baseFontSize * fontScale)
         );
-        setNodePosition(snapshot.node, nextWorld.x, nextWorld.y, { skipSelectionUpdate: true });
+        setNodePositionForSelectionSpace(
+          snapshot.node,
+          nextWorld,
+          groupTransform.selectionBoundsSpace,
+          { skipSelectionUpdate: true }
+        );
       }
 
       refreshSelectionBounds();
@@ -8215,14 +8397,11 @@
     }
 
     function renderNode(node) {
-      const worldX = Number(node.dataset.x);
-      const worldY = Number(node.dataset.y);
+      const x = Number(node.dataset.x);
+      const y = Number(node.dataset.y);
       const metrics = getNodeRenderMetrics(node);
-      const scale = metrics.cameraScale;
-      const rotation = getCameraRotation();
-      const nodeRotation = getNodeRotation(node);
-      const totalRotation = normalizeRotation(rotation + nodeRotation);
-      const screenPoint = worldToScreen(worldX, worldY, scale, rotation);
+      const totalRotation = getNodeTotalRotation(node);
+      const screenPoint = pointToScreenForNode(node, x, y);
       node.style.left = `${screenPoint.x}px`;
       node.style.top = `${screenPoint.y}px`;
       node.style.setProperty("--camera-scale", String(metrics.screenScale));
@@ -8902,6 +9081,7 @@
           createdAt: entry.createdAt,
           deletedAt: entry.deletedAt,
           createdBy: entry.createdBy,
+          floating: entry.floating === true,
           rotation,
           preserveTimestamps: true
         });
@@ -8913,6 +9093,7 @@
           rotation,
           variable: entry.variable === true,
           viewMode: markdownView ? "markdown" : htmlView ? "html" : "",
+          floating: entry.floating === true,
           preserveTimestamps: true
         });
       }
@@ -9449,7 +9630,7 @@
         dragStartClientX = event.clientX;
         dragStartClientY = event.clientY;
         dragMoved = false;
-        const pointer = screenToWorld(event.clientX, event.clientY);
+        const pointer = screenToNodeSpace(node, event.clientX, event.clientY);
         dragOffsetX = Number(node.dataset.x) - pointer.x;
         dragOffsetY = Number(node.dataset.y) - pointer.y;
         event.preventDefault();
@@ -9461,7 +9642,7 @@
         if (!dragMoved && Math.hypot(event.clientX - dragStartClientX, event.clientY - dragStartClientY) >= MARQUEE_DRAG_THRESHOLD_PX) {
           dragMoved = true;
         }
-        const pointer = screenToWorld(event.clientX, event.clientY);
+        const pointer = screenToNodeSpace(node, event.clientX, event.clientY);
         setNodePosition(node, pointer.x + dragOffsetX, pointer.y + dragOffsetY);
         updateSpacingGuidesForNodes([node]);
       });
@@ -9682,6 +9863,7 @@
         : getNewNodeRotation();
       const normalizedRotation = normalizeRotation(rotation);
       if (Math.abs(normalizedRotation) >= 0.000001) node.dataset.rotation = String(normalizedRotation);
+      if (options.floating === true) node.dataset.floating = "true";
       setNodeTimestamps(node, options);
       setNodeCreator(node, options.createdBy || (!options.preserveTimestamps ? currentUser : null));
       setNodePosition(node, worldX, worldY);
@@ -9726,6 +9908,7 @@
         : getNewNodeRotation();
       const normalizedRotation = normalizeRotation(rotation);
       if (Math.abs(normalizedRotation) >= 0.000001) node.dataset.rotation = String(normalizedRotation);
+      if (options.floating === true) node.dataset.floating = "true";
       setNodeTimestamps(node, options);
       setNodeCreator(node, options.createdBy || (!options.preserveTimestamps ? currentUser : null));
       setNodePosition(node, worldX, worldY);
@@ -10093,6 +10276,10 @@
       const targets = contextMenuSizeTargets.slice();
       closeNodeContextMenu();
       pasteSizeToNodes(targets);
+    });
+
+    floatNodeBtn.addEventListener("click", () => {
+      toggleContextMenuNodeFloating();
     });
 
     viewMarkdownBtn.addEventListener("click", () => {
