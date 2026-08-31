@@ -4,7 +4,6 @@
   const runtimes = new WeakMap();
   const PLAYBACK_SPEEDS = [1, 1.5, 2];
   const WAVESURFER_RETRY_DELAYS_MS = [600, 1800];
-  const WAVESURFER_READY_TIMEOUT_MS = 12000;
   const MIME_TYPES = [
     "audio/webm;codecs=opus",
     "audio/mp4;codecs=mp4a.40.2",
@@ -265,8 +264,6 @@
       cancelAnimationFrame(runtime.resizeFrame);
       runtime.resizeFrame = null;
     }
-    clearTimeout(runtime.waveReadyTimer);
-    runtime.waveReadyTimer = null;
     if (runtime.wavesurfer) {
       runtime.wavesurfer.destroy();
       runtime.wavesurfer = null;
@@ -367,17 +364,9 @@
     runtime.waveHeight = height;
     runtime.waveScaleX = 1;
     runtime.waveScaleY = 1;
-    runtime.waveReadyTimer = setTimeout(() => {
-      runtime.waveReadyTimer = null;
-      if (runtime.discard || runtime.waveReady || !container.isConnected) return;
-      if (retryWaveSurfer(container, url, elements, runtime)) return;
-      fallBackToNativePlayback(url, elements, runtime);
-    }, WAVESURFER_READY_TIMEOUT_MS);
 
     wavesurfer.on("ready", (duration) => {
       if (!container.isConnected) return;
-      clearTimeout(runtime.waveReadyTimer);
-      runtime.waveReadyTimer = null;
       runtime.waveReady = true;
       elements.status.textContent = "Ready";
       elements.time.textContent = `0:00 / ${formatTime(duration)}`;
@@ -587,7 +576,13 @@
           user-select: none;
         }
         .rec-card[data-status="error"] { border-color: #e9b9ac; }
-        .rec-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6em; }
+        .rec-heading {
+          display: flex;
+          align-items: baseline;
+          justify-content: space-between;
+          min-width: 0;
+          gap: 0.6em;
+        }
         .rec-title {
           flex: 1 1 auto;
           min-width: 0;
@@ -616,6 +611,9 @@
         .rec-time { min-height: 1.1em; text-align: right; }
         .rec-wave {
           position: relative;
+          min-width: 0;
+          width: 100%;
+          box-sizing: border-box;
           height: 2em;
           overflow: hidden;
           border-radius: 0.42em;
@@ -648,7 +646,11 @@
           height: 100%;
         }
         .rec-wave[data-mode="recording"] .rec-live-wave { display: block; }
-        .rec-playback-actions, .rec-record-actions { display: flex; gap: 0.22em; }
+        .rec-playback-actions, .rec-record-actions {
+          display: flex;
+          min-width: 0;
+          gap: 0.22em;
+        }
         .rec-playback-actions[hidden], .rec-record-actions[hidden] { display: none; }
         .rec-card button {
           flex: 1 1 auto;
@@ -704,7 +706,6 @@
         loop: false,
         liveFrame: null,
         resizeFrame: null,
-        waveReadyTimer: null,
         waveRetryTimer: null,
         animationFrame: null,
         waveWidth: 0,
@@ -951,7 +952,6 @@
       runtime.discard = true;
       if (runtime.animationFrame !== null) cancelAnimationFrame(runtime.animationFrame);
       if (runtime.resizeFrame !== null) cancelAnimationFrame(runtime.resizeFrame);
-      clearTimeout(runtime.waveReadyTimer);
       clearTimeout(runtime.waveRetryTimer);
       if (runtime.recorder && runtime.recorder.state !== "inactive") runtime.recorder.stop();
       stopStream(runtime.stream);
