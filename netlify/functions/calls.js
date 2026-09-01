@@ -6,6 +6,7 @@ const collectionName = process.env.MONGODB_CALLS_COLLECTION || "SKYDIVE_CALLS";
 const MAX_SIGNAL_BYTES = 120000;
 const PARTICIPANT_TTL_MS = 15000;
 const MESSAGE_TTL_MS = 45000;
+const PARTICIPANT_ROLES = new Set(["publisher", "viewer"]);
 
 let collectionPromise = null;
 
@@ -64,6 +65,13 @@ function getSignalRoom(event, payload = {}) {
   return { space, room, peer };
 }
 
+function getParticipantRole(event, payload = {}) {
+  const role = typeof payload.role === "string" && payload.role.trim()
+    ? payload.role.trim()
+    : getParam(event, "role");
+  return PARTICIPANT_ROLES.has(role) ? role : "viewer";
+}
+
 function normalizePayload(payload) {
   if (!payload || typeof payload !== "object") return {};
   const raw = JSON.stringify(payload);
@@ -73,7 +81,7 @@ function normalizePayload(payload) {
   return JSON.parse(raw);
 }
 
-async function heartbeat(collection, roomInfo, now) {
+async function heartbeat(collection, roomInfo, role, now) {
   await collection.updateOne(
     { kind: "participant", space: roomInfo.space, room: roomInfo.room, peer: roomInfo.peer },
     {
@@ -82,6 +90,7 @@ async function heartbeat(collection, roomInfo, now) {
         space: roomInfo.space,
         room: roomInfo.room,
         peer: roomInfo.peer,
+        role,
         lastSeenAt: now,
         expiresAt: new Date(now + PARTICIPANT_TTL_MS)
       },
@@ -99,8 +108,9 @@ exports.handler = async (event) => {
     if (event.httpMethod === "GET") {
       const roomInfo = getSignalRoom(event);
       if (!roomInfo) return json(400, { error: "A valid space, room, and peer are required." });
+      const role = getParticipantRole(event);
 
-      await heartbeat(collection, roomInfo, now);
+      await heartbeat(collection, roomInfo, role, now);
       await collection.deleteMany({ expiresAt: { $lte: new Date(now) } });
 
       const after = Math.max(0, Number(getParam(event, "after")) || 0);
@@ -110,7 +120,7 @@ exports.handler = async (event) => {
         room: roomInfo.room,
         expiresAt: { $gt: new Date(now) }
       }, {
-        projection: { _id: 0, peer: 1, joinedAt: 1, lastSeenAt: 1 }
+        projection: { _id: 0, peer: 1, role: 1, joinedAt: 1, lastSeenAt: 1 }
       }).sort({ joinedAt: 1 }).toArray();
 
       const rawMessages = await collection.find({
@@ -140,8 +150,9 @@ exports.handler = async (event) => {
       const payload = event.body ? JSON.parse(event.body) : {};
       const roomInfo = getSignalRoom(event, payload);
       if (!roomInfo) return json(400, { error: "A valid space, room, and peer are required." });
+      const role = getParticipantRole(event, payload);
 
-      await heartbeat(collection, roomInfo, now);
+      await heartbeat(collection, roomInfo, role, now);
       if (payload.type === "leave") {
         await collection.deleteOne({ kind: "participant", space: roomInfo.space, room: roomInfo.room, peer: roomInfo.peer });
         return json(200, { ok: true, now });

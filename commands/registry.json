@@ -3,7 +3,7 @@
   "commands": [
     {
       "id": "stw",
-      "version": "1.0.1",
+      "version": "1.2.0",
       "title": "Stopwatch",
       "description": "A tiny persistent stopwatch.",
       "aliases": ["stopwatch"],
@@ -101,7 +101,7 @@
     },
     {
       "id": "cam",
-      "version": "1.1.0",
+      "version": "1.0.1",
       "title": "Camera",
       "description": "Show a local webcam bubble.",
       "aliases": ["camera", "webcam"],
@@ -111,6 +111,22 @@
         "type": "object",
         "properties": {
           "createdAt": { "type": "number" }
+        }
+      }
+    },
+    {
+      "id": "broadcast",
+      "version": "1.0.0",
+      "title": "Broadcast",
+      "description": "Share a camera bubble with viewers in this space.",
+      "aliases": ["cast", "live"],
+      "source": "static",
+      "dynamicExecutable": false,
+      "stateSchema": {
+        "type": "object",
+        "properties": {
+          "createdAt": { "type": "number" },
+          "ownerKey": { "type": "string" }
         }
       }
     },
