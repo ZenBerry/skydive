@@ -1476,7 +1476,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 175; // Increment once for each commit.
+    const APP_VERSION = 176; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const DEFAULT_TEMPLATE_DESCRIPTION = "A pre-saved template";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
@@ -1542,6 +1542,7 @@
     const QUICK_RESIZE_MIN_LEVEL = 1;
     const QUICK_RESIZE_MAX_LEVEL = 9;
     const NODE_RENDER_CULL_PADDING_SCREEN_PX = 768;
+    const LINE_RENDER_CULL_PADDING_SCREEN_PX = 1024;
     const HTML_VIEW_MAX_SIZE_PX = 4096;
     const YOUTUBE_EMBED_DEFAULT_WIDTH = 560;
     const YOUTUBE_EMBED_DEFAULT_HEIGHT = 315;
@@ -5602,6 +5603,67 @@
       return true;
     }
 
+    function getLineRenderCullRect() {
+      return getViewportCullRect(LINE_RENDER_CULL_PADDING_SCREEN_PX);
+    }
+
+    function getCachedNodeScreenCullBounds(node) {
+      if (!(node instanceof HTMLElement)) return null;
+      const worldX = Number(node.dataset.x);
+      const worldY = Number(node.dataset.y);
+      const worldWidth = Number(node.dataset.renderCullWorldWidth);
+      const worldHeight = Number(node.dataset.renderCullWorldHeight);
+      if (
+        !Number.isFinite(worldX) ||
+        !Number.isFinite(worldY) ||
+        !Number.isFinite(worldWidth) ||
+        !Number.isFinite(worldHeight) ||
+        worldWidth <= 0 ||
+        worldHeight <= 0
+      ) return null;
+
+      const point = worldToScreen(worldX, worldY);
+      const radius = Math.hypot(worldWidth, worldHeight) * getCameraScale();
+      return {
+        left: point.x - radius,
+        top: point.y - radius,
+        right: point.x + radius,
+        bottom: point.y + radius
+      };
+    }
+
+    function screenBoundsIntersectRect(bounds, rect) {
+      return (
+        bounds.right >= rect.left &&
+        bounds.left <= rect.right &&
+        bounds.bottom >= rect.top &&
+        bounds.top <= rect.bottom
+      );
+    }
+
+    function shouldRenderLineInCullRect(sourceNode, targetNode, cullRect) {
+      if (
+        selectedNodes.has(sourceNode) ||
+        selectedNodes.has(targetNode) ||
+        sourceNode.classList.contains("editing") ||
+        targetNode.classList.contains("editing") ||
+        sourceNode.classList.contains("navigation-target-highlight") ||
+        targetNode.classList.contains("navigation-target-highlight")
+      ) return true;
+
+      const sourceBounds = getCachedNodeScreenCullBounds(sourceNode);
+      const targetBounds = getCachedNodeScreenCullBounds(targetNode);
+      if (!sourceBounds || !targetBounds) return true;
+
+      const lineBounds = {
+        left: Math.min(sourceBounds.left, targetBounds.left),
+        top: Math.min(sourceBounds.top, targetBounds.top),
+        right: Math.max(sourceBounds.right, targetBounds.right),
+        bottom: Math.max(sourceBounds.bottom, targetBounds.bottom)
+      };
+      return screenBoundsIntersectRect(lineBounds, cullRect);
+    }
+
     function renderLineConnections() {
       if (!lineLayer) return;
       const width = Math.max(1, viewport.clientWidth);
@@ -5609,6 +5671,7 @@
       const scale = getCameraScale();
       const rotation = getCameraRotation();
       const basis = getCameraBasis(rotation);
+      const cullRect = getLineRenderCullRect();
       lineLayer.setAttribute("viewBox", `0 0 ${width} ${height}`);
       lineLayer.setAttribute("width", String(width));
       lineLayer.setAttribute("height", String(height));
@@ -5627,6 +5690,7 @@
         const targetNode = getNodeById(line.to);
         if (!sourceNode || !targetNode) continue;
         if (isFloatingNode(sourceNode) || isFloatingNode(targetNode)) continue;
+        if (!shouldRenderLineInCullRect(sourceNode, targetNode, cullRect)) continue;
         const points = getLineAnchorPair(sourceNode, targetNode);
         if (!points) continue;
         appendConnectionPath(getNaturalLineGeometry(points.start, points.end, line.id), {
@@ -8552,14 +8616,18 @@
       if (!shouldToggleMode) scheduleAutosave();
     }
 
-    function getNodeRenderCullRect() {
-      const padding = NODE_RENDER_CULL_PADDING_SCREEN_PX;
+    function getViewportCullRect(padding) {
+      const safePadding = Math.max(0, Number(padding) || 0);
       return {
-        left: -padding,
-        top: -padding,
-        right: Math.max(1, viewport.clientWidth) + padding,
-        bottom: Math.max(1, viewport.clientHeight) + padding
+        left: -safePadding,
+        top: -safePadding,
+        right: Math.max(1, viewport.clientWidth) + safePadding,
+        bottom: Math.max(1, viewport.clientHeight) + safePadding
       };
+    }
+
+    function getNodeRenderCullRect() {
+      return getViewportCullRect(NODE_RENDER_CULL_PADDING_SCREEN_PX);
     }
 
     function setNodeRenderCulled(node, culled) {
