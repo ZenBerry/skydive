@@ -1471,7 +1471,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 173; // Increment once for each commit.
+    const APP_VERSION = 174; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const DEFAULT_TEMPLATE_DESCRIPTION = "A pre-saved template";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
@@ -1697,6 +1697,7 @@
     const mobileTouchPoints = new Map();
     const nodeHighlightTimeouts = new WeakMap();
     const selectedNodes = new Set();
+    const nodeRegistry = new Map();
     const nodeResizeObserver = "ResizeObserver" in window
       ? new ResizeObserver(() => requestLineRender())
       : null;
@@ -2385,14 +2386,31 @@
       loadingScreen.classList.remove("loading-visible", "loading-complete");
     }
 
+    function registerNode(node) {
+      const id = node instanceof HTMLElement ? (node.dataset.nodeId || "").trim() : "";
+      if (id) nodeRegistry.set(id, node);
+    }
+
+    function unregisterNode(node) {
+      const id = node instanceof HTMLElement ? (node.dataset.nodeId || "").trim() : "";
+      if (id && nodeRegistry.get(id) === node) nodeRegistry.delete(id);
+    }
+
+    function clearNodeRegistry() {
+      nodeRegistry.clear();
+    }
+
     function getNodeById(nodeId, options = {}) {
       const id = typeof nodeId === "string" ? nodeId.trim() : "";
       if (!id) return null;
-      for (const node of world.children) {
-        if (!options.includeDeleted && isNodeDeleted(node)) continue;
-        if (node.dataset.nodeId === id) return node;
+      const node = nodeRegistry.get(id);
+      if (!node) return null;
+      if (!world.contains(node)) {
+        nodeRegistry.delete(id);
+        return null;
       }
-      return null;
+      if (!options.includeDeleted && isNodeDeleted(node)) return null;
+      return node;
     }
 
     function updateNextNodeNumberFromId(nodeId) {
@@ -9328,6 +9346,7 @@
         unobserveNodeForLines(node);
       }
       world.innerHTML = "";
+      clearNodeRegistry();
       nextNodeNumber = 1;
       nextLineNumber = 1;
       lineConnections = [];
@@ -9403,6 +9422,7 @@
           if ((index + 1) % yieldEvery === 0) await waitForLoadingFrame();
         }
         world.innerHTML = "";
+        clearNodeRegistry();
         if (reportClearing) reportClearing(1);
         await waitForLoadingFrame();
 
@@ -10068,6 +10088,7 @@
       }
       attachNodeHandlers(node);
       world.appendChild(node);
+      registerNode(node);
       if (!isNodeDeleted(node)) observeNodeForLines(node);
       scheduleAutosave();
       return node;
@@ -10104,6 +10125,7 @@
       if (!isNodeDeleted(node)) renderCommandNodeContent(node);
       attachNodeHandlers(node);
       world.appendChild(node);
+      registerNode(node);
       if (!isNodeDeleted(node)) observeNodeForLines(node);
       scheduleAutosave();
       return node;
@@ -10226,6 +10248,7 @@
       destroyCommandNodeContent(node);
       unobserveNodeForLines(node);
       removeLineConnectionsForNodes([node]);
+      unregisterNode(node);
       node.remove();
       refreshSelectionBounds();
       renderLineConnections();
