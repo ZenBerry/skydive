@@ -2,9 +2,11 @@
   window.SkydiveCommands = window.SkydiveCommands || [];
 
   const runtimes = new WeakMap();
+  const activeRuntimes = new Map();
   const CALLS_URL = "/.netlify/functions/calls";
   const LOCAL_OWNER_KEY = "skydive.broadcastOwner.v1";
   const SIGNAL_POLL_MS = 1600;
+  const DETACH_GRACE_MS = 5000;
   const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
 
   function stopStream(stream) {
@@ -51,6 +53,10 @@
     if (ownerKey && ownerKey === getLocalOwnerKey()) return "publisher";
     if (sameUser(context && context.nodeCreatedBy, context && context.currentUser)) return "publisher";
     return "viewer";
+  }
+
+  function getRuntimeKey(room, role) {
+    return room ? `${room.space}\n${room.room}\n${role}` : "";
   }
 
   function getCallUrl(runtime) {
@@ -302,10 +308,17 @@
     }
   }
 
-  async function pollBroadcast(container, elements, runtime) {
+  async function pollBroadcast(runtime) {
     if (runtime.discard) return;
+    const container = runtime.container;
+    const elements = runtime.elements;
+    runtime.pollTimer = null;
+    if (!container || !elements || !container.isConnected) {
+      runtime.pollTimer = setTimeout(() => pollBroadcast(runtime), SIGNAL_POLL_MS);
+      return;
+    }
     if (!runtime.room || document.hidden) {
-      runtime.pollTimer = setTimeout(() => pollBroadcast(container, elements, runtime), SIGNAL_POLL_MS);
+      runtime.pollTimer = setTimeout(() => pollBroadcast(runtime), SIGNAL_POLL_MS);
       return;
     }
 
@@ -355,7 +368,7 @@
       if (!runtime.stream && !showFirstRemoteStream(elements, runtime)) showIdle(elements, runtime);
     } finally {
       if (!runtime.discard) {
-        runtime.pollTimer = setTimeout(() => pollBroadcast(container, elements, runtime), SIGNAL_POLL_MS);
+        runtime.pollTimer = setTimeout(() => pollBroadcast(runtime), SIGNAL_POLL_MS);
       }
     }
   }
@@ -379,6 +392,18 @@
     };
   }
 
+  function closeRuntime(runtime) {
+    if (!runtime || runtime.discard) return;
+    runtime.discard = true;
+    if (runtime.pollTimer !== null) clearTimeout(runtime.pollTimer);
+    if (runtime.detachTimer !== null) clearTimeout(runtime.detachTimer);
+    sendLeave(runtime);
+    closeAllPeerConnections(runtime);
+    stopStream(runtime.stream);
+    stopStream(runtime.previewStream);
+    if (runtime.key) activeRuntimes.delete(runtime.key);
+  }
+
   window.SkydiveCommands.push({
     id: "broadcast",
     aliases: ["cast", "live"],
@@ -394,35 +419,52 @@
     destroy(container) {
       const runtime = runtimes.get(container);
       if (!runtime) return;
-      runtime.discard = true;
-      if (runtime.pollTimer !== null) clearTimeout(runtime.pollTimer);
-      sendLeave(runtime);
-      closeAllPeerConnections(runtime);
-      stopStream(runtime.stream);
-      stopStream(runtime.previewStream);
       runtimes.delete(container);
+      runtime.container = null;
+      runtime.elements = null;
+      if (runtime.detachTimer !== null) clearTimeout(runtime.detachTimer);
+      runtime.detachTimer = setTimeout(() => {
+        runtime.detachTimer = null;
+        closeRuntime(runtime);
+      }, DETACH_GRACE_MS);
     },
 
     render(container, state = {}, onState = null, context = {}) {
       this.destroy(container);
 
-      const runtime = {
-        peerId: randomId(),
-        role: getRole(state, context),
-        room: getRoomInfo(state, context),
-        stream: null,
-        previewStream: null,
-        peers: new Map(),
-        connectingPeers: new Set(),
-        processedSignalIds: new Set(),
-        lastSignalAt: 0,
-        pollTimer: null,
-        discard: false
-      };
+      const role = getRole(state, context);
+      const room = getRoomInfo(state, context);
+      const key = getRuntimeKey(room, role);
+      let runtime = key ? activeRuntimes.get(key) : null;
+      if (!runtime || runtime.discard) {
+        runtime = {
+          key,
+          peerId: randomId(),
+          role,
+          room,
+          container: null,
+          elements: null,
+          stream: null,
+          previewStream: null,
+          peers: new Map(),
+          connectingPeers: new Set(),
+          processedSignalIds: new Set(),
+          lastSignalAt: 0,
+          pollTimer: null,
+          detachTimer: null,
+          discard: false
+        };
+        if (key) activeRuntimes.set(key, runtime);
+      } else {
+        if (runtime.detachTimer !== null) {
+          clearTimeout(runtime.detachTimer);
+          runtime.detachTimer = null;
+        }
+      }
       runtimes.set(container, runtime);
 
       container.innerHTML = `
-        <div class="broadcast-card" data-calling="false" data-role="${runtime.role}">
+        <div class="broadcast-card" data-calling="false" data-role="${role}">
           <video class="broadcast-video" autoplay muted playsinline></video>
           <div class="broadcast-status" aria-live="polite">Broadcast</div>
         </div>
@@ -490,6 +532,8 @@
         video: container.querySelector(".broadcast-video"),
         status: container.querySelector(".broadcast-status")
       };
+      runtime.container = container;
+      runtime.elements = elements;
 
       elements.card.addEventListener("click", () => {
         if (!elements.video.srcObject) return;
@@ -497,10 +541,17 @@
         if (playPromise && typeof playPromise.catch === "function") playPromise.catch(() => {});
       });
 
-      if (runtime.role === "publisher") void startPreview(container, elements, runtime);
-      else showIdle(elements, runtime);
+      if (runtime.role === "publisher") {
+        if (runtime.stream) playVideo(elements.video, runtime.stream, elements, "Live", true);
+        else if (runtime.previewStream) playVideo(elements.video, runtime.previewStream, elements, "", true);
+        else void startPreview(container, elements, runtime);
+      } else if (!showFirstRemoteStream(elements, runtime)) {
+        showIdle(elements, runtime);
+      }
       if (runtime.room) {
-        runtime.pollTimer = setTimeout(() => pollBroadcast(container, elements, runtime), 250);
+        if (runtime.pollTimer === null) {
+          runtime.pollTimer = setTimeout(() => pollBroadcast(runtime), 250);
+        }
       } else {
         setStatus(elements, "Shared space only");
       }

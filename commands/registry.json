@@ -116,7 +116,7 @@
     },
     {
       "id": "broadcast",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "title": "Broadcast",
       "description": "Share a camera bubble with viewers in this space.",
       "aliases": ["cast", "live"],
