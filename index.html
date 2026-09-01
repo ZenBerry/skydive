@@ -1476,7 +1476,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 176; // Increment once for each commit.
+    const APP_VERSION = 177; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const DEFAULT_TEMPLATE_DESCRIPTION = "A pre-saved template";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
@@ -7036,6 +7036,7 @@
 
     function getCommandRenderContext(node) {
       return {
+        nodeId: node && node.dataset ? node.dataset.nodeId || "" : "",
         currentSpaceSlug: SHARED_SPACE_SLUG,
         delorean: cloneJson(DELOREAN_SPACE_INFO, {}),
         createDeloreanSpace,
