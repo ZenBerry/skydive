@@ -337,6 +337,11 @@
       display: none !important;
     }
 
+    .text-node[data-render-culled] {
+      visibility: hidden;
+      pointer-events: none;
+    }
+
     .text-node[data-view-mode="markdown"]:not(.editing) {
       white-space: normal;
     }
@@ -1471,7 +1476,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 174; // Increment once for each commit.
+    const APP_VERSION = 175; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const DEFAULT_TEMPLATE_DESCRIPTION = "A pre-saved template";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
@@ -1536,6 +1541,7 @@
     const QUICK_RESIZE_STEP_FACTOR = 3;
     const QUICK_RESIZE_MIN_LEVEL = 1;
     const QUICK_RESIZE_MAX_LEVEL = 9;
+    const NODE_RENDER_CULL_PADDING_SCREEN_PX = 768;
     const HTML_VIEW_MAX_SIZE_PX = 4096;
     const YOUTUBE_EMBED_DEFAULT_WIDTH = 560;
     const YOUTUBE_EMBED_DEFAULT_HEIGHT = 315;
@@ -8546,9 +8552,73 @@
       if (!shouldToggleMode) scheduleAutosave();
     }
 
+    function getNodeRenderCullRect() {
+      const padding = NODE_RENDER_CULL_PADDING_SCREEN_PX;
+      return {
+        left: -padding,
+        top: -padding,
+        right: Math.max(1, viewport.clientWidth) + padding,
+        bottom: Math.max(1, viewport.clientHeight) + padding
+      };
+    }
+
+    function setNodeRenderCulled(node, culled) {
+      if (!(node instanceof HTMLElement)) return;
+      if (culled) {
+        node.dataset.renderCulled = "true";
+      } else {
+        delete node.dataset.renderCulled;
+      }
+    }
+
+    function cacheNodeRenderCullSize(node, screenScale) {
+      if (!(node instanceof HTMLElement) || isFloatingNode(node)) return;
+      if (!world.contains(node)) return;
+      const scale = Number.isFinite(screenScale) && screenScale > 0 ? screenScale : 1;
+      const cameraScale = getCameraScale();
+      const screenWidth = Math.max(node.scrollWidth, node.offsetWidth, 1) * scale;
+      const screenHeight = Math.max(node.scrollHeight, node.offsetHeight, 1) * scale;
+      node.dataset.renderCullWorldWidth = String(screenWidth / cameraScale);
+      node.dataset.renderCullWorldHeight = String(screenHeight / cameraScale);
+    }
+
+    function shouldRenderNodeInCullRect(node, cullRect) {
+      if (!(node instanceof HTMLElement)) return false;
+      if (isFloatingNode(node) || isNodeDeleted(node)) return true;
+      if (selectedNodes.has(node) || node.classList.contains("editing") || node.classList.contains("navigation-target-highlight")) return true;
+      if (lineDraft && lineDraft.sourceNode === node) return true;
+
+      const worldX = Number(node.dataset.x);
+      const worldY = Number(node.dataset.y);
+      const worldWidth = Number(node.dataset.renderCullWorldWidth);
+      const worldHeight = Number(node.dataset.renderCullWorldHeight);
+      if (
+        !Number.isFinite(worldX) ||
+        !Number.isFinite(worldY) ||
+        !Number.isFinite(worldWidth) ||
+        !Number.isFinite(worldHeight) ||
+        worldWidth <= 0 ||
+        worldHeight <= 0
+      ) return true;
+
+      const point = worldToScreen(worldX, worldY);
+      const radius = Math.hypot(worldWidth, worldHeight) * getCameraScale();
+      return (
+        point.x + radius >= cullRect.left &&
+        point.x - radius <= cullRect.right &&
+        point.y + radius >= cullRect.top &&
+        point.y - radius <= cullRect.bottom
+      );
+    }
+
     function render() {
+      const cullRect = getNodeRenderCullRect();
       for (const node of world.children) {
-        renderNode(node);
+        if (shouldRenderNodeInCullRect(node, cullRect)) {
+          renderNode(node);
+        } else {
+          setNodeRenderCulled(node, true);
+        }
       }
       renderLineConnections();
       renderGroupSelectionBox();
@@ -8605,6 +8675,7 @@
       const metrics = getNodeRenderMetrics(node);
       const totalRotation = getNodeTotalRotation(node);
       const screenPoint = pointToScreenForNode(node, x, y);
+      let appliedScale = metrics.screenScale;
       node.style.left = `${screenPoint.x}px`;
       node.style.top = `${screenPoint.y}px`;
       node.style.setProperty("--camera-scale", String(metrics.screenScale));
@@ -8616,12 +8687,13 @@
       } else if (isHtmlViewNode(node)) {
         const frame = node.querySelector("iframe[data-html-view-token]");
         if (frame) applyHtmlViewFrameSize(frame);
+        appliedScale = metrics.cameraScale * metrics.baseFontSize / BASE_TEXT_PX;
         node.style.fontSize = `${BASE_TEXT_PX}px`;
         node.style.minWidth = "0px";
         node.style.transform = getNodeTransform(
           node,
           totalRotation,
-          metrics.cameraScale * metrics.baseFontSize / BASE_TEXT_PX
+          appliedScale
         );
         node.style.transformOrigin = "top left";
       } else {
@@ -8630,6 +8702,8 @@
         node.style.transform = getNodeTransform(node, totalRotation, metrics.screenScale);
         node.style.transformOrigin = "top left";
       }
+      setNodeRenderCulled(node, false);
+      cacheNodeRenderCullSize(node, appliedScale);
       notifyCommandNodeRendered(node, metrics);
     }
 
