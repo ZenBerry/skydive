@@ -109,6 +109,7 @@ Optional variables used by specific features:
 - `MONGODB_DB`, `MONGODB_COLLECTION`, `MONGODB_USERS_COLLECTION`, `MONGODB_USER_SESSIONS_COLLECTION`
 - `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`, `CLOUDINARY_UPLOAD_FOLDER`
 - `GEMINI_API_KEY`, `GEMMA_MODEL`, `GEMMA_FALLBACK_MODEL`
+- `SUPABASE_URL` with `SUPABASE_PUBLISHABLE_KEY` or `SUPABASE_ANON_KEY` enables Supabase Realtime fanout for shared-space saves; MongoDB remains the source of truth.
 - `SKYDIVE_AGENT_AUTH_MODE`, `SKYDIVE_AGENT_TOKEN`
 - `SKYDIVE_SESSION_SECONDS`, `SKYDIVE_SESSION_REFRESH_SECONDS`
 Most of the app can be inspected as static files, but persistence, uploads, Mark, and the agent API depend on the Netlify Functions environment.

@@ -1476,8 +1476,10 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 179; // Increment once for each commit.
+    const APP_VERSION = 181; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
+    const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
+    const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
     const DEFAULT_TEMPLATE_DESCRIPTION = "A pre-saved template";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
@@ -1522,7 +1524,6 @@
     const USER_SPACES_INFO = getUserSpacesPageInfo();
     const TARGET_NODE_ID = new URLSearchParams(window.location.search).get("n") || "";
     const DELOREAN_SPACE_INFO = getDeloreanSpaceInfo();
-    const SHARED_POLL_DELAYS_MS = [2000, 5000, 10000, 30000];
     const HISTORY_LIMIT = 100;
     const HISTORY_COMMIT_DELAY_MS = 120;
     const TITLE_HOOK_REFRESH_MS = 1000;
@@ -1654,9 +1655,12 @@
     let applyingSharedState = false;
     let savingSharedState = false;
     let sharedSaveQueued = false;
-    let sharedPollTimer = null;
-    let sharedPollDelayIndex = 0;
-    let sharedPollInFlight = false;
+    let sharedRealtimeClient = null;
+    let sharedRealtimeChannel = null;
+    let sharedRealtimeReady = false;
+    let sharedRealtimeRefreshInFlight = false;
+    let sharedRealtimeRefreshQueued = false;
+    const sharedRealtimeClientId = createClientId();
     let userSpacesSyncTimer = null;
     let userSpacesSyncInFlight = false;
     let slashCommandSession = null;
@@ -1747,6 +1751,18 @@
         Math.min(window.screen.width, window.screen.height) <= 1024;
 
       return reportsMobile || hasMobileUserAgent || isIPadDesktopMode || isTouchOnlySmallScreen;
+    }
+
+    function createClientId() {
+      if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID();
+      return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    }
+
+    function encodeRealtimeChannelPart(value) {
+      const bytes = new TextEncoder().encode(String(value || ""));
+      let binary = "";
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
     }
 
     function detectPhysicalWheelStep(event) {
@@ -8917,11 +8933,6 @@
       return `/.netlify/functions/spaces?${params.toString()}`;
     }
 
-    function getSharedSpaceMetaUrl(slug = SHARED_SPACE_SLUG) {
-      const params = new URLSearchParams({ slug, meta: "1" });
-      return `/.netlify/functions/spaces?${params.toString()}`;
-    }
-
     async function readJsonResponse(response, onDownloadProgress) {
       const reportProgress = typeof onDownloadProgress === "function" ? onDownloadProgress : null;
       const contentLength = Number(response.headers.get("Content-Length")) || 0;
@@ -8979,20 +8990,6 @@
       }
 
       return readJsonResponse(response, onDownloadProgress);
-    }
-
-    async function requestSharedSpaceMeta(options = {}) {
-      const { slug = SHARED_SPACE_SLUG, ...fetchOptions } = options;
-      const response = await fetch(getSharedSpaceMetaUrl(slug), {
-        headers: { "Accept": "application/json" },
-        ...fetchOptions
-      });
-
-      if (!response.ok) {
-        throw new Error(`Shared space metadata request failed: ${response.status}`);
-      }
-
-      return response.json();
     }
 
     function readSharedSpaceCache(slug = SHARED_SPACE_SLUG) {
@@ -9095,16 +9092,6 @@
       return Boolean(cache && isSameSharedState(cache.state, conflictSpace.state));
     }
 
-    function isNewerSharedMeta(meta) {
-      if (!meta) return false;
-      const revision = Number(meta.revision);
-      if (Number.isFinite(revision) && revision > 0) {
-        return revision > latestSharedRevision;
-      }
-      const updatedAt = Number(meta.updatedAt) || 0;
-      return updatedAt > latestSharedUpdatedAt;
-    }
-
     function isSharedEditLocked() {
       return Boolean(SHARED_SPACE_SLUG && sharedCacheValidationPending);
     }
@@ -9196,8 +9183,7 @@
           sharedSaveConflictNotified = false;
           writeSharedSpaceCache(data, state);
           if (Object.prototype.hasOwnProperty.call(data, "viewer")) setCurrentUser(data.viewer);
-          resetSharedPollingCadence();
-          scheduleSharedPoll(getSharedPollDelay());
+          publishSharedRealtimeUpdate(data);
           saveSucceeded = true;
         } catch (error) {
           if (error && error.status === 409) {
@@ -11220,7 +11206,10 @@
       render();
     });
 
-    window.addEventListener("pagehide", flushViewportSave);
+    window.addEventListener("pagehide", () => {
+      flushViewportSave();
+      stopSharedRealtime();
+    });
 
     document.addEventListener("selectionchange", () => {
       const editingNode = getActiveEditingNode();
@@ -11230,15 +11219,14 @@
 
     document.addEventListener("visibilitychange", () => {
       updateDocumentTitle();
-      if (document.hidden) clearSharedPollTimer();
-      else {
-        refreshSharedSpaceSoon();
+      if (!document.hidden) {
+        void refreshSharedSpaceFromServer();
         scheduleUserSpacesIndexSync();
       }
     });
     window.addEventListener("focus", () => {
       updateDocumentTitle();
-      refreshSharedSpaceSoon();
+      void refreshSharedSpaceFromServer();
       scheduleUserSpacesIndexSync();
     });
 
@@ -11366,79 +11354,116 @@
       window.location.assign(getMarkPathWithNotice(`The node in question no longer exists at ${spaceLink}.`));
     }
 
-    function getSharedPollDelay() {
-      return SHARED_POLL_DELAYS_MS[Math.min(sharedPollDelayIndex, SHARED_POLL_DELAYS_MS.length - 1)];
+    async function loadSharedRealtimeConfig() {
+      const response = await fetch(REALTIME_CONFIG_URL, {
+        headers: { "Accept": "application/json" },
+        cache: "no-store"
+      });
+      if (!response.ok) throw new Error(`Realtime config request failed: ${response.status}`);
+      return response.json();
     }
 
-    function clearSharedPollTimer() {
-      if (!sharedPollTimer) return;
-      clearTimeout(sharedPollTimer);
-      sharedPollTimer = null;
-    }
-
-    function resetSharedPollingCadence() {
-      sharedPollDelayIndex = 0;
-    }
-
-    function slowSharedPollingCadence() {
-      sharedPollDelayIndex = Math.min(sharedPollDelayIndex + 1, SHARED_POLL_DELAYS_MS.length - 1);
-    }
-
-    function scheduleSharedPoll(delayMs = getSharedPollDelay()) {
-      if (!SHARED_SPACE_SLUG || document.hidden) {
-        clearSharedPollTimer();
-        return;
+    async function getSupabaseModule() {
+      const imported = await import(SUPABASE_JS_URL);
+      if (!imported || typeof imported.createClient !== "function") {
+        throw new Error("Supabase realtime client could not be loaded.");
       }
-      clearSharedPollTimer();
-      sharedPollTimer = setTimeout(runSharedPoll, Math.max(0, delayMs));
+      return imported;
     }
 
-    async function runSharedPoll() {
-      sharedPollTimer = null;
+    function getSharedRealtimeChannelName() {
+      return `space:${encodeRealtimeChannelPart(SHARED_SPACE_SLUG)}`;
+    }
+
+    function stopSharedRealtime() {
+      sharedRealtimeReady = false;
+      if (sharedRealtimeChannel && typeof sharedRealtimeChannel.unsubscribe === "function") {
+        void sharedRealtimeChannel.unsubscribe().catch((error) => {
+          console.error("Realtime unsubscribe failed:", error);
+        });
+      }
+      sharedRealtimeChannel = null;
+      if (sharedRealtimeClient && typeof sharedRealtimeClient.removeAllChannels === "function") {
+        void sharedRealtimeClient.removeAllChannels().catch((error) => {
+          console.error("Realtime cleanup failed:", error);
+        });
+      }
+      sharedRealtimeClient = null;
+    }
+
+    async function refreshSharedSpaceFromServer() {
       if (!SHARED_SPACE_SLUG || document.hidden) return;
-      if (savingSharedState || sharedPollInFlight) {
-        scheduleSharedPoll(getSharedPollDelay());
+      if (hasActiveSharedLocalEdits()) {
+        sharedRealtimeRefreshQueued = true;
+        return;
+      }
+      if (sharedRealtimeRefreshInFlight) {
+        sharedRealtimeRefreshQueued = true;
         return;
       }
 
-      sharedPollInFlight = true;
+      sharedRealtimeRefreshInFlight = true;
       try {
-        const meta = await requestSharedSpaceMeta({ cache: "no-store" });
-        if (Object.prototype.hasOwnProperty.call(meta, "viewer")) setCurrentUser(meta.viewer);
-        if (!isNewerSharedMeta(meta)) {
-          latestSharedRevision = Number(meta.revision) || latestSharedRevision;
-          latestSharedUpdatedAt = Number(meta.updatedAt) || latestSharedUpdatedAt;
+        do {
+          sharedRealtimeRefreshQueued = false;
+          const changed = await requestSharedSpace({ cache: "no-store" }).then((data) => applySharedState(data, { incremental: true }));
           unlockSharedCacheEditing();
-          slowSharedPollingCadence();
-          return;
-        }
-        if (hasActiveSharedLocalEdits()) {
-          slowSharedPollingCadence();
-          return;
-        }
-        const changed = await requestSharedSpace({ cache: "no-store" }).then(applySharedState);
-        unlockSharedCacheEditing();
-        if (changed) resetSharedPollingCadence();
-        else slowSharedPollingCadence();
+        } while (sharedRealtimeRefreshQueued && !hasActiveSharedLocalEdits());
       } catch (error) {
-        slowSharedPollingCadence();
-        console.error("Shared space refresh failed:", error);
+        console.error("Realtime shared space refresh failed:", error);
       } finally {
-        sharedPollInFlight = false;
-        scheduleSharedPoll();
+        sharedRealtimeRefreshInFlight = false;
       }
     }
 
-    function refreshSharedSpaceSoon() {
-      if (!SHARED_SPACE_SLUG || document.hidden || sharedPollInFlight) return;
-      resetSharedPollingCadence();
-      scheduleSharedPoll(0);
+    async function refreshSharedSpaceFromRealtime(payload) {
+      if (payload && payload.senderId === sharedRealtimeClientId) return;
+      const revision = Number(payload && payload.revision) || 0;
+      const updatedAt = Number(payload && payload.updatedAt) || 0;
+      if (revision > 0 && revision <= latestSharedRevision) return;
+      if (revision <= 0 && updatedAt > 0 && updatedAt <= latestSharedUpdatedAt) return;
+      return refreshSharedSpaceFromServer();
     }
 
-    function startSharedPolling() {
-      if (!SHARED_SPACE_SLUG) return;
-      resetSharedPollingCadence();
-      scheduleSharedPoll(getSharedPollDelay());
+    async function startSharedRealtime() {
+      if (!SHARED_SPACE_SLUG || sharedRealtimeChannel) return;
+      try {
+        const config = await loadSharedRealtimeConfig();
+        if (!config || config.enabled !== true || !config.supabaseUrl || !config.supabaseAnonKey) return;
+        const { createClient } = await getSupabaseModule();
+        sharedRealtimeClient = createClient(config.supabaseUrl, config.supabaseAnonKey, {
+          auth: { persistSession: false, autoRefreshToken: false }
+        });
+        sharedRealtimeChannel = sharedRealtimeClient
+          .channel(getSharedRealtimeChannelName(), {
+            config: { broadcast: { self: false } }
+          })
+          .on("broadcast", { event: "space_saved" }, (message) => {
+            void refreshSharedSpaceFromRealtime(message && message.payload);
+          })
+          .subscribe((status) => {
+            sharedRealtimeReady = status === "SUBSCRIBED";
+          });
+      } catch (error) {
+        stopSharedRealtime();
+        console.error("Realtime setup failed:", error);
+      }
+    }
+
+    function publishSharedRealtimeUpdate(data) {
+      if (!sharedRealtimeReady || !sharedRealtimeChannel || !data) return;
+      void sharedRealtimeChannel.send({
+        type: "broadcast",
+        event: "space_saved",
+        payload: {
+          senderId: sharedRealtimeClientId,
+          slug: SHARED_SPACE_SLUG,
+          revision: Number(data.revision) || 0,
+          updatedAt: Number(data.updatedAt) || Date.now()
+        }
+      }).catch((error) => {
+        console.error("Realtime publish failed:", error);
+      });
     }
 
     async function boot() {
@@ -11491,8 +11516,8 @@
               render();
             }
             if (USER_SPACES_INFO.active) await syncUserSpacesIndex({ force: true });
-            startSharedPolling();
-            if (sharedSpaceLoadedFromCache) refreshSharedSpaceSoon();
+            void startSharedRealtime();
+            if (sharedSpaceLoadedFromCache) void refreshSharedSpaceFromServer();
           } catch (error) {
             console.error("Shared space load failed:", error);
             if (loadingScreenShown) setLoadingProgress(90);
