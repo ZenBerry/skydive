@@ -138,48 +138,17 @@ exports.handler = async (event) => {
       const now = Date.now();
       const current = await collection.findOne({ slug }, { projection: { _id: 0, state: 1, revision: 1, updatedAt: 1 } });
       const revision = Number(current && current.revision) || 0;
-      const hasBaseRevision = Object.prototype.hasOwnProperty.call(payload, "baseRevision");
-      const baseRevision = Number(payload.baseRevision);
-      if (hasBaseRevision && (!Number.isFinite(baseRevision) || baseRevision !== revision)) {
-        return json(409, {
-          error: "Space revision changed before save.",
-          currentRevision: revision,
-          space: {
-            slug,
-            revision,
-            updatedAt: Number(current && current.updatedAt) || 0,
-            state: current && current.state ? current.state : null
-          }
-        }, cookies);
-      }
 
       const state = attributeNewNodes(stripViewportState(payload.state), current && current.state, viewer);
-      const revisionFilter = current && current.revision === undefined
-        ? { $or: [{ revision: { $exists: false } }, { revision: 0 }] }
-        : { revision };
-      const result = await collection.updateOne(
-        hasBaseRevision ? { slug, ...revisionFilter } : { slug },
+      await collection.updateOne(
+        { slug },
         {
           $set: { slug, state, updatedAt: now },
           $inc: { revision: 1 },
           $setOnInsert: { createdAt: now, createdBy: creator }
         },
-        { upsert: !hasBaseRevision || !current }
+        { upsert: true }
       );
-
-      if (hasBaseRevision && result.matchedCount !== 1 && result.upsertedCount !== 1) {
-        const latest = await collection.findOne({ slug }, { projection: { _id: 0, state: 1, revision: 1, updatedAt: 1 } });
-        return json(409, {
-          error: "Space changed while save was in progress.",
-          currentRevision: Number(latest && latest.revision) || 0,
-          space: {
-            slug,
-            revision: Number(latest && latest.revision) || 0,
-            updatedAt: Number(latest && latest.updatedAt) || 0,
-            state: latest && latest.state ? latest.state : null
-          }
-        }, cookies);
-      }
 
       return json(200, { slug, revision: revision + 1, updatedAt: now, viewer }, cookies);
     }

@@ -1476,11 +1476,12 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 182; // Increment once for each commit.
+    const APP_VERSION = 183; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
     const REALTIME_PREVIEW_MAX_BYTES = 220 * 1024;
+    const REALTIME_PREVIEW_THROTTLE_MS = 100;
     const DEFAULT_TEMPLATE_DESCRIPTION = "A pre-saved template";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
@@ -1661,6 +1662,9 @@
     let sharedRealtimeReady = false;
     let sharedRealtimeRefreshInFlight = false;
     let sharedRealtimeRefreshQueued = false;
+    let sharedRealtimePreviewTimer = null;
+    let lastSharedRealtimePreviewSentAt = 0;
+    let pendingSharedRealtimePreviewState = null;
     let latestSharedPreviewAt = 0;
     const sharedRealtimeClientId = createClientId();
     let userSpacesSyncTimer = null;
@@ -9164,7 +9168,6 @@
       markDeloreanModified();
       const state = serializeState();
       if (SHARED_SPACE_SLUG) {
-        publishSharedRealtimePreview(state);
         if (savingSharedState) {
           sharedSaveQueued = true;
           return;
@@ -9176,14 +9179,14 @@
           try {
             data = await requestSharedSpace({
               method: "PUT",
-              body: JSON.stringify({ state, baseRevision: latestSharedRevision })
+              body: JSON.stringify({ state })
             });
           } catch (error) {
             if (error && error.status === 409 && canRetrySharedSaveAfterConflict(error)) {
               updateSharedServerMarkers(getSharedConflictSpace(error));
               data = await requestSharedSpace({
                 method: "PUT",
-                body: JSON.stringify({ state, baseRevision: latestSharedRevision })
+                body: JSON.stringify({ state })
               });
             } else {
               throw error;
@@ -9324,6 +9327,7 @@
         return;
       }
       if (SHARED_SPACE_SLUG) sharedLocalMutationPending = true;
+      if (SHARED_SPACE_SLUG) scheduleSharedRealtimePreview(serializeState());
       markDeloreanModified();
       scheduleHistoryCommit();
       clearTimeout(saveTimer);
@@ -11399,6 +11403,11 @@
 
     function stopSharedRealtime() {
       sharedRealtimeReady = false;
+      if (sharedRealtimePreviewTimer !== null) {
+        clearTimeout(sharedRealtimePreviewTimer);
+        sharedRealtimePreviewTimer = null;
+      }
+      pendingSharedRealtimePreviewState = null;
       if (sharedRealtimeChannel && typeof sharedRealtimeChannel.unsubscribe === "function") {
         void sharedRealtimeChannel.unsubscribe().catch((error) => {
           console.error("Realtime unsubscribe failed:", error);
@@ -11521,6 +11530,33 @@
       }).catch((error) => {
         console.error("Realtime preview failed:", error);
       });
+    }
+
+    function flushSharedRealtimePreview() {
+      if (!pendingSharedRealtimePreviewState) return;
+      const state = pendingSharedRealtimePreviewState;
+      pendingSharedRealtimePreviewState = null;
+      lastSharedRealtimePreviewSentAt = Date.now();
+      publishSharedRealtimePreview(state);
+    }
+
+    function scheduleSharedRealtimePreview(state) {
+      if (!sharedRealtimeReady || !state) return;
+      pendingSharedRealtimePreviewState = state;
+      const elapsed = Date.now() - lastSharedRealtimePreviewSentAt;
+      if (elapsed >= REALTIME_PREVIEW_THROTTLE_MS) {
+        if (sharedRealtimePreviewTimer !== null) {
+          clearTimeout(sharedRealtimePreviewTimer);
+          sharedRealtimePreviewTimer = null;
+        }
+        flushSharedRealtimePreview();
+        return;
+      }
+      if (sharedRealtimePreviewTimer !== null) return;
+      sharedRealtimePreviewTimer = setTimeout(() => {
+        sharedRealtimePreviewTimer = null;
+        flushSharedRealtimePreview();
+      }, REALTIME_PREVIEW_THROTTLE_MS - elapsed);
     }
 
     async function boot() {
