@@ -1476,12 +1476,12 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 183; // Increment once for each commit.
+    const APP_VERSION = 184; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
     const REALTIME_PREVIEW_MAX_BYTES = 220 * 1024;
-    const REALTIME_PREVIEW_THROTTLE_MS = 100;
+    const REALTIME_PREVIEW_THROTTLE_MS = 16;
     const DEFAULT_TEMPLATE_DESCRIPTION = "A pre-saved template";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
@@ -1665,6 +1665,9 @@
     let sharedRealtimePreviewTimer = null;
     let lastSharedRealtimePreviewSentAt = 0;
     let pendingSharedRealtimePreviewState = null;
+    let sharedRealtimeNodePositionFrame = null;
+    let pendingSharedRealtimeNodePositions = new Map();
+    let applyingSharedRealtimeNodePositions = false;
     let latestSharedPreviewAt = 0;
     const sharedRealtimeClientId = createClientId();
     let userSpacesSyncTimer = null;
@@ -8747,13 +8750,16 @@
     }
 
     function setNodePosition(node, x, y, options = {}) {
-      const { skipSelectionUpdate = false } = options;
+      const { skipSelectionUpdate = false, suppressRealtime = false } = options;
       node.dataset.x = String(x);
       node.dataset.y = String(y);
       renderNode(node);
       requestLineRender();
       if (!skipSelectionUpdate && selectedNodes.has(node)) {
         refreshSelectionBounds();
+      }
+      if (!suppressRealtime && SHARED_SPACE_SLUG && !applyingSharedState && !applyingSharedRealtimeNodePositions) {
+        scheduleSharedRealtimeNodePosition(node);
       }
     }
 
@@ -11408,6 +11414,11 @@
         sharedRealtimePreviewTimer = null;
       }
       pendingSharedRealtimePreviewState = null;
+      if (sharedRealtimeNodePositionFrame !== null) {
+        cancelAnimationFrame(sharedRealtimeNodePositionFrame);
+        sharedRealtimeNodePositionFrame = null;
+      }
+      pendingSharedRealtimeNodePositions.clear();
       if (sharedRealtimeChannel && typeof sharedRealtimeChannel.unsubscribe === "function") {
         void sharedRealtimeChannel.unsubscribe().catch((error) => {
           console.error("Realtime unsubscribe failed:", error);
@@ -11468,6 +11479,9 @@
         sharedRealtimeChannel = sharedRealtimeClient
           .channel(getSharedRealtimeChannelName(), {
             config: { broadcast: { self: false } }
+          })
+          .on("broadcast", { event: "space_node_positions" }, (message) => {
+            applySharedRealtimeNodePositions(message && message.payload);
           })
           .on("broadcast", { event: "space_preview" }, (message) => {
             void applySharedRealtimePreview(message && message.payload);
@@ -11557,6 +11571,64 @@
         sharedRealtimePreviewTimer = null;
         flushSharedRealtimePreview();
       }, REALTIME_PREVIEW_THROTTLE_MS - elapsed);
+    }
+
+    function flushSharedRealtimeNodePositions() {
+      sharedRealtimeNodePositionFrame = null;
+      if (!sharedRealtimeReady || !sharedRealtimeChannel || pendingSharedRealtimeNodePositions.size === 0) {
+        pendingSharedRealtimeNodePositions.clear();
+        return;
+      }
+      const positions = Array.from(pendingSharedRealtimeNodePositions.values());
+      pendingSharedRealtimeNodePositions.clear();
+      void sharedRealtimeChannel.send({
+        type: "broadcast",
+        event: "space_node_positions",
+        payload: {
+          senderId: sharedRealtimeClientId,
+          slug: SHARED_SPACE_SLUG,
+          updatedAt: Date.now(),
+          positions
+        }
+      }).catch((error) => {
+        console.error("Realtime node position publish failed:", error);
+      });
+    }
+
+    function scheduleSharedRealtimeNodePosition(node) {
+      if (!sharedRealtimeReady || !(node instanceof HTMLElement) || !world.contains(node)) return;
+      const id = node.dataset.nodeId || "";
+      const x = Number(node.dataset.x);
+      const y = Number(node.dataset.y);
+      if (!id || !Number.isFinite(x) || !Number.isFinite(y)) return;
+      pendingSharedRealtimeNodePositions.set(id, { id, x, y });
+      if (sharedRealtimeNodePositionFrame !== null) return;
+      sharedRealtimeNodePositionFrame = requestAnimationFrame(flushSharedRealtimeNodePositions);
+    }
+
+    function applySharedRealtimeNodePositions(payload) {
+      if (!payload || payload.senderId === sharedRealtimeClientId) return;
+      if (payload.slug !== SHARED_SPACE_SLUG) return;
+      const positions = Array.isArray(payload.positions) ? payload.positions : [];
+      if (positions.length === 0 || hasActiveSharedLocalEdits()) return;
+      applyingSharedRealtimeNodePositions = true;
+      try {
+        const touched = [];
+        for (const position of positions) {
+          const node = getNodeById(String(position && position.id || ""));
+          if (!node) continue;
+          const x = Number(position.x);
+          const y = Number(position.y);
+          if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+          setNodePosition(node, x, y, { skipSelectionUpdate: true, suppressRealtime: true });
+          touched.push(node);
+        }
+        if (touched.length > 0) {
+          refreshSelectionBounds();
+        }
+      } finally {
+        applyingSharedRealtimeNodePositions = false;
+      }
     }
 
     async function boot() {
