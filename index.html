@@ -1476,10 +1476,11 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 181; // Increment once for each commit.
+    const APP_VERSION = 182; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+    const REALTIME_PREVIEW_MAX_BYTES = 220 * 1024;
     const DEFAULT_TEMPLATE_DESCRIPTION = "A pre-saved template";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
@@ -1660,6 +1661,7 @@
     let sharedRealtimeReady = false;
     let sharedRealtimeRefreshInFlight = false;
     let sharedRealtimeRefreshQueued = false;
+    let latestSharedPreviewAt = 0;
     const sharedRealtimeClientId = createClientId();
     let userSpacesSyncTimer = null;
     let userSpacesSyncInFlight = false;
@@ -1763,6 +1765,14 @@
       let binary = "";
       for (const byte of bytes) binary += String.fromCharCode(byte);
       return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+    }
+
+    function getJsonByteLength(value) {
+      try {
+        return new TextEncoder().encode(JSON.stringify(value)).length;
+      } catch (error) {
+        return Infinity;
+      }
     }
 
     function detectPhysicalWheelStep(event) {
@@ -9154,6 +9164,7 @@
       markDeloreanModified();
       const state = serializeState();
       if (SHARED_SPACE_SLUG) {
+        publishSharedRealtimePreview(state);
         if (savingSharedState) {
           sharedSaveQueued = true;
           return;
@@ -11257,26 +11268,37 @@
       if (!data.state) return false;
       if (hasActiveSharedLocalEdits() && options.force !== true) return false;
 
+      const preview = options.preview === true;
       const revision = Number(data.revision) || 0;
       const updatedAt = Number(data.updatedAt) || 1;
-      if (revision > 0) {
-        if (revision <= latestSharedRevision) return false;
-      } else if (updatedAt <= latestSharedUpdatedAt) {
-        return false;
+      if (preview) {
+        const baseRevision = Number(data.baseRevision) || 0;
+        if (baseRevision > 0 && baseRevision < latestSharedRevision) return false;
+        if (updatedAt <= latestSharedPreviewAt) return false;
+      } else {
+        if (revision > 0) {
+          if (revision <= latestSharedRevision) return false;
+        } else if (updatedAt <= latestSharedUpdatedAt) {
+          return false;
+        }
       }
       const reportProgress = typeof options.onProgress === "function" ? options.onProgress : null;
       if (reportProgress) reportProgress(0.25);
 
       try {
         applyingSharedState = true;
-        latestSharedRevision = revision || latestSharedRevision;
-        latestSharedUpdatedAt = updatedAt;
+        if (preview) {
+          latestSharedPreviewAt = updatedAt;
+        } else {
+          latestSharedRevision = revision || latestSharedRevision;
+          latestSharedUpdatedAt = updatedAt;
+        }
         await loadState(data.state, {
           autosave: false,
           incremental: options.incremental,
           onProgress: createLoadingProgressRange(0.25, 1, reportProgress)
         });
-        writeSharedSpaceCache(data);
+        if (!preview) writeSharedSpaceCache(data);
         resetHistoryToCurrentState();
         return true;
       } catch (error) {
@@ -11438,6 +11460,9 @@
           .channel(getSharedRealtimeChannelName(), {
             config: { broadcast: { self: false } }
           })
+          .on("broadcast", { event: "space_preview" }, (message) => {
+            void applySharedRealtimePreview(message && message.payload);
+          })
           .on("broadcast", { event: "space_saved" }, (message) => {
             void refreshSharedSpaceFromRealtime(message && message.payload);
           })
@@ -11463,6 +11488,38 @@
         }
       }).catch((error) => {
         console.error("Realtime publish failed:", error);
+      });
+    }
+
+    async function applySharedRealtimePreview(payload) {
+      if (!payload || payload.senderId === sharedRealtimeClientId) return;
+      if (payload.slug !== SHARED_SPACE_SLUG) return;
+      await applySharedState({
+        state: payload.state,
+        baseRevision: Number(payload.baseRevision) || 0,
+        updatedAt: Number(payload.updatedAt) || Date.now()
+      }, {
+        incremental: true,
+        preview: true
+      });
+    }
+
+    function publishSharedRealtimePreview(state) {
+      if (!sharedRealtimeReady || !sharedRealtimeChannel || !state) return;
+      const payload = {
+        senderId: sharedRealtimeClientId,
+        slug: SHARED_SPACE_SLUG,
+        baseRevision: latestSharedRevision,
+        updatedAt: Date.now(),
+        state
+      };
+      if (getJsonByteLength(payload) > REALTIME_PREVIEW_MAX_BYTES) return;
+      void sharedRealtimeChannel.send({
+        type: "broadcast",
+        event: "space_preview",
+        payload
+      }).catch((error) => {
+        console.error("Realtime preview failed:", error);
       });
     }
 
