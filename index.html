@@ -194,11 +194,14 @@
     .remote-pointer-shape {
       position: absolute;
       inset: 0;
-      background: var(--remote-pointer-color, #10b981);
-      clip-path: polygon(8% 0, 100% 42%, 55% 55%, 38% 100%);
-      border-radius: 8px;
-      box-shadow: 0 6px 16px rgba(15, 23, 42, 0.18), 0 0 0 1px rgba(255, 255, 255, 0.9) inset;
-      filter: drop-shadow(0 2px 3px rgba(15, 23, 42, 0.2));
+      color: var(--remote-pointer-color, #10b981);
+      filter: drop-shadow(0 4px 8px rgba(15, 23, 42, 0.22));
+    }
+
+    .remote-pointer-shape svg {
+      width: 100%;
+      height: 100%;
+      display: block;
     }
 
     .remote-pointer-label {
@@ -1528,7 +1531,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 185; // Increment once for each commit.
+    const APP_VERSION = 186; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -1722,6 +1725,7 @@
     let pendingSharedRealtimeNodeTexts = new Map();
     let applyingSharedRealtimeNodePositions = false;
     let applyingSharedRealtimeNodeText = false;
+    let applyingSharedRealtimeNodeStructure = false;
     let latestSharedRealtimePatchAt = 0;
     const sharedRealtimeClientId = createClientId();
     const remotePointers = new Map();
@@ -5188,7 +5192,7 @@
       return true;
     }
 
-    function softDeleteNodes(nodes, deletedAt = Date.now()) {
+    function softDeleteNodes(nodes, deletedAt = Date.now(), options = {}) {
       const targets = nodes.filter((node) => node instanceof HTMLElement && world.contains(node) && !isNodeDeleted(node));
       if (targets.length === 0) return false;
 
@@ -5206,7 +5210,10 @@
       refreshSelectionBounds();
       renderLineConnections();
       updateDocumentTitle();
-      scheduleAutosave();
+      if (options.autosave !== false) scheduleAutosave();
+      if (!options.suppressRealtime && !applyingSharedRealtimeNodeStructure) {
+        publishSharedRealtimeNodeDelete(targets, deletedAt);
+      }
       return true;
     }
 
@@ -9475,7 +9482,7 @@
       }
     }
 
-    function restoreStateNode(entry) {
+    function restoreStateNode(entry, options = {}) {
       const x = Number.isFinite(Number(entry.x)) ? Number(entry.x) : 0;
       const y = Number.isFinite(Number(entry.y)) ? Number(entry.y) : 0;
       const text = typeof entry.text === "string" ? entry.text : "";
@@ -9501,7 +9508,8 @@
           createdBy: entry.createdBy,
           floating: entry.floating === true,
           rotation,
-          preserveTimestamps: true
+          preserveTimestamps: true,
+          ...options
         });
       } else {
         createTextNode(x, y, text, baseFontSize, id, html, {
@@ -9512,7 +9520,8 @@
           variable: entry.variable === true,
           viewMode: markdownView ? "markdown" : htmlView ? "html" : "",
           floating: entry.floating === true,
-          preserveTimestamps: true
+          preserveTimestamps: true,
+          ...options
         });
       }
     }
@@ -10304,7 +10313,10 @@
       world.appendChild(node);
       registerNode(node);
       if (!isNodeDeleted(node)) observeNodeForLines(node);
-      scheduleAutosave();
+      if (options.autosave !== false) scheduleAutosave();
+      if (!options.suppressRealtime && !applyingSharedRealtimeNodeStructure) {
+        publishSharedRealtimeNodeCreate(node);
+      }
       return node;
     }
 
@@ -10341,7 +10353,10 @@
       world.appendChild(node);
       registerNode(node);
       if (!isNodeDeleted(node)) observeNodeForLines(node);
-      scheduleAutosave();
+      if (options.autosave !== false) scheduleAutosave();
+      if (!options.suppressRealtime && !applyingSharedRealtimeNodeStructure) {
+        publishSharedRealtimeNodeCreate(node);
+      }
       return node;
     }
 
@@ -11493,6 +11508,8 @@
     }
 
     function getRemotePointerLabel(user, senderId) {
+      const nickname = user && typeof user.nickname === "string" ? user.nickname.trim() : "";
+      if (nickname) return nickname;
       const name = user && typeof user.name === "string" ? user.name.trim() : "";
       if (name) return name;
       const id = user && typeof user.id === "string" ? user.id.trim() : "";
@@ -11507,6 +11524,18 @@
 
       const shape = document.createElement("div");
       shape.className = "remote-pointer-shape";
+      const svg = document.createElementNS(SVG_NS, "svg");
+      svg.setAttribute("viewBox", "0 0 24 24");
+      svg.setAttribute("fill", "none");
+      svg.setAttribute("aria-hidden", "true");
+      const path = document.createElementNS(SVG_NS, "path");
+      path.setAttribute("d", "M20.5056 10.7754C21.1225 10.5355 21.431 10.4155 21.5176 10.2459C21.5926 10.099 21.5903 9.92446 21.5115 9.77954C21.4205 9.61226 21.109 9.50044 20.486 9.2768L4.59629 3.5728C4.0866 3.38983 3.83175 3.29835 3.66514 3.35605C3.52029 3.40621 3.40645 3.52004 3.35629 3.6649C3.29859 3.8315 3.39008 4.08635 3.57304 4.59605L9.277 20.4858C9.50064 21.1088 9.61246 21.4203 9.77973 21.5113C9.92465 21.5901 10.0991 21.5924 10.2461 21.5174C10.4157 21.4308 10.5356 21.1223 10.7756 20.5054L13.3724 13.8278C13.4194 13.707 13.4429 13.6466 13.4792 13.5957C13.5114 13.5506 13.5508 13.5112 13.5959 13.479C13.6468 13.4427 13.7072 13.4192 13.828 13.3722L20.5056 10.7754Z");
+      path.setAttribute("stroke", "currentColor");
+      path.setAttribute("stroke-width", "2");
+      path.setAttribute("stroke-linecap", "round");
+      path.setAttribute("stroke-linejoin", "round");
+      svg.appendChild(path);
+      shape.appendChild(svg);
       const label = document.createElement("div");
       label.className = "remote-pointer-label";
       label.textContent = getRemotePointerLabel(user, senderId);
@@ -11617,6 +11646,12 @@
           })
           .on("broadcast", { event: "space_node_texts" }, (message) => {
             applySharedRealtimeNodeTexts(message && message.payload);
+          })
+          .on("broadcast", { event: "space_node_create" }, (message) => {
+            applySharedRealtimeNodeCreate(message && message.payload);
+          })
+          .on("broadcast", { event: "space_node_delete" }, (message) => {
+            applySharedRealtimeNodeDelete(message && message.payload);
           })
           .on("broadcast", { event: "space_pointer" }, (message) => {
             applySharedRealtimePointer(message && message.payload);
@@ -11799,6 +11834,86 @@
       }
     }
 
+    function publishSharedRealtimeNodeCreate(node) {
+      if (!sharedRealtimeReady || !sharedRealtimeChannel || !(node instanceof HTMLElement) || !world.contains(node)) return;
+      const entry = serializeNode(node);
+      if (!entry || !entry.id) return;
+      void sharedRealtimeChannel.send({
+        type: "broadcast",
+        event: "space_node_create",
+        payload: {
+          senderId: sharedRealtimeClientId,
+          slug: SHARED_SPACE_SLUG,
+          updatedAt: Date.now(),
+          node: entry
+        }
+      }).catch((error) => {
+        console.error("Realtime node create publish failed:", error);
+      });
+    }
+
+    function applySharedRealtimeNodeCreate(payload) {
+      if (!payload || payload.senderId === sharedRealtimeClientId) return;
+      if (payload.slug !== SHARED_SPACE_SLUG) return;
+      const entry = payload.node && typeof payload.node === "object" ? payload.node : null;
+      const id = entry && typeof entry.id === "string" ? entry.id.trim() : "";
+      if (!entry || !id || getNodeById(id, { includeDeleted: true })) return;
+
+      latestSharedRealtimePatchAt = Date.now();
+      applyingSharedRealtimeNodeStructure = true;
+      try {
+        restoreStateNode(entry, { autosave: false, suppressRealtime: true });
+        refreshSelectionBounds();
+        requestLineRender();
+        updateCalcVariables();
+        updateDocumentTitle();
+      } finally {
+        applyingSharedRealtimeNodeStructure = false;
+      }
+    }
+
+    function publishSharedRealtimeNodeDelete(nodes, deletedAt) {
+      if (!sharedRealtimeReady || !sharedRealtimeChannel) return;
+      const ids = nodes
+        .map((node) => node instanceof HTMLElement ? node.dataset.nodeId || "" : "")
+        .filter(Boolean);
+      if (ids.length === 0) return;
+      void sharedRealtimeChannel.send({
+        type: "broadcast",
+        event: "space_node_delete",
+        payload: {
+          senderId: sharedRealtimeClientId,
+          slug: SHARED_SPACE_SLUG,
+          updatedAt: Date.now(),
+          deletedAt,
+          ids
+        }
+      }).catch((error) => {
+        console.error("Realtime node delete publish failed:", error);
+      });
+    }
+
+    function applySharedRealtimeNodeDelete(payload) {
+      if (!payload || payload.senderId === sharedRealtimeClientId) return;
+      if (payload.slug !== SHARED_SPACE_SLUG) return;
+      const ids = Array.isArray(payload.ids) ? payload.ids : [];
+      const nodes = ids
+        .map((id) => getNodeById(String(id || "")))
+        .filter(Boolean);
+      if (nodes.length === 0) return;
+
+      latestSharedRealtimePatchAt = Date.now();
+      applyingSharedRealtimeNodeStructure = true;
+      try {
+        softDeleteNodes(nodes, Number(payload.deletedAt) || Date.now(), {
+          autosave: false,
+          suppressRealtime: true
+        });
+      } finally {
+        applyingSharedRealtimeNodeStructure = false;
+      }
+    }
+
     function flushSharedRealtimePointer() {
       sharedRealtimePointerFrame = null;
       if (!sharedRealtimeReady || !sharedRealtimeChannel || !pendingSharedRealtimePointer) return;
@@ -11813,7 +11928,7 @@
           updatedAt: Date.now(),
           user: currentUser ? {
             id: currentUser.id || "",
-            name: currentUser.name || currentUser.handle || ""
+            nickname: currentUser.nickname || ""
           } : null,
           x: point.x,
           y: point.y
