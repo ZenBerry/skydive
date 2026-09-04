@@ -1531,7 +1531,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 186; // Increment once for each commit.
+    const APP_VERSION = 187; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -1718,6 +1718,10 @@
     let sharedRealtimeClient = null;
     let sharedRealtimeChannel = null;
     let sharedRealtimeReady = false;
+    let sharedRealtimePresenceKnown = false;
+    let sharedRealtimePresenceCount = 0;
+    let sharedRealtimePresenceTrackInFlight = false;
+    let sharedRealtimePresenceTracked = false;
     let sharedRealtimeRefreshInFlight = false;
     let sharedRealtimeRefreshQueued = false;
     let sharedRealtimeNodePositionFrame = null;
@@ -11465,8 +11469,11 @@
       return `space:${encodeRealtimeChannelPart(SHARED_SPACE_SLUG)}`;
     }
 
-    function stopSharedRealtime() {
-      sharedRealtimeReady = false;
+    function isSharedRealtimeCollaborativeActive() {
+      return sharedRealtimeReady && sharedRealtimePresenceKnown && sharedRealtimePresenceCount > 1;
+    }
+
+    function clearSharedRealtimeStreamingState() {
       if (sharedRealtimeNodePositionFrame !== null) {
         cancelAnimationFrame(sharedRealtimeNodePositionFrame);
         sharedRealtimeNodePositionFrame = null;
@@ -11484,6 +11491,45 @@
       }
       for (const entry of remotePointers.values()) entry.element.remove();
       remotePointers.clear();
+    }
+
+    function getSharedRealtimePresenceCount() {
+      if (!sharedRealtimeChannel || typeof sharedRealtimeChannel.presenceState !== "function") return 0;
+      const state = sharedRealtimeChannel.presenceState();
+      if (!state || typeof state !== "object") return 0;
+      return Object.values(state).reduce((total, presences) => (
+        total + (Array.isArray(presences) ? presences.length : 0)
+      ), 0);
+    }
+
+    function updateSharedRealtimePresence() {
+      const wasCollaborative = isSharedRealtimeCollaborativeActive();
+      sharedRealtimePresenceKnown = true;
+      sharedRealtimePresenceCount = getSharedRealtimePresenceCount();
+      if (wasCollaborative && !isSharedRealtimeCollaborativeActive()) {
+        clearSharedRealtimeStreamingState();
+      }
+    }
+
+    function getSharedRealtimePresencePayload() {
+      return {
+        senderId: sharedRealtimeClientId,
+        slug: SHARED_SPACE_SLUG,
+        user: currentUser ? {
+          id: currentUser.id || "",
+          nickname: currentUser.nickname || ""
+        } : null,
+        joinedAt: Date.now()
+      };
+    }
+
+    function stopSharedRealtime() {
+      sharedRealtimeReady = false;
+      sharedRealtimePresenceKnown = false;
+      sharedRealtimePresenceCount = 0;
+      sharedRealtimePresenceTrackInFlight = false;
+      sharedRealtimePresenceTracked = false;
+      clearSharedRealtimeStreamingState();
       if (sharedRealtimeChannel && typeof sharedRealtimeChannel.unsubscribe === "function") {
         void sharedRealtimeChannel.unsubscribe().catch((error) => {
           console.error("Realtime unsubscribe failed:", error);
@@ -11587,6 +11633,7 @@
     }
 
     function renderRemotePointers() {
+      if (!isSharedRealtimeCollaborativeActive()) return;
       const now = performance.now();
       for (const entry of remotePointers.values()) renderRemotePointer(entry, now);
     }
@@ -11639,7 +11686,13 @@
         });
         sharedRealtimeChannel = sharedRealtimeClient
           .channel(getSharedRealtimeChannelName(), {
-            config: { broadcast: { self: false } }
+            config: {
+              broadcast: { self: false },
+              presence: { key: sharedRealtimeClientId }
+            }
+          })
+          .on("presence", { event: "sync" }, () => {
+            updateSharedRealtimePresence();
           })
           .on("broadcast", { event: "space_node_positions" }, (message) => {
             applySharedRealtimeNodePositions(message && message.payload);
@@ -11661,6 +11714,29 @@
           })
           .subscribe((status) => {
             sharedRealtimeReady = status === "SUBSCRIBED";
+            if (
+              sharedRealtimeReady &&
+              !sharedRealtimePresenceTracked &&
+              !sharedRealtimePresenceTrackInFlight &&
+              sharedRealtimeChannel &&
+              typeof sharedRealtimeChannel.track === "function"
+            ) {
+              sharedRealtimePresenceTrackInFlight = true;
+              void sharedRealtimeChannel.track(getSharedRealtimePresencePayload()).then(() => {
+                sharedRealtimePresenceTracked = true;
+              }).catch((error) => {
+                sharedRealtimePresenceTracked = false;
+                console.error("Realtime presence track failed:", error);
+              }).finally(() => {
+                sharedRealtimePresenceTrackInFlight = false;
+              });
+            } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+              sharedRealtimePresenceKnown = false;
+              sharedRealtimePresenceCount = 0;
+              sharedRealtimePresenceTrackInFlight = false;
+              sharedRealtimePresenceTracked = false;
+              clearSharedRealtimeStreamingState();
+            }
           });
       } catch (error) {
         stopSharedRealtime();
@@ -11686,7 +11762,7 @@
 
     function flushSharedRealtimeNodePositions() {
       sharedRealtimeNodePositionFrame = null;
-      if (!sharedRealtimeReady || !sharedRealtimeChannel || (pendingSharedRealtimeNodePositions.size === 0 && pendingSharedRealtimeNodeTexts.size === 0)) {
+      if (!isSharedRealtimeCollaborativeActive() || !sharedRealtimeChannel || (pendingSharedRealtimeNodePositions.size === 0 && pendingSharedRealtimeNodeTexts.size === 0)) {
         pendingSharedRealtimeNodePositions.clear();
         pendingSharedRealtimeNodeTexts.clear();
         return;
@@ -11731,7 +11807,7 @@
     }
 
     function scheduleSharedRealtimeNodePosition(node) {
-      if (!sharedRealtimeReady || !(node instanceof HTMLElement) || !world.contains(node)) return;
+      if (!isSharedRealtimeCollaborativeActive() || !(node instanceof HTMLElement) || !world.contains(node)) return;
       const id = node.dataset.nodeId || "";
       const x = Number(node.dataset.x);
       const y = Number(node.dataset.y);
@@ -11743,6 +11819,7 @@
     function applySharedRealtimeNodePositions(payload) {
       if (!payload || payload.senderId === sharedRealtimeClientId) return;
       if (payload.slug !== SHARED_SPACE_SLUG) return;
+      if (!isSharedRealtimeCollaborativeActive()) return;
       const positions = Array.isArray(payload.positions) ? payload.positions : [];
       if (positions.length === 0 || hasActiveSharedLocalEdits()) return;
       latestSharedRealtimePatchAt = Date.now();
@@ -11779,7 +11856,7 @@
     }
 
     function scheduleSharedRealtimeNodeText(node) {
-      if (!sharedRealtimeReady || applyingSharedRealtimeNodeText) return;
+      if (!isSharedRealtimeCollaborativeActive() || applyingSharedRealtimeNodeText) return;
       const patch = getSharedRealtimeTextPatch(node);
       if (!patch || !patch.id) return;
       pendingSharedRealtimeNodeTexts.set(patch.id, patch);
@@ -11789,6 +11866,7 @@
     function applySharedRealtimeNodeTexts(payload) {
       if (!payload || payload.senderId === sharedRealtimeClientId) return;
       if (payload.slug !== SHARED_SPACE_SLUG) return;
+      if (!isSharedRealtimeCollaborativeActive()) return;
       const texts = Array.isArray(payload.texts) ? payload.texts : [];
       if (texts.length === 0 || hasActiveSharedLocalEdits()) return;
       latestSharedRealtimePatchAt = Date.now();
@@ -11835,7 +11913,7 @@
     }
 
     function publishSharedRealtimeNodeCreate(node) {
-      if (!sharedRealtimeReady || !sharedRealtimeChannel || !(node instanceof HTMLElement) || !world.contains(node)) return;
+      if (!isSharedRealtimeCollaborativeActive() || !sharedRealtimeChannel || !(node instanceof HTMLElement) || !world.contains(node)) return;
       const entry = serializeNode(node);
       if (!entry || !entry.id) return;
       void sharedRealtimeChannel.send({
@@ -11855,6 +11933,7 @@
     function applySharedRealtimeNodeCreate(payload) {
       if (!payload || payload.senderId === sharedRealtimeClientId) return;
       if (payload.slug !== SHARED_SPACE_SLUG) return;
+      if (!isSharedRealtimeCollaborativeActive()) return;
       const entry = payload.node && typeof payload.node === "object" ? payload.node : null;
       const id = entry && typeof entry.id === "string" ? entry.id.trim() : "";
       if (!entry || !id || getNodeById(id, { includeDeleted: true })) return;
@@ -11873,7 +11952,7 @@
     }
 
     function publishSharedRealtimeNodeDelete(nodes, deletedAt) {
-      if (!sharedRealtimeReady || !sharedRealtimeChannel) return;
+      if (!isSharedRealtimeCollaborativeActive() || !sharedRealtimeChannel) return;
       const ids = nodes
         .map((node) => node instanceof HTMLElement ? node.dataset.nodeId || "" : "")
         .filter(Boolean);
@@ -11896,6 +11975,7 @@
     function applySharedRealtimeNodeDelete(payload) {
       if (!payload || payload.senderId === sharedRealtimeClientId) return;
       if (payload.slug !== SHARED_SPACE_SLUG) return;
+      if (!isSharedRealtimeCollaborativeActive()) return;
       const ids = Array.isArray(payload.ids) ? payload.ids : [];
       const nodes = ids
         .map((id) => getNodeById(String(id || "")))
@@ -11916,7 +11996,7 @@
 
     function flushSharedRealtimePointer() {
       sharedRealtimePointerFrame = null;
-      if (!sharedRealtimeReady || !sharedRealtimeChannel || !pendingSharedRealtimePointer) return;
+      if (!isSharedRealtimeCollaborativeActive() || !sharedRealtimeChannel || !pendingSharedRealtimePointer) return;
       const point = pendingSharedRealtimePointer;
       pendingSharedRealtimePointer = null;
       void sharedRealtimeChannel.send({
@@ -11939,7 +12019,7 @@
     }
 
     function scheduleSharedRealtimePointer(event) {
-      if (!sharedRealtimeReady || !SHARED_SPACE_SLUG || document.hidden) return;
+      if (!isSharedRealtimeCollaborativeActive() || !SHARED_SPACE_SLUG || document.hidden) return;
       if (!event || !Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) return;
       pendingSharedRealtimePointer = screenToWorld(event.clientX, event.clientY);
       if (sharedRealtimePointerFrame !== null) return;
@@ -11949,6 +12029,7 @@
     function applySharedRealtimePointer(payload) {
       if (!payload || payload.senderId === sharedRealtimeClientId) return;
       if (payload.slug !== SHARED_SPACE_SLUG) return;
+      if (!isSharedRealtimeCollaborativeActive()) return;
       const x = Number(payload.x);
       const y = Number(payload.y);
       if (!Number.isFinite(x) || !Number.isFinite(y)) return;
