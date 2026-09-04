@@ -1531,7 +1531,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 187; // Increment once for each commit.
+    const APP_VERSION = 188; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -8745,15 +8745,43 @@
       }
     }
 
+    function getNodeRenderLayoutCacheKey(node) {
+      if (!(node instanceof HTMLElement)) return "";
+      return [
+        node.dataset.nodeId || "",
+        node.dataset.baseFontSize || "",
+        node.dataset.viewMode || "",
+        node.dataset.htmlViewWidth || "",
+        node.dataset.htmlViewHeight || "",
+        node.dataset.commandId || "",
+        node.dataset.commandVersion || "",
+        node.classList.contains("variable-node") ? "variable" : "",
+        node.classList.contains("external-link-card") ? "external-link" : "",
+        node.textContent || "",
+        node.innerHTML || ""
+      ].join("|");
+    }
+
+    function getCachedNodeRenderWorldSize(node) {
+      if (!(node instanceof HTMLElement)) return null;
+      const width = Number(node.dataset.renderCullWorldWidth);
+      const height = Number(node.dataset.renderCullWorldHeight);
+      if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+      return { width, height };
+    }
+
     function cacheNodeRenderCullSize(node, screenScale) {
       if (!(node instanceof HTMLElement) || isFloatingNode(node)) return;
       if (!world.contains(node)) return;
+      const cacheKey = getNodeRenderLayoutCacheKey(node);
+      if (node.dataset.renderLayoutCacheKey === cacheKey && getCachedNodeRenderWorldSize(node)) return;
       const scale = Number.isFinite(screenScale) && screenScale > 0 ? screenScale : 1;
       const cameraScale = getCameraScale();
       const screenWidth = Math.max(node.scrollWidth, node.offsetWidth, 1) * scale;
       const screenHeight = Math.max(node.scrollHeight, node.offsetHeight, 1) * scale;
       node.dataset.renderCullWorldWidth = String(screenWidth / cameraScale);
       node.dataset.renderCullWorldHeight = String(screenHeight / cameraScale);
+      node.dataset.renderLayoutCacheKey = cacheKey;
     }
 
     function shouldRenderNodeInCullRect(node, cullRect) {
@@ -8836,13 +8864,9 @@
 
     function getNodeTransform(node, rotation, scale) {
       const baseScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
-      const centerX = Math.max(node.offsetWidth, 1) * baseScale * 0.5;
-      const centerY = Math.max(node.offsetHeight, 1) * baseScale * 0.5;
       return [
         `rotate(${rotation}rad)`,
-        `translate(${centerX}px, ${centerY}px)`,
         "scale(var(--float-transition-scale, 1))",
-        `translate(${-centerX}px, ${-centerY}px)`,
         `scale(${baseScale})`
       ].join(" ");
     }
