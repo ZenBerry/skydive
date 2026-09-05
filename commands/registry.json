@@ -19,6 +19,22 @@
       }
     },
     {
+      "id": "count",
+      "version": "1.0.0",
+      "title": "Count",
+      "description": "Count literal text occurrences in this space.",
+      "aliases": ["occurrences", "matches"],
+      "acceptsArgs": true,
+      "source": "static",
+      "dynamicExecutable": false,
+      "stateSchema": {
+        "type": "object",
+        "properties": {
+          "input": { "type": "string" }
+        }
+      }
+    },
+    {
       "id": "timer",
       "version": "1.0.2",
       "title": "Timer",

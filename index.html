@@ -1426,6 +1426,7 @@
   <script src="https://unpkg.com/wavesurfer.js@7.7.3/dist/wavesurfer.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js"></script>
   <script src="/commands/stw.js"></script>
+  <script src="/commands/count.js"></script>
   <script src="/commands/timer.js"></script>
   <script src="/commands/file.js"></script>
   <script src="/commands/rec.js"></script>
@@ -1738,6 +1739,8 @@
     let sharedRealtimePointerFrame = null;
     let userSpacesSyncTimer = null;
     let userSpacesSyncInFlight = false;
+    let spaceTextVersion = 0;
+    let spaceTextCommandRefreshFrame = null;
     let slashCommandSession = null;
     let slashCommandSelectedIndex = 0;
     const lazyCommandLoads = new Map();
@@ -5053,6 +5056,7 @@
       if (changed) {
         requestLineRender();
         refreshSelectionBounds();
+        markSpaceTextChanged();
         updateDocumentTitle();
       }
       return changed;
@@ -5213,6 +5217,7 @@
 
       refreshSelectionBounds();
       renderLineConnections();
+      markSpaceTextChanged();
       updateDocumentTitle();
       if (options.autosave !== false) scheduleAutosave();
       if (!options.suppressRealtime && !applyingSharedRealtimeNodeStructure) {
@@ -7054,6 +7059,31 @@
       return new URL(getSpacePathFromSlug(slug), window.location.origin).href;
     }
 
+    function getSpaceTextSnapshot() {
+      return Array.from(world.children)
+        .filter((node) =>
+          node instanceof HTMLElement &&
+          !isCommandNode(node) &&
+          !isNodeDeleted(node)
+        )
+        .map((node) => node.textContent || "")
+        .join("\n");
+    }
+
+    function refreshSpaceTextCommandFrames() {
+      spaceTextCommandRefreshFrame = null;
+      for (const node of world.children) {
+        if (!(node instanceof HTMLElement) || !isCommandNode(node) || isNodeDeleted(node)) continue;
+        notifyCommandNodeRendered(node, getNodeRenderMetrics(node));
+      }
+    }
+
+    function markSpaceTextChanged() {
+      spaceTextVersion += 1;
+      if (spaceTextCommandRefreshFrame !== null) return;
+      spaceTextCommandRefreshFrame = requestAnimationFrame(refreshSpaceTextCommandFrames);
+    }
+
     async function loadSharedSpaceState(slug) {
       const data = await requestSharedSpace({ slug });
       return data && data.state ? data.state : { version: 1, nodes: [], lines: [] };
@@ -7147,6 +7177,8 @@
         createDeloreanSpace,
         uploadFile: uploadFileToCloudinary,
         createUploadedFileState,
+        getSpaceText: getSpaceTextSnapshot,
+        getSpaceTextVersion: () => spaceTextVersion,
         openSpace(slug) {
           window.location.assign(getSpacePathFromSlug(slug));
         }
@@ -7393,18 +7425,24 @@
       };
     }
 
-    function getMatchingCommands(query) {
+    function getMatchingCommands(query, options = {}) {
       const normalized = (query || "").toLowerCase();
-      return getRegisteredCommands().filter((command) => {
+      const exactOnly = options.exactOnly === true;
+      return getRegisteredCommands().map((command, index) => {
         if (!command || !command.id) return false;
-        const fields = [
+        const names = [
           command.id,
-          command.title,
-          command.description,
           ...(Array.isArray(command.aliases) ? command.aliases : [])
         ].filter(Boolean).map((value) => String(value).toLowerCase());
-        return fields.some((field) => field.includes(normalized));
-      });
+        const exactName = names.some((name) => name === normalized);
+        const nameMatch = exactOnly
+          ? exactName
+          : names.some((name) => name.includes(normalized));
+        return nameMatch ? { command, index, rank: exactName ? 0 : 1 } : null;
+      })
+        .filter(Boolean)
+        .sort((a, b) => a.rank - b.rank || a.index - b.index)
+        .map((entry) => entry.command);
     }
 
     function closeSlashCommandMenu() {
@@ -7466,7 +7504,7 @@
         return;
       }
 
-      const commands = getMatchingCommands(query.query).filter((command) => {
+      const commands = getMatchingCommands(query.query, { exactOnly: query.hasArgs }).filter((command) => {
         return !query.hasArgs || Boolean(command.acceptsArgs);
       });
       if (commands.length === 0) {
@@ -8917,7 +8955,9 @@
         command.renderFrame(node, {
           cameraScale: metrics.cameraScale,
           screenScale: metrics.screenScale,
-          layoutFontPx: metrics.layoutFontPx
+          layoutFontPx: metrics.layoutFontPx,
+          spaceTextVersion,
+          getSpaceText: getSpaceTextSnapshot
         });
       } catch (error) {
         console.error("Command renderFrame failed:", error);
@@ -9615,6 +9655,7 @@
 
       loadLineConnections(nextLines);
       updateDocumentTitle();
+      markSpaceTextChanged();
 
       if (nextNodes.length === 0 && reportProgress) reportProgress(1);
 
@@ -9697,6 +9738,7 @@
 
         loadLineConnections(nextLines, { onProgress: reportLines });
         updateDocumentTitle();
+        markSpaceTextChanged();
         await waitForLoadingFrame();
 
         if (reportRender) reportRender(0.4);
@@ -10199,6 +10241,7 @@
         }
         updateCalcVariables();
         updateDocumentTitle();
+        markSpaceTextChanged();
         scheduleSharedRealtimeNodeText(node);
         scheduleAutosave();
         updateSlashMenuForNode(node);
@@ -10217,6 +10260,7 @@
           node.dataset.markdownSource = node.textContent || "";
           updateCalcVariables();
           updateDocumentTitle();
+          markSpaceTextChanged();
           scheduleSharedRealtimeNodeText(node);
           scheduleAutosave();
           updateSlashMenuForNode(node);
@@ -10226,6 +10270,7 @@
         autoLinkExternalUrls(node, { force: true, moveCaretToEnd: true });
         updateCalcVariables();
         updateDocumentTitle();
+        markSpaceTextChanged();
         scheduleSharedRealtimeNodeText(node);
         scheduleAutosave();
         updateSlashMenuForNode(node);
@@ -10243,6 +10288,7 @@
         updateCalcVariables();
         closeSlashCommandMenu();
         updateDocumentTitle();
+        markSpaceTextChanged();
         scheduleAutosave();
       });
 
@@ -10341,6 +10387,7 @@
       world.appendChild(node);
       registerNode(node);
       if (!isNodeDeleted(node)) observeNodeForLines(node);
+      if (!isNodeDeleted(node)) markSpaceTextChanged();
       if (options.autosave !== false) scheduleAutosave();
       if (!options.suppressRealtime && !applyingSharedRealtimeNodeStructure) {
         publishSharedRealtimeNodeCreate(node);
@@ -10509,6 +10556,7 @@
       node.remove();
       refreshSelectionBounds();
       renderLineConnections();
+      markSpaceTextChanged();
       updateDocumentTitle();
       return true;
     }
@@ -11928,6 +11976,7 @@
           renderNode(node);
         }
         updateCalcVariables();
+        markSpaceTextChanged();
         updateDocumentTitle();
         refreshSelectionBounds();
         requestLineRender();

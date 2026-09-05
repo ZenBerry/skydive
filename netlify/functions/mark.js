@@ -352,6 +352,12 @@ function quotedText(value) {
   return match ? match[1].trim() : "";
 }
 
+function commandArgsText(commandId, value) {
+  const id = String(commandId || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = String(value || "").match(new RegExp(`(?:^|\\s)/${id}\\s+([^\\n]{1,4000})`, "i"));
+  return match ? match[1].trim() : quotedText(value);
+}
+
 function cleanSpaceSlug(value) {
   const slug = String(value || "").trim().replace(/^\/+/, "").replace(/\/+$/, "");
   return slug && slug.length <= 500 && !slug.includes("//") ? slug : "";
@@ -459,6 +465,7 @@ function defaultCommandState(commandId, text) {
   if (commandId === "timer") return { durationMs: 0, remainingMs: 0, running: false, startedAt: null, completed: false, completedAt: null, alarmed: false, input: quotedText(text) };
   if (commandId === "today") return {};
   if (commandId === "days" || commandId === "business-days") return { input: quotedText(text), editing: false };
+  if (commandId === "count") return { input: commandArgsText(commandId, text) };
   if (commandId === "delorean") return { status: "idle", input: quotedText(text), durationMs: 0, label: "", createdAt: Date.now(), targetAt: null, targetSlug: "", targetUrl: "", sourceSlug: "", error: "" };
   return {};
 }
