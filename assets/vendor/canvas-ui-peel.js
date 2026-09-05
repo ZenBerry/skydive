@@ -79,6 +79,7 @@ in float vShade;
 in vec2 vSide;
 out vec4 outColor;
 uniform sampler2D uContent;
+uniform float uClip;
 uniform float uShade;
 uniform float uMaxX;
 uniform float uShine;
@@ -88,6 +89,7 @@ uniform float uSpan;
 uniform vec2 uPointer;
 
 void main () {
+  if (vSide.x > uClip) discard;
   vec2 uv = clamp(vUv, vec2(0.001), vec2(uMaxX - 0.001, 0.999));
   vec4 tex = texture(uContent, uv);
   float sh = 1.0 - clamp(uShade, 0.0, 1.0) * 0.7 * pow(max(vShade, 0.0), 1.3);
@@ -160,7 +162,7 @@ export function createPeel(output) {
         gl.useProgram(program); gl.bindVertexArray(vao);
         gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,texture);
         gl.uniform1i(uniforms.uContent,0); gl.uniform2f(uniforms.uRes,width,height);
-        const values={uSide:side,uPeel:progress,uReveal:width*1.25,uCurl:width*.12,uBow:height*.025,uFocal:Math.max(1800,width*3),uZone:width,uBulge:0,uShade:.28,uShine:.1,uCross:height,uSpan:width,uMaxX:1};
+        const values={uSide:side,uPeel:progress,uReveal:width*1.25,uCurl:width*.12,uClip:progress*(width*1.37),uBow:height*.025,uFocal:Math.max(1800,width*3),uZone:width,uBulge:0,uShade:.28,uShine:.1,uCross:height,uSpan:width,uMaxX:1};
         for(const [name,value] of Object.entries(values)) gl.uniform1f(uniforms[name],value);
         gl.uniform3f(uniforms.uShineColor,1,1,1); gl.uniform2f(uniforms.uPointer,0,height*.55);
         gl.drawElements(gl.TRIANGLES,indices.length,gl.UNSIGNED_INT,0);

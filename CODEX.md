@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-09-05: Fixed the reader page-turn start by holding the old page in a static cover while the next page commits underneath, and clipping the WebGL peel to the curling strip so text no longer jumps before the animation. Bumped `APP_VERSION` to 192.
+
 - 2026-09-05: Made Canvas UI Peel the primary reader animation with visible-chapter capture and the previous CSS turn as fallback. Verified real book 2, reverse turns, selection safety, and forced GPU/capture failures. Bumped `APP_VERSION` to 191.
 
 - 2026-09-05: Paginated `/book` with line-safe CSS columns, reader-only paper turns, margin-only swipes, selection-safe arrow navigation, equal-width Mark, and character-anchor position restoration. Preserved translucent highlight colors in the session API. Bumped `APP_VERSION` to 190.

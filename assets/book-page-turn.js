@@ -21,9 +21,6 @@ function captureSurface(page) {
   const stride=parseFloat(getComputedStyle(flow).columnWidth)+48;
   const column=Math.max(0,Math.floor((first.left-flowBox.left+1)/stride));
   const leading=column*parseFloat(getComputedStyle(flow).height)+first.top-flowBox.top;
-  // Keep the visible chapters at precisely their original column/line positions.
-  // An empty fragmented spacer replaces earlier chapters, avoiding a whole-book
-  // clone on every turn. The live DOM and its selection ranges are never moved.
   const host=document.createElement('div');
   host.setAttribute('aria-hidden','true'); host.inert=true;
   Object.assign(host.style,{position:'fixed',left:'-100000px',top:'0',width:`${box.width}px`,height:`${box.height}px`,pointerEvents:'none'});
@@ -73,10 +70,25 @@ function bounded(promise, ms) {
   let timer;
   return Promise.race([promise,new Promise(resolve => { timer=setTimeout(() => resolve(null),ms); })]).finally(() => clearTimeout(timer));
 }
+function createStaticPageCover(page,box,wrap) {
+  const cover=page.cloneNode(true);
+  cover.setAttribute('aria-hidden','true'); cover.inert=true;
+  Object.assign(cover.style,{
+    position:'absolute',left:`${box.left-wrap.left}px`,top:`${box.top-wrap.top}px`,
+    width:`${box.width}px`,height:`${box.height}px`,margin:'0',pointerEvents:'none',
+    zIndex:'1',clipPath:'inset(0 0 0 0)',userSelect:'none'
+  });
+  return cover;
+}
+function setStaticPageCoverProgress(cover,direction,progress) {
+  const amount=`${Math.min(100,Math.max(0,progress*100)).toFixed(3)}%`;
+  cover.style.clipPath=direction>0?`inset(0 ${amount} 0 0)`:`inset(0 0 0 ${amount})`;
+}
 export async function turnPage(page,direction,commit) {
   if(reducedMotion()) { commit(); return; }
   const state=stateFor(page), revision=state.revision;
   let committed=false;
+  let cover=null;
   state.inTurn=true;
   clearTimeout(state.timer);
   try {
@@ -92,7 +104,8 @@ export async function turnPage(page,direction,commit) {
     Object.assign(output.style,{position:'absolute',left:`${box.left-wrap.left}px`,top:`${box.top-wrap.top}px`,width:`${box.width}px`,height:`${box.height}px`,pointerEvents:'none',zIndex:'2'});
     state.renderer.setPage(snapshot,box.width,box.height,direction);
     state.renderer.render(0);
-    page.parentElement.append(output);
+    cover=createStaticPageCover(page,box,wrap);
+    page.parentElement.append(cover,output);
     commit(); committed=true;
     await new Promise((resolve,reject) => {
       const start=performance.now();
@@ -100,7 +113,9 @@ export async function turnPage(page,direction,commit) {
         try {
           const resized=Math.abs(page.clientWidth-box.width)>1 || Math.abs(page.clientHeight-box.height)>1;
           const t=document.hidden || reducedMotion() || resized?1:Math.min(1,(now-start)/620);
-          state.renderer.render(t*t*(3-2*t));
+          const eased=t*t*(3-2*t);
+          setStaticPageCoverProgress(cover,direction,eased*1.37);
+          state.renderer.render(eased);
           if(t<1) requestAnimationFrame(frame); else resolve();
         } catch(error) { reject(error); }
       }
@@ -111,6 +126,7 @@ export async function turnPage(page,direction,commit) {
     state.renderer?.destroy(); state.renderer=null; state.output=null;
     if(!committed) await fallbackTurn(page,direction,commit);
   } finally {
+    cover?.remove();
     state.output?.remove();
     state.inTurn=false;
     preparePage(page);
