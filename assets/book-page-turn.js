@@ -7,10 +7,11 @@ let fontCSS;
 const pages = new WeakMap();
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 function stateFor(page) {
-  if (!pages.has(page)) pages.set(page,{revision:0, snapshot:null, timer:0, renderer:null, output:null});
+  if (!pages.has(page)) pages.set(page,{revision:0, snapshot:null, coverSnapshot:null, timer:0, renderer:null, output:null});
   return pages.get(page);
 }
-function captureSurface(page) {
+function captureSurface(page,exact=false) {
+  if(exact) return {surface:page,remove:()=>{}};
   const box=page.getBoundingClientRect();
   const flow=page.querySelector('#book-flow');
   const chapters=flow ? Array.from(flow.children) : [];
@@ -38,13 +39,13 @@ function captureSurface(page) {
   surface.append(copy); host.append(surface); document.body.append(host);
   return {surface,remove:()=>host.remove()};
 }
-async function capture(page) {
+async function capture(page,options={}) {
   captureLibrary ||= import('./vendor/html-to-image.js').then(() => globalThis.htmlToImage);
   const library=await captureLibrary;
   // Embed the same fonts once; the SVG capture must not substitute different metrics.
   fontCSS ||= library.getFontEmbedCSS(page, {preferredFontFormat:'woff2'}).catch(() => '');
   const fonts=await fontCSS;
-  const {surface,remove}=captureSurface(page);
+  const {surface,remove}=captureSurface(page,options.exact===true);
   try {
     return await library.toCanvas(surface, {
       width:parseFloat(getComputedStyle(page).width), height:parseFloat(getComputedStyle(page).height),
@@ -57,26 +58,38 @@ function snapshotFor(page, state) {
   if (!state.snapshot) state.snapshot=capture(page).catch(() => null);
   return state.snapshot;
 }
+function coverSnapshotFor(page, state) {
+  if (!state.coverSnapshot) state.coverSnapshot=capture(page,{exact:true}).catch(() => null);
+  return state.coverSnapshot;
+}
 export function preparePage(page) {
   const state=stateFor(page);
   state.revision++;
   state.snapshot=null;
+  state.coverSnapshot=null;
   clearTimeout(state.timer);
   if(reducedMotion() || document.hidden || state.inTurn) return;
   // One bounded preparation after a page/layout/highlight change; no polling.
-  state.timer=setTimeout(() => { if (!document.hidden) void snapshotFor(page,state); },120);
+  state.timer=setTimeout(() => {
+    if (document.hidden) return;
+    void snapshotFor(page,state);
+    void coverSnapshotFor(page,state);
+  },120);
 }
 function bounded(promise, ms) {
   let timer;
   return Promise.race([promise,new Promise(resolve => { timer=setTimeout(() => resolve(null),ms); })]).finally(() => clearTimeout(timer));
 }
-function createStaticPageCover(page,box,wrap) {
-  const cover=page.cloneNode(true);
-  cover.setAttribute('aria-hidden','true'); cover.inert=true;
+function createStaticPageCover(snapshot,box,wrap) {
+  const cover=document.createElement('canvas');
+  cover.width=snapshot.width; cover.height=snapshot.height;
+  cover.getContext('2d')?.drawImage(snapshot,0,0);
+  cover.setAttribute('aria-hidden','true');
   Object.assign(cover.style,{
     position:'absolute',left:`${box.left-wrap.left}px`,top:`${box.top-wrap.top}px`,
     width:`${box.width}px`,height:`${box.height}px`,margin:'0',pointerEvents:'none',
-    zIndex:'1',clipPath:'inset(0 0 0 0)',userSelect:'none'
+    zIndex:'1',clipPath:'inset(0 0 0 0)',userSelect:'none',willChange:'clip-path',
+    contain:'strict'
   });
   return cover;
 }
@@ -92,8 +105,11 @@ export async function turnPage(page,direction,commit) {
   state.inTurn=true;
   clearTimeout(state.timer);
   try {
-    const snapshot=await bounded(snapshotFor(page,state),1000);
-    if(!snapshot || revision!==state.revision) throw new Error('Page capture unavailable');
+    const [snapshot,coverSnapshot]=await Promise.all([
+      bounded(snapshotFor(page,state),1000),
+      bounded(coverSnapshotFor(page,state),1000)
+    ]);
+    if(!snapshot || !coverSnapshot || revision!==state.revision) throw new Error('Page capture unavailable');
     if(!state.renderer) {
       const output=document.createElement('canvas');
       output.setAttribute('aria-hidden','true'); output.dataset.bookPeel='';
@@ -104,7 +120,7 @@ export async function turnPage(page,direction,commit) {
     Object.assign(output.style,{position:'absolute',left:`${box.left-wrap.left}px`,top:`${box.top-wrap.top}px`,width:`${box.width}px`,height:`${box.height}px`,pointerEvents:'none',zIndex:'2'});
     state.renderer.setPage(snapshot,box.width,box.height,direction);
     state.renderer.render(0);
-    cover=createStaticPageCover(page,box,wrap);
+    cover=createStaticPageCover(coverSnapshot,box,wrap);
     page.parentElement.append(cover,output);
     commit(); committed=true;
     await new Promise((resolve,reject) => {
