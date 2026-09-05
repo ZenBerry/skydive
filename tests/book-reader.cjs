@@ -33,7 +33,7 @@ sys.stdout.buffer.write(b.getvalue())
   if(url.pathname === '/fixture.epub') return route.fulfill({body: epub, contentType: 'application/epub+zip'});
   if(url.pathname === '/mark') return route.fulfill({body: '<html><body>Mark test frame</body></html>', contentType:'text/html'});
   const file = url.pathname.startsWith('/book') ? 'book.html' : url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
-  if (!['book.html','index.html','assets/book-page-turn.js','assets/disable-native-zoom.js'].includes(file)) return route.abort();
+  if (!['book.html','index.html','assets/book-page-turn.js','assets/book-page-turn-fallback.js','assets/disable-native-zoom.js'].includes(file) && !file.startsWith('assets/vendor/')) return route.abort();
   return route.fulfill({body: fs.readFileSync(path.join(root, file)), contentType: file.endsWith('.html') ? 'text/html' : 'text/javascript'});
  });
  const page = await context.newPage(); page.on('pageerror', e => errors.push(e.message));
@@ -69,7 +69,10 @@ sys.stdout.buffer.write(b.getvalue())
   assert.equal(coverage.actual, coverage.expected, 'Pagination must neither skip nor duplicate text');
  };
  await checkCoverage();
- await page.locator('#next').click(); await ready(); assert.equal((await state()).index, 1);
+ await page.waitForTimeout(400);
+ await page.locator('#next').click();
+ await page.locator('[data-book-peel]').waitFor({state:'attached',timeout:2500});
+ await ready(); assert.equal((await state()).index, 1);
  await page.keyboard.press('ArrowRight'); await ready(); assert.equal((await state()).index, 2);
  await page.waitForTimeout(600); assert.equal(saves.at(-1).position.pageIndex, 2); assert.ok(saves.at(-1).position.textOffset > 0);
  const saved = (await state()).offset;
@@ -109,7 +112,25 @@ sys.stdout.buffer.write(b.getvalue())
  assert.deepEqual(errors, []);
  const marker = requests.length;
  await page.goto('http://reader.test/'); await page.waitForTimeout(200);
- assert.equal(requests.slice(marker).includes('/assets/book-page-turn.js'), false);
+ assert.equal(requests.slice(marker).some(url => /book-page-turn|vendor\/(canvas-ui-peel|html-to-image)/.test(url)), false);
+ // Both unsupported GPU and failed DOM capture retain the previous CSS turn.
+ for (const failure of ['gpu','capture']) {
+  const fallback = await context.newPage();
+  if (failure === 'gpu') await fallback.addInitScript(() => {
+   const getContext=HTMLCanvasElement.prototype.getContext;
+   HTMLCanvasElement.prototype.getContext=function(type,...args) { return type==='webgl2'?null:getContext.call(this,type,...args); };
+  });
+  else await fallback.route('**/vendor/html-to-image.js', route => route.abort());
+  await fallback.goto('http://reader.test/book/1');
+  await fallback.waitForFunction(() => bookReady && pageCount>5);
+  const before = await fallback.evaluate(() => pageIndex);
+  await fallback.locator('#next').click();
+  await fallback.waitForFunction(() => pageElement.getAnimations().length>0);
+  await fallback.waitForFunction(() => !turning);
+  assert.equal(await fallback.evaluate(() => pageIndex),before+1);
+  assert.equal(await fallback.locator('[data-book-peel]').count(),0);
+  await fallback.close();
+ }
  await context.close(); await browser.close();
  console.log('PASS: line bounds, controls, selection, margin swipe, wheel, highlights, saved position, resize, mobile, reduced motion, lazy loading');
 })().catch(error => {console.error(error); process.exit(1);});

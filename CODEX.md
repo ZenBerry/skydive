@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-09-05: Made Canvas UI Peel the primary reader animation with visible-chapter capture and the previous CSS turn as fallback. Verified real book 2, reverse turns, selection safety, and forced GPU/capture failures. Bumped `APP_VERSION` to 191.
+
 - 2026-09-05: Paginated `/book` with line-safe CSS columns, reader-only paper turns, margin-only swipes, selection-safe arrow navigation, equal-width Mark, and character-anchor position restoration. Preserved translucent highlight colors in the session API. Bumped `APP_VERSION` to 190.
 
 - 2026-08-31: Restored `/rec` WaveSurfer loading to the direct known-good container path, moved freeze-and-scale behavior to after waveform readiness, disconnected post-ready WaveSurfer resize redraws, and added a bounded load watchdog so stuck long-file renders retry or fall back honestly. Bumped `APP_VERSION` to 170 and `rec` to 1.0.11.

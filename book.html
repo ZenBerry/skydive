@@ -101,6 +101,7 @@
       grid-template-rows: minmax(0, 1fr);
       grid-template-columns: minmax(0, 1fr);
       perspective: 1800px;
+      position: relative;
       touch-action: none;
       padding: clamp(18px, 4vw, 54px);
     }
@@ -1134,6 +1135,7 @@
       };
       highlights = [...highlights, highlight].slice(-500);
       applySavedHighlights();
+      void pageTurn.then(effect => effect?.preparePage?.(pageElement));
       if (selection) selection.removeAllRanges();
       lastSelectionRange = null;
       hideMenu();
@@ -1207,6 +1209,7 @@
       statusElement.textContent = pageCount ? `${pageIndex + 1} / ${pageCount}` : "";
       prevButton.disabled = pageIndex <= 0;
       nextButton.disabled = pageIndex >= pageCount - 1;
+      if (bookReady) void pageTurn.then(effect => effect?.preparePage?.(pageElement));
     }
 
     async function movePage(delta) {

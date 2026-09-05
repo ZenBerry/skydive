@@ -1,40 +1,118 @@
-// Reader-only: imported by book.html, never by the canvas or command loader.
-// Animate the live paper so selection, EPUB styles and highlights stay intact.
-export async function turnPage(page, direction, commit) {
-  if (matchMedia("(prefers-reduced-motion: reduce)").matches || !page.animate) {
-    commit();
-    return;
+// All imports belong exclusively to /book. The canvas never requests these files.
+import { createPeel } from './vendor/canvas-ui-peel.js';
+import { turnPage as fallbackTurn } from './book-page-turn-fallback.js';
+
+let captureLibrary;
+let fontCSS;
+const pages = new WeakMap();
+const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+function stateFor(page) {
+  if (!pages.has(page)) pages.set(page,{revision:0, snapshot:null, timer:0, renderer:null, output:null});
+  return pages.get(page);
+}
+function captureSurface(page) {
+  const box=page.getBoundingClientRect();
+  const flow=page.querySelector('#book-flow');
+  const chapters=flow ? Array.from(flow.children) : [];
+  const visible=chapters.filter(chapter => Array.from(chapter.getClientRects()).some(r =>
+    r.right>box.left && r.left<box.right && r.bottom>box.top && r.top<box.bottom));
+  if(!flow || !visible.length) return {surface:page,remove:()=>{}};
+  const flowBox=flow.getBoundingClientRect(), first=visible[0].getClientRects()[0];
+  const stride=parseFloat(getComputedStyle(flow).columnWidth)+48;
+  const column=Math.max(0,Math.floor((first.left-flowBox.left+1)/stride));
+  const leading=column*parseFloat(getComputedStyle(flow).height)+first.top-flowBox.top;
+  // Keep the visible chapters at precisely their original column/line positions.
+  // An empty fragmented spacer replaces earlier chapters, avoiding a whole-book
+  // clone on every turn. The live DOM and its selection ranges are never moved.
+  const host=document.createElement('div');
+  host.setAttribute('aria-hidden','true'); host.inert=true;
+  Object.assign(host.style,{position:'fixed',left:'-100000px',top:'0',width:`${box.width}px`,height:`${box.height}px`,pointerEvents:'none'});
+  const surface=page.cloneNode(false), copy=flow.cloneNode(false);
+  Object.assign(surface.style,{width:`${box.width}px`,height:`${box.height}px`});
+  const spacer=document.createElement('div');
+  Object.assign(spacer.style,{height:`${Math.max(0,leading)}px`,margin:'0',padding:'0',breakInside:'auto'});
+  copy.append(spacer);
+  for(const chapter of visible) {
+    const clone=chapter.cloneNode(true);
+    clone.querySelectorAll('style').forEach(node=>{ node.textContent=''; });
+    clone.querySelectorAll('script').forEach(node=>node.remove());
+    copy.append(clone);
   }
-  const forward = direction > 0;
-  const oldOrigin = page.style.transformOrigin;
-  const oldEvents = page.style.pointerEvents;
-  page.style.transformOrigin = forward ? "left center" : "right center";
-  page.style.pointerEvents = "none";
-  const fold = forward ? -1 : 1;
-  let animation;
-  let committed = false;
+  surface.append(copy); host.append(surface); document.body.append(host);
+  return {surface,remove:()=>host.remove()};
+}
+async function capture(page) {
+  captureLibrary ||= import('./vendor/html-to-image.js').then(() => globalThis.htmlToImage);
+  const library=await captureLibrary;
+  // Embed the same fonts once; the SVG capture must not substitute different metrics.
+  fontCSS ||= library.getFontEmbedCSS(page, {preferredFontFormat:'woff2'}).catch(() => '');
+  const fonts=await fontCSS;
+  const {surface,remove}=captureSurface(page);
   try {
-    animation = page.animate([
-      { transform: "rotateY(0deg) skewY(0deg)", filter: "brightness(1)", boxShadow: "0 0 0 #0000" },
-      { transform: `rotateY(${fold * 38}deg) skewY(${fold * 2}deg)`, filter: "brightness(.97)", boxShadow: `${-fold * 16}px 6px 24px #0002`, offset: 0.65 },
-      { transform: `rotateY(${fold * 90}deg) skewY(${fold * 5}deg)`, filter: "brightness(.88)", boxShadow: `${-fold * 32}px 8px 32px #0003` }
-    ], { duration: 210, easing: "ease-in", fill: "forwards" });
-    await animation.finished;
-    animation.cancel();
-    commit();
-    committed = true;
-    page.style.transformOrigin = forward ? "right center" : "left center";
-    animation = page.animate([
-      { transform: `rotateY(${-fold * 88}deg) skewY(${-fold * 3}deg)`, filter: "brightness(.9)", boxShadow: `${fold * 24}px 5px 28px #0002` },
-      { transform: `rotateY(${-fold * 20}deg) skewY(${-fold}deg)`, filter: "brightness(.99)", offset: 0.55 },
-      { transform: "rotateY(0deg) skewY(0deg)", filter: "brightness(1)", boxShadow: "0 0 0 #0000" }
-    ], { duration: 250, easing: "ease-out" });
-    await animation.finished;
-  } catch (error) {
-    if (!committed) commit();
+    return await library.toCanvas(surface, {
+      width:parseFloat(getComputedStyle(page).width), height:parseFloat(getComputedStyle(page).height),
+      pixelRatio:Math.min(devicePixelRatio||1,2), backgroundColor:'#fff', fontEmbedCSS:fonts,
+      filter:node => !['STYLE','SCRIPT'].includes(node.tagName)
+    });
+  } finally { remove(); }
+}
+function snapshotFor(page, state) {
+  if (!state.snapshot) state.snapshot=capture(page).catch(() => null);
+  return state.snapshot;
+}
+export function preparePage(page) {
+  const state=stateFor(page);
+  state.revision++;
+  state.snapshot=null;
+  clearTimeout(state.timer);
+  if(reducedMotion() || document.hidden || state.inTurn) return;
+  // One bounded preparation after a page/layout/highlight change; no polling.
+  state.timer=setTimeout(() => { if (!document.hidden) void snapshotFor(page,state); },120);
+}
+function bounded(promise, ms) {
+  let timer;
+  return Promise.race([promise,new Promise(resolve => { timer=setTimeout(() => resolve(null),ms); })]).finally(() => clearTimeout(timer));
+}
+export async function turnPage(page,direction,commit) {
+  if(reducedMotion()) { commit(); return; }
+  const state=stateFor(page), revision=state.revision;
+  let committed=false;
+  state.inTurn=true;
+  clearTimeout(state.timer);
+  try {
+    const snapshot=await bounded(snapshotFor(page,state),1000);
+    if(!snapshot || revision!==state.revision) throw new Error('Page capture unavailable');
+    if(!state.renderer) {
+      const output=document.createElement('canvas');
+      output.setAttribute('aria-hidden','true'); output.dataset.bookPeel='';
+      state.renderer=createPeel(output); state.output=output;
+    }
+    const box=page.getBoundingClientRect(), wrap=page.parentElement.getBoundingClientRect();
+    const output=state.output;
+    Object.assign(output.style,{position:'absolute',left:`${box.left-wrap.left}px`,top:`${box.top-wrap.top}px`,width:`${box.width}px`,height:`${box.height}px`,pointerEvents:'none',zIndex:'2'});
+    state.renderer.setPage(snapshot,box.width,box.height,direction);
+    state.renderer.render(0);
+    page.parentElement.append(output);
+    commit(); committed=true;
+    await new Promise((resolve,reject) => {
+      const start=performance.now();
+      function frame(now) {
+        try {
+          const resized=Math.abs(page.clientWidth-box.width)>1 || Math.abs(page.clientHeight-box.height)>1;
+          const t=document.hidden || reducedMotion() || resized?1:Math.min(1,(now-start)/620);
+          state.renderer.render(t*t*(3-2*t));
+          if(t<1) requestAnimationFrame(frame); else resolve();
+        } catch(error) { reject(error); }
+      }
+      requestAnimationFrame(frame);
+    });
+  } catch(error) {
+    state.output?.remove();
+    state.renderer?.destroy(); state.renderer=null; state.output=null;
+    if(!committed) await fallbackTurn(page,direction,commit);
   } finally {
-    animation?.cancel();
-    page.style.transformOrigin = oldOrigin;
-    page.style.pointerEvents = oldEvents;
+    state.output?.remove();
+    state.inTurn=false;
+    preparePage(page);
   }
 }
