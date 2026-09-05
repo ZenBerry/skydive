@@ -71,6 +71,7 @@ function normalizePosition(value) {
   const pageIndex = Number(value.pageIndex);
   return {
     pageIndex: Number.isInteger(pageIndex) && pageIndex >= 0 ? Math.min(pageIndex, 100000) : 0,
+    textOffset: Number.isInteger(value.textOffset) && value.textOffset >= 0 ? value.textOffset : null,
     progress: Number.isFinite(Number(value.progress)) ? Math.max(0, Math.min(1, Number(value.progress))) : 0,
     updatedAt: Number.isFinite(Number(value.updatedAt)) ? Number(value.updatedAt) : Date.now()
   };
@@ -78,7 +79,7 @@ function normalizePosition(value) {
 
 function normalizeColor(value) {
   const color = String(value || "").trim().toLowerCase();
-  return /^#[0-9a-f]{6}$/.test(color) ? color : "";
+  return /^#(?:[0-9a-f]{6}|[0-9a-f]{8})$/.test(color) ? color : "";
 }
 
 function normalizeHighlights(value) {

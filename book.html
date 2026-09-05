@@ -44,15 +44,16 @@
     #shell {
       height: 100dvh;
       display: grid;
-      grid-template-columns: minmax(320px, 1fr) minmax(320px, 42vw);
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
       background: #fff;
     }
 
     #reader {
       min-width: 0;
+      min-height: 0;
       height: 100dvh;
       display: grid;
-      grid-template-rows: auto 1fr auto;
+      grid-template-rows: auto minmax(0, 1fr) auto;
       border-right: 1px solid #d8d8d8;
       background: linear-gradient(#fbfbfb, #fff 88px);
     }
@@ -97,32 +98,75 @@
       min-height: 0;
       display: grid;
       place-items: center;
+      grid-template-rows: minmax(0, 1fr);
+      grid-template-columns: minmax(0, 1fr);
+      perspective: 1800px;
+      touch-action: none;
       padding: clamp(18px, 4vw, 54px);
     }
 
     #page {
       width: min(640px, 100%);
-      height: min(860px, 100%);
+      height: 100%;
+      max-height: 860px;
+      min-height: 0;
       outline: none;
-      overflow: auto;
+      overflow: clip;
+      position: relative;
+      background: #fff;
+      touch-action: pan-y;
       color: #111;
       font-size: clamp(19px, 2vw, 23px);
       line-height: 1.48;
       user-select: text;
       -webkit-user-select: text;
       contain: layout paint style;
-      scroll-behavior: smooth;
     }
 
     #book-flow {
+      height: calc(100% - 8px);
+      position: relative;
+      top: 4px;
+      column-width: var(--page-width);
+      column-gap: 48px;
+      column-fill: auto;
       orphans: 2;
-      padding-bottom: 1px;
       widows: 2;
-      transition: opacity 160ms ease, transform 180ms ease;
     }
 
-    #book-flow.turning {
-      opacity: 0;
+    /* EPUB rules must not defeat the reader's line-safe fragmentation. */
+    #book-flow .epub-chapter,
+    #book-flow .epub-chapter * {
+      max-width: 100% !important;
+      height: auto !important;
+      min-height: 0 !important;
+      max-height: none !important;
+      overflow: visible !important;
+      position: static !important;
+      transform: none !important;
+      column-span: none !important;
+    }
+
+    #book-flow .epub-chapter p,
+    #book-flow .epub-chapter div,
+    #book-flow .epub-chapter blockquote,
+    #book-flow .epub-chapter li {
+      break-inside: auto !important;
+      orphans: 2;
+      widows: 2;
+    }
+
+    #book-flow .epub-chapter img,
+    #book-flow .epub-chapter svg,
+    #book-flow .epub-chapter video {
+      max-height: var(--page-height) !important;
+      object-fit: contain;
+      break-inside: avoid;
+    }
+
+    #book-flow pre {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
     }
 
     #page::selection,
@@ -360,6 +404,12 @@
     let pageCount = 0;
     let pageIndex = 0;
     let bookProgress = 0;
+    let bookTextOffset = null;
+    let pageStride = 0;
+    let bookReady = false;
+    let turning = false;
+    let paginationPending = false;
+    const pageTurn = import("/assets/book-page-turn.js").catch(() => null);
     let lastSelection = "";
     let lastSelectionRange = null;
     let resizeTimer = 0;
@@ -388,6 +438,7 @@
       const index = Number(value.pageIndex);
       const progress = Number(value.progress);
       return {
+        textOffset: Number.isInteger(value.textOffset) && value.textOffset >= 0 ? value.textOffset : null,
         pageIndex: Number.isInteger(index) && index >= 0 ? index : 0,
         progress: Number.isFinite(progress) && progress >= 0 ? Math.min(progress, 1) : 0
       };
@@ -430,6 +481,7 @@
       const position = normalizePosition(book.position);
       pageIndex = position.pageIndex;
       bookProgress = position.progress;
+      bookTextOffset = position.textOffset;
     }
 
     function normalizeUrl(value) {
@@ -527,14 +579,14 @@
     function sessionPayload() {
       return {
         id: bookId,
-        position: { pageIndex, progress: currentProgress(), updatedAt: Date.now() },
+        position: { pageIndex, progress: currentProgress(), textOffset: bookTextOffset, updatedAt: Date.now() },
         highlights,
         markHistory
       };
     }
 
     async function saveBookSessionNow() {
-      if (!bookId || suppressSessionSave) return;
+      if (!bookId || suppressSessionSave || !bookReady) return;
       try {
         const response = await fetch("/api/books", {
           method: "POST",
@@ -548,7 +600,7 @@
     }
 
     function saveBookSessionOnExit() {
-      if (!bookId || suppressSessionSave) return;
+      if (!bookId || suppressSessionSave || !bookReady) return;
       window.clearTimeout(saveTimer);
       try {
         fetch("/api/books", {
@@ -563,7 +615,7 @@
     }
 
     function queueBookSessionSave() {
-      if (!bookId || suppressSessionSave) return;
+      if (!bookId || suppressSessionSave || !bookReady) return;
       window.clearTimeout(saveTimer);
       saveTimer = window.setTimeout(saveBookSessionNow, 500);
     }
@@ -900,24 +952,73 @@
     }
 
     function recalculatePages() {
-      pageCount = Math.max(1, Math.ceil(pageElement.scrollHeight / Math.max(1, pageElement.clientHeight)));
-      pageIndex = Math.round(pageElement.scrollTop / Math.max(1, pageElement.clientHeight));
+      if (!bookReady) return;
+      if (turning) { paginationPending = true; return; }
+      paginationPending = false;
+      const width = parseFloat(getComputedStyle(pageElement).width);
+      pageStride = width + 48;
+      flowElement.style.setProperty("--page-width", `${width}px`);
+      flowElement.style.setProperty("--page-height", `${Math.max(1, pageElement.clientHeight - 8)}px`);
+      pageCount = Math.max(1, Math.round((flowElement.scrollWidth + 48) / pageStride));
+      if (bookTextOffset !== null) {
+        const range = rangeFromOffsets(bookTextOffset, bookTextOffset + 1);
+        const rect = range && range.getBoundingClientRect();
+        const flowRect = flowElement.getBoundingClientRect();
+        if (rect && rect.width) pageIndex = Math.floor((rect.left - flowRect.left + 1) / pageStride);
+      } else if (bookProgress > 0) {
+        pageIndex = Math.round(bookProgress * (pageCount - 1));
+      }
       pageIndex = Math.max(0, Math.min(pageIndex, pageCount - 1));
       renderPage();
+      rememberPageStart();
     }
 
     function currentProgress() {
-      const maxScroll = Math.max(0, pageElement.scrollHeight - pageElement.clientHeight);
-      return maxScroll ? Math.max(0, Math.min(1, pageElement.scrollTop / maxScroll)) : 0;
+      return pageCount > 1 ? pageIndex / (pageCount - 1) : 0;
     }
 
     function restorePosition() {
-      const maxScroll = Math.max(0, pageElement.scrollHeight - pageElement.clientHeight);
-      const target = bookProgress > 0
-        ? bookProgress * maxScroll
-        : pageIndex * pageElement.clientHeight;
-      pageElement.scrollTop = Math.max(0, Math.min(maxScroll, target));
+      bookReady = true;
       recalculatePages();
+    }
+
+    // Locate exact visible text boundaries without splitting or replacing the DOM.
+    // Saved highlights continue to use the original book-wide character offsets.
+    function visibleTextParts() {
+      const left = flowElement.getBoundingClientRect().left + pageIndex * pageStride;
+      const right = left + pageStride - 48;
+      const parts = [];
+      let offset = 0;
+      for (const node of textNodesInFlow()) {
+        const length = node.length;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        if (Array.from(range.getClientRects()).some(r => r.width && r.right > left && r.left < right)) {
+          const boundary = (edge) => {
+            let low = 0, high = length;
+            while (low < high) {
+              const mid = (low + high) >>> 1;
+              range.setStart(node, mid);
+              range.setEnd(node, mid + 1);
+              const r = range.getBoundingClientRect();
+              if (r.left < edge - 1) low = mid + 1;
+              else high = mid;
+            }
+            return low;
+          };
+          const start = boundary(left);
+          const end = boundary(right);
+          if (end > start) parts.push({ node, start, end, offset: offset + start });
+        }
+        offset += length;
+      }
+      return parts;
+    }
+
+    function rememberPageStart() {
+      const first = visibleTextParts()[0];
+      bookTextOffset = first ? first.offset : null;
+      bookProgress = currentProgress();
     }
 
     function textNodesInFlow() {
@@ -955,7 +1056,7 @@
       let endOffset = 0;
       for (const node of nodes) {
         const nextOffset = offset + node.nodeValue.length;
-        if (!startNode && start >= offset && start <= nextOffset) {
+        if (!startNode && start >= offset && start < nextOffset) {
           startNode = node;
           startOffset = start - offset;
         }
@@ -1095,25 +1196,39 @@
 
       if (!cleanText(flowElement.textContent)) throw new Error("This book has no readable text.");
       applySavedHighlights();
+      await document.fonts.ready;
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       restorePosition();
       sendBookContext();
     }
 
     function renderPage() {
+      flowElement.style.transform = `translateX(${-pageIndex * pageStride}px)`;
       statusElement.textContent = pageCount ? `${pageIndex + 1} / ${pageCount}` : "";
       prevButton.disabled = pageIndex <= 0;
       nextButton.disabled = pageIndex >= pageCount - 1;
     }
 
-    function movePage(delta) {
+    async function movePage(delta) {
+      if (!bookReady || turning) return;
       const nextIndex = Math.max(0, Math.min(pageCount - 1, pageIndex + delta));
       if (nextIndex === pageIndex) return;
-      pageIndex = nextIndex;
+      turning = true;
       hideMenu();
-      pageElement.scrollTo({ top: pageIndex * pageElement.clientHeight, behavior: "smooth" });
-      renderPage();
-      void saveBookSessionNow();
+      const commit = () => {
+        pageIndex = nextIndex;
+        renderPage();
+        rememberPageStart();
+        queueBookSessionSave();
+      };
+      try {
+        const effect = await pageTurn;
+        if (effect) await effect.turnPage(pageElement, delta, commit);
+        else commit();
+      } finally {
+        turning = false;
+        if (paginationPending) recalculatePages();
+      }
     }
 
     function sendBookContext() {
@@ -1124,24 +1239,7 @@
     }
 
     function currentPageText() {
-      const pageRect = pageElement.getBoundingClientRect();
-      const visible = [];
-      const walker = document.createTreeWalker(flowElement, NodeFilter.SHOW_TEXT);
-      while (walker.nextNode()) {
-        const node = walker.currentNode;
-        if (!cleanText(node.nodeValue)) continue;
-        const range = document.createRange();
-        range.selectNodeContents(node);
-        const intersects = Array.from(range.getClientRects()).some((rect) => (
-          rect.right > pageRect.left &&
-          rect.left < pageRect.right &&
-          rect.bottom > pageRect.top &&
-          rect.top < pageRect.bottom
-        ));
-        range.detach();
-        if (intersects) visible.push(node.nodeValue);
-      }
-      return cleanText(visible.join(" ")) || cleanText(pageElement.textContent || "");
+      return cleanText(visibleTextParts().map(({ node, start, end }) => node.data.slice(start, end)).join(" "));
     }
 
     function hideMenu() {
@@ -1195,9 +1293,13 @@
     });
 
     document.addEventListener("keydown", (event) => {
-      if (event.key === "ArrowLeft") movePage(-1);
-      else if (event.key === "ArrowRight") movePage(1);
-      else if (event.key === "Escape") hideMenu();
+      if (event.key === "Escape") return hideMenu();
+      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
+          event.target.closest("input, textarea, select, [contenteditable='true']") || selectedText()) return;
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        event.preventDefault();
+        movePage(event.key === "ArrowLeft" ? -1 : 1);
+      }
     });
 
     markFrame.addEventListener("load", sendBookContext);
@@ -1211,10 +1313,31 @@
       window.clearTimeout(resizeTimer);
       resizeTimer = window.setTimeout(recalculatePages, 140);
     });
-    pageElement.addEventListener("scroll", () => {
-      recalculatePages();
-      queueBookSessionSave();
-    }, { passive: true });
+    // Only gestures STARTING outside the text surface can turn a page.
+    const pageWrap = document.getElementById("page-wrap");
+    let swipe = null;
+    pageWrap.addEventListener("pointerdown", (event) => {
+      if (event.target !== pageWrap || !event.isPrimary || event.button !== 0 || selectedText()) return;
+      swipe = { id: event.pointerId, x: event.clientX, y: event.clientY };
+      pageWrap.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    });
+    pageWrap.addEventListener("pointerup", (event) => {
+      if (!swipe || swipe.id !== event.pointerId) return;
+      const dx = event.clientX - swipe.x;
+      const dy = event.clientY - swipe.y;
+      swipe = null;
+      if (Math.abs(dx) >= 45 && Math.abs(dx) > Math.abs(dy) * 1.5 && !selectedText()) {
+        movePage(dx < 0 ? 1 : -1);
+      }
+    });
+    pageWrap.addEventListener("pointercancel", () => { swipe = null; });
+    pageWrap.addEventListener("lostpointercapture", () => { swipe = null; });
+    new ResizeObserver(() => {
+      window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(recalculatePages, 140);
+    }).observe(pageElement);
+    document.fonts.addEventListener("loadingdone", recalculatePages);
     window.addEventListener("pagehide", saveBookSessionOnExit);
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "hidden") saveBookSessionOnExit();
