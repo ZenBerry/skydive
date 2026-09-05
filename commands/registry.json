@@ -193,6 +193,26 @@
       }
     },
     {
+      "id": "space",
+      "version": "1.0.0",
+      "title": "Space",
+      "description": "Create a child space link.",
+      "aliases": ["new-space"],
+      "acceptsArgs": true,
+      "source": "static",
+      "dynamicExecutable": false,
+      "stateSchema": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string" },
+          "name": { "type": "string" },
+          "targetSlug": { "type": "string" },
+          "targetUrl": { "type": "string" },
+          "error": { "type": "string" }
+        }
+      }
+    },
+    {
       "id": "days",
       "version": "1.0.0",
       "title": "Days Until",
