@@ -1543,7 +1543,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 197; // Increment once for each commit.
+    const APP_VERSION = 198; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -4123,6 +4123,7 @@
       closeTemplateDialog();
       contextMenuLineId = lineId;
       updateCalcOperationPicker(lineId);
+      deleteLineBtn.textContent = isArrowLine(getLiveLineConnection(lineId)) ? "Delete arrow" : "Delete line";
       lineContextMenu.hidden = false;
 
       const menuRect = lineContextMenu.getBoundingClientRect();
@@ -4936,6 +4937,13 @@
       return normalizeLineKind(line && line.kind) === LINE_KIND_ARROW;
     }
 
+    function getLiveLineConnection(lineId) {
+      const id = typeof lineId === "string" ? lineId.trim() : "";
+      return id
+        ? lineConnections.find((entry) => entry.id === id && !entry.deletedAt) || null
+        : null;
+    }
+
     function hasLineConnection(fromId, toId) {
       const key = getLineConnectionKey(fromId, toId);
       return lineConnections.some((line) => !line.deletedAt && getLineConnectionKey(line.from, line.to) === key);
@@ -5542,7 +5550,7 @@
     function getNodeLineWidth(node) {
       if (isLineWidgetNode(node)) {
         const reference = getWidgetLineReferenceScreenPx(node);
-        return screenToWorldLength(clamp(reference * 0.0065, MIN_LINE_WIDTH_SCREEN_PX, MAX_LINE_WIDTH_SCREEN_PX));
+        return screenToWorldLength(clamp(reference * LINE_WIDTH_FONT_RATIO, MIN_LINE_WIDTH_SCREEN_PX, MAX_LINE_WIDTH_SCREEN_PX));
       }
 
       const fontSize = getNodeRenderedFontSize(node);
