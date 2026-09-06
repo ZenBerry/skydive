@@ -1543,7 +1543,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 195; // Increment once for each commit.
+    const APP_VERSION = 196; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -5690,8 +5690,12 @@
       const unitY = tangent.y / tangentLength;
       const normalX = -unitY;
       const normalY = unitX;
-      const headLength = screenToWorldLength(34);
-      const headSpread = screenToWorldLength(10);
+      const maxHeadLength = screenToWorldLength(34);
+      const headLength = Math.max(
+        lineWidth * 5,
+        Math.min(maxHeadLength, geometry.distance * 0.12)
+      );
+      const headSpread = headLength * 0.3;
       const strokeWidth = Math.max(lineWidth * 0.82, screenToWorldLength(2.1));
       const tip = geometry.end;
       const upper = {
@@ -5702,6 +5706,14 @@
         x: tip.x - unitX * headLength * 0.82 - normalX * headSpread * 0.78,
         y: tip.y - unitY * headLength * 0.82 - normalY * headSpread * 0.78
       };
+      const upperControl = {
+        x: tip.x - unitX * headLength * 0.48 + normalX * headSpread * 0.22,
+        y: tip.y - unitY * headLength * 0.48 + normalY * headSpread * 0.22
+      };
+      const lowerControl = {
+        x: tip.x - unitX * headLength * 0.38 - normalX * headSpread * 0.14,
+        y: tip.y - unitY * headLength * 0.38 - normalY * headSpread * 0.14
+      };
 
       const arrow = document.createElementNS(SVG_NS, "path");
       arrow.setAttribute("class", "connection-line-arrowhead");
@@ -5709,8 +5721,11 @@
         "d",
         [
           "M", formatLineNumber(upper.x), formatLineNumber(upper.y),
-          "L", formatLineNumber(tip.x), formatLineNumber(tip.y),
-          "L", formatLineNumber(lower.x), formatLineNumber(lower.y)
+          "Q", formatLineNumber(upperControl.x), formatLineNumber(upperControl.y),
+          formatLineNumber(tip.x), formatLineNumber(tip.y),
+          "M", formatLineNumber(lower.x), formatLineNumber(lower.y),
+          "Q", formatLineNumber(lowerControl.x), formatLineNumber(lowerControl.y),
+          formatLineNumber(tip.x), formatLineNumber(tip.y)
         ].join(" ")
       );
       arrow.style.strokeWidth = `${formatLineNumber(strokeWidth)}px`;
