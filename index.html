@@ -1543,7 +1543,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 196; // Increment once for each commit.
+    const APP_VERSION = 197; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -5375,7 +5375,72 @@
       );
     }
 
+    function isLineWidgetNode(node) {
+      return (
+        isCommandNode(node) ||
+        Boolean(node instanceof HTMLElement && node.querySelector(":scope > .external-link-card"))
+      );
+    }
+
+    function getWidgetBodyWorldSize(node) {
+      const body = isCommandNode(node)
+        ? node.firstElementChild
+        : node.querySelector(":scope > .external-link-card");
+      if (!(body instanceof HTMLElement)) return null;
+
+      const metrics = getNodeRenderMetrics(node);
+      return {
+        width: Math.max(body.scrollWidth, body.offsetWidth, 1) * metrics.worldScale,
+        height: Math.max(body.scrollHeight, body.offsetHeight, 1) * metrics.worldScale
+      };
+    }
+
+    function getNodeLineBoxWorldSize(node) {
+      const size = getNodeWorldSize(node);
+      if (!isLineWidgetNode(node)) return size;
+
+      const bodySize = getWidgetBodyWorldSize(node);
+      if (!bodySize) return size;
+      return {
+        width: Math.max(size.width, bodySize.width),
+        height: Math.max(size.height, bodySize.height)
+      };
+    }
+
+    function getNodeLineBoxWorldCorners(node) {
+      const x = Number(node.dataset.x);
+      const y = Number(node.dataset.y);
+      const size = getNodeLineBoxWorldSize(node);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return [];
+
+      const rotation = getNodeRotation(node);
+      const basis = getCameraBasis(rotation);
+      return [
+        { x, y },
+        { x: x + size.width * basis.cos, y: y + size.width * basis.sin },
+        {
+          x: x + size.width * basis.cos - size.height * basis.sin,
+          y: y + size.width * basis.sin + size.height * basis.cos
+        },
+        { x: x - size.height * basis.sin, y: y + size.height * basis.cos }
+      ];
+    }
+
+    function getNodeLineBoxWorldCenter(node) {
+      const corners = getNodeLineBoxWorldCorners(node);
+      return corners.length === 4 ? getPointCenter(corners) : getNodeWorldCenter(node);
+    }
+
+    function getWidgetLineReferenceScreenPx(node) {
+      const size = getNodeLineBoxWorldSize(node);
+      return Math.max(1, Math.min(size.width, size.height) * getCameraScale());
+    }
+
     function getNodeAnchorPaddingWorld(node) {
+      if (isLineWidgetNode(node)) {
+        return screenToWorldLength(clamp(getWidgetLineReferenceScreenPx(node) * 0.055, 18, 52));
+      }
+
       const fontSize = getNodeRenderedFontSize(node);
       const affordanceScale = getScreenAffordanceScale(fontSize);
       const naturalPadding = fontSize * LINE_ANCHOR_ELLIPSE_PADDING_FONT_RATIO;
@@ -5388,6 +5453,10 @@
     }
 
     function getLineEndpointGapWorld(node) {
+      if (isLineWidgetNode(node)) {
+        return screenToWorldLength(clamp(getWidgetLineReferenceScreenPx(node) * 0.038, 12, 24));
+      }
+
       const fontSize = getNodeRenderedFontSize(node);
       const gap = Math.max(
         fontSize * 0.06,
@@ -5419,8 +5488,8 @@
     }
 
     function getNodeAnchorPoint(node, towardPoint) {
-      const size = getNodeWorldSize(node);
-      const center = getNodeWorldCenter(node);
+      const size = getNodeLineBoxWorldSize(node);
+      const center = getNodeLineBoxWorldCenter(node);
       let dx = towardPoint.x - center.x;
       let dy = towardPoint.y - center.y;
       let length = Math.hypot(dx, dy);
@@ -5452,8 +5521,8 @@
     }
 
     function getLineAnchorPair(sourceNode, targetNode) {
-      const sourceCenter = getNodeWorldCenter(sourceNode);
-      const targetCenter = getNodeWorldCenter(targetNode);
+      const sourceCenter = getNodeLineBoxWorldCenter(sourceNode);
+      const targetCenter = getNodeLineBoxWorldCenter(targetNode);
       const centerDx = targetCenter.x - sourceCenter.x;
       const centerDy = targetCenter.y - sourceCenter.y;
       const centerDistance = Math.hypot(centerDx, centerDy);
@@ -5471,6 +5540,11 @@
     }
 
     function getNodeLineWidth(node) {
+      if (isLineWidgetNode(node)) {
+        const reference = getWidgetLineReferenceScreenPx(node);
+        return screenToWorldLength(clamp(reference * 0.0065, MIN_LINE_WIDTH_SCREEN_PX, MAX_LINE_WIDTH_SCREEN_PX));
+      }
+
       const fontSize = getNodeRenderedFontSize(node);
       const naturalWidth = fontSize * LINE_WIDTH_FONT_RATIO;
       const width = Math.min(
@@ -5681,7 +5755,7 @@
       group.appendChild(path);
     }
 
-    function appendArrowHead(group, geometry, lineWidth) {
+    function appendArrowHead(group, geometry, lineWidth, options = {}) {
       const tangent = getCubicTangent(geometry, 0.985);
       const tangentLength = Math.hypot(tangent.x, tangent.y);
       if (tangentLength < 0.001) return;
@@ -5690,13 +5764,9 @@
       const unitY = tangent.y / tangentLength;
       const normalX = -unitY;
       const normalY = unitX;
-      const maxHeadLength = screenToWorldLength(34);
-      const headLength = Math.max(
-        lineWidth * 5,
-        Math.min(maxHeadLength, geometry.distance * 0.12)
-      );
-      const headSpread = headLength * 0.3;
-      const strokeWidth = Math.max(lineWidth * 0.82, screenToWorldLength(2.1));
+      const headLength = Math.min(lineWidth * 12.5, geometry.distance * 0.3);
+      const headSpread = headLength * 0.31;
+      const strokeWidth = lineWidth * 0.95;
       const tip = geometry.end;
       const upper = {
         x: tip.x - unitX * headLength + normalX * headSpread * 1.18,
@@ -5729,6 +5799,12 @@
         ].join(" ")
       );
       arrow.style.strokeWidth = `${formatLineNumber(strokeWidth)}px`;
+      if (options.dashed) {
+        arrow.setAttribute(
+          "stroke-dasharray",
+          `${formatLineNumber(getDraftDashLengthWorld())} ${formatLineNumber(getDraftGapLengthWorld())}`
+        );
+      }
       group.appendChild(arrow);
     }
 
@@ -5778,7 +5854,9 @@
         0,
         { dashed: options.draft }
       );
-      if (options.arrow) appendArrowHead(group, geometry, endWidth);
+      if (options.arrow) appendArrowHead(group, geometry, endWidth, {
+        dashed: options.draft
+      });
       appendCalcOperationMarker(group, geometry, options.operation);
       lineRenderRoot.appendChild(group);
 
@@ -6008,8 +6086,8 @@
 
       for (const node of world.children) {
         if (!(node instanceof HTMLElement) || node === lineDraft.sourceNode || isNodeDeleted(node)) continue;
-        const center = getNodeWorldCenter(node);
-        const size = getNodeWorldSize(node);
+        const center = getNodeLineBoxWorldCenter(node);
+        const size = getNodeLineBoxWorldSize(node);
         const padding = getNodeAnchorPaddingWorld(node);
         const radiusX = Math.max(size.width / 2 + padding, 0.5);
         const radiusY = Math.max(size.height / 2 + padding, 0.5);
