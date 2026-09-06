@@ -295,7 +295,7 @@
     delete elements.wave.dataset.fallback;
   }
 
-  function retryWaveSurfer(container, url, elements, runtime) {
+  function retryWaveSurfer(container, url, elements, runtime, context = {}) {
     if (runtime.waveReady || runtime.waveRetryCount >= WAVESURFER_RETRY_DELAYS_MS.length) return false;
     const delay = WAVESURFER_RETRY_DELAYS_MS[runtime.waveRetryCount];
     runtime.waveRetryCount += 1;
@@ -304,19 +304,19 @@
     runtime.waveRetryTimer = setTimeout(() => {
       runtime.waveRetryTimer = null;
       if (runtime.discard || !container.isConnected) return;
-      if (!createWaveSurfer(container, url, elements, runtime)) {
+      if (!createWaveSurfer(container, url, elements, runtime, context)) {
         elements.wave.dataset.mode = "empty";
         elements.wave.replaceChildren();
-        createNativeFallback(url, elements, runtime);
+        createNativeFallback(url, elements, runtime, context);
       }
     }, delay);
     return true;
   }
 
-  function fallBackToNativePlayback(url, elements, runtime) {
+  function fallBackToNativePlayback(url, elements, runtime, context = {}) {
     resetWaveSurferSurface(elements, runtime);
     elements.wave.dataset.mode = "empty";
-    createNativeFallback(url, elements, runtime);
+    createNativeFallback(url, elements, runtime, context);
   }
 
   function buildUploadedState(file, upload, context, showSpeedControl, label) {
@@ -349,7 +349,7 @@
     };
   }
 
-  function createWaveSurfer(container, url, elements, runtime) {
+  function createWaveSurfer(container, url, elements, runtime, context = {}) {
     if (!window.WaveSurfer || typeof window.WaveSurfer.create !== "function") return false;
 
     let wavesurfer = null;
@@ -374,8 +374,8 @@
     runtime.waveLoadTimer = setTimeout(() => {
       runtime.waveLoadTimer = null;
       if (runtime.discard || !container.isConnected || runtime.waveReady) return;
-      if (retryWaveSurfer(container, url, elements, runtime)) return;
-      fallBackToNativePlayback(url, elements, runtime);
+      if (retryWaveSurfer(container, url, elements, runtime, context)) return;
+      fallBackToNativePlayback(url, elements, runtime, context);
     }, WAVESURFER_LOAD_WATCHDOG_MS);
 
     wavesurfer.on("ready", (duration) => {
@@ -402,12 +402,15 @@
         return;
       }
       elements.time.textContent = `0:00 / ${formatTime(wavesurfer.getDuration())}`;
+      if (typeof context.startOutgoingArrowTargets === "function") {
+        context.startOutgoingArrowTargets();
+      }
     });
     wavesurfer.on("error", () => {
       if (!container.isConnected) return;
       if (!runtime.waveReady) {
-        if (retryWaveSurfer(container, url, elements, runtime)) return;
-        fallBackToNativePlayback(url, elements, runtime);
+        if (retryWaveSurfer(container, url, elements, runtime, context)) return;
+        fallBackToNativePlayback(url, elements, runtime, context);
         return;
       }
       elements.status.textContent = "Could not load audio";
@@ -415,7 +418,7 @@
     return true;
   }
 
-  function createNativeFallback(url, elements, runtime) {
+  function createNativeFallback(url, elements, runtime, context = {}) {
     const audio = document.createElement("audio");
     audio.src = url;
     audio.loop = runtime.loop;
@@ -439,7 +442,13 @@
       elements.time.textContent = `${formatTime(audio.currentTime)} / ${formatTime(getDuration())}`;
     });
     audio.addEventListener("ended", () => {
-      if (runtime.loop) restartLoop(runtime);
+      if (runtime.loop) {
+        restartLoop(runtime);
+        return;
+      }
+      if (typeof context.startOutgoingArrowTargets === "function") {
+        context.startOutgoingArrowTargets();
+      }
     });
     audio.addEventListener("error", () => {
       elements.status.textContent = "Could not load audio";
@@ -789,10 +798,10 @@
         const initializePlayer = () => {
           runtime.animationFrame = null;
           if (runtime.discard || !container.isConnected) return;
-          if (!createWaveSurfer(container, audioUrl, elements, runtime)) {
+          if (!createWaveSurfer(container, audioUrl, elements, runtime, context)) {
             elements.wave.dataset.mode = "empty";
             elements.wave.replaceChildren();
-            createNativeFallback(audioUrl, elements, runtime);
+            createNativeFallback(audioUrl, elements, runtime, context);
           }
         };
         if (container.isConnected) initializePlayer();

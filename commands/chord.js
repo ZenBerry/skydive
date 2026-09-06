@@ -182,7 +182,7 @@
       return parseFrets((state && state.frets) || "").join(" ");
     },
 
-    render(container, state, updateState) {
+    render(container, state, updateState, context = {}) {
       clearRuntime(container);
 
       const frets = parseFrets((state && state.frets) || DEFAULT_FRETS.join(" "));
@@ -464,6 +464,12 @@
           void audioContext.close().catch(() => {});
         }, 2600);
         nextRuntime.timers.push(closeTimer);
+        if (typeof context.startOutgoingArrowTargets === "function") {
+          const chainTimer = setTimeout(() => {
+            if (container.isConnected) context.startOutgoingArrowTargets();
+          }, Math.max(1500, playable.length * 135 + 1450));
+          nextRuntime.timers.push(chainTimer);
+        }
 
         playable.forEach((string, order) => {
           const delaySeconds = order * 0.135;

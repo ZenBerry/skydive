@@ -117,6 +117,14 @@
       fill: rgba(54, 59, 68, 0.5);
     }
 
+    .connection-line-arrowhead {
+      fill: none;
+      stroke: rgba(54, 59, 68, 0.5);
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      pointer-events: none;
+    }
+
     .connection-line-draft .connection-line-shadow {
       display: none;
     }
@@ -1377,6 +1385,7 @@
     <button id="hook-title-btn" type="button">Hook node to window title</button>
     <button id="float-node-btn" type="button">Float</button>
     <button id="draw-line-btn" type="button">Line</button>
+    <button id="draw-arrow-btn" type="button">Arrow</button>
     <button id="save-template-btn" type="button">Save as global template</button>
     <button id="link-selection-btn" type="button">Link selection to node ID...</button>
     <div id="widget-color-picker" role="radiogroup" aria-label="Widget color" hidden>
@@ -1458,6 +1467,7 @@
     const hookTitleBtn = document.getElementById("hook-title-btn");
     const floatNodeBtn = document.getElementById("float-node-btn");
     const drawLineBtn = document.getElementById("draw-line-btn");
+    const drawArrowBtn = document.getElementById("draw-arrow-btn");
     const saveTemplateBtn = document.getElementById("save-template-btn");
     const linkSelectionBtn = document.getElementById("link-selection-btn");
     const widgetColorPicker = document.getElementById("widget-color-picker");
@@ -1533,7 +1543,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 194; // Increment once for each commit.
+    const APP_VERSION = 195; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -1564,6 +1574,7 @@
       ["#dfddd9", "#e0e0e066"]
     ]);
     const CALC_OPERATIONS = new Set(["+", "-", "*", "÷", "="]);
+    const LINE_KIND_ARROW = "arrow";
     const SANITIZED_INLINE_TAGS = new Map([
       ["B", "strong"],
       ["STRONG", "strong"],
@@ -4093,6 +4104,7 @@
       viewPlainTextBtn.hidden = !canToggleMarkdown || (!isMarkdownViewNode(node) && !isHtmlViewNode(node));
       floatNodeBtn.textContent = isFloatingNode(node) ? "Settle" : "Float";
       drawLineBtn.disabled = isFloatingNode(node);
+      drawArrowBtn.disabled = isFloatingNode(node);
       widgetColorPicker.hidden = !isWidgetColorable(contextMenuWidget || node);
       updateWidgetColorPicker(contextMenuWidget || node);
       nodeContextMenu.hidden = false;
@@ -4916,6 +4928,14 @@
       return [fromId, toId].sort().join("\u0000");
     }
 
+    function normalizeLineKind(value) {
+      return value === LINE_KIND_ARROW ? LINE_KIND_ARROW : "";
+    }
+
+    function isArrowLine(line) {
+      return normalizeLineKind(line && line.kind) === LINE_KIND_ARROW;
+    }
+
     function hasLineConnection(fromId, toId) {
       const key = getLineConnectionKey(fromId, toId);
       return lineConnections.some((line) => !line.deletedAt && getLineConnectionKey(line.from, line.to) === key);
@@ -5082,7 +5102,7 @@
       return true;
     }
 
-    function createLineConnection(sourceNode, targetNode) {
+    function createLineConnection(sourceNode, targetNode, options = {}) {
       if (!(sourceNode instanceof HTMLElement) || !(targetNode instanceof HTMLElement)) return false;
       if (isNodeDeleted(sourceNode) || isNodeDeleted(targetNode)) return false;
       if (!world.contains(sourceNode) || !world.contains(targetNode) || sourceNode === targetNode) return false;
@@ -5090,11 +5110,13 @@
       const from = normalizeLineEndpointId(sourceNode.dataset.nodeId || "");
       const to = normalizeLineEndpointId(targetNode.dataset.nodeId || "");
       if (!from || !to || from === to || hasLineConnection(from, to)) return false;
+      const kind = normalizeLineKind(options.kind);
 
       lineConnections.push({
         id: generateLineId(),
         from,
         to,
+        ...(kind ? { kind } : {}),
         createdAt: Date.now()
       });
       renderLineConnections();
@@ -5124,6 +5146,8 @@
       const deletedAt = normalizeTimestamp(line.deletedAt);
       if (createdAt) serialized.createdAt = createdAt;
       if (deletedAt) serialized.deletedAt = deletedAt;
+      const kind = normalizeLineKind(line.kind);
+      if (kind) serialized.kind = kind;
       const operation = normalizeCalcOperation(line.operation);
       if (operation) serialized.operation = operation;
       return serialized;
@@ -5174,6 +5198,7 @@
           id: resolveLineId(entry.id),
           from,
           to,
+          ...(normalizeLineKind(entry.kind) ? { kind: normalizeLineKind(entry.kind) } : {}),
           ...(normalizeCalcOperation(entry.operation) ? { operation: normalizeCalcOperation(entry.operation) } : {}),
           ...(createdAt ? { createdAt } : {}),
           ...(deletedAt ? { deletedAt } : {})
@@ -5656,6 +5681,42 @@
       group.appendChild(path);
     }
 
+    function appendArrowHead(group, geometry, lineWidth) {
+      const tangent = getCubicTangent(geometry, 0.985);
+      const tangentLength = Math.hypot(tangent.x, tangent.y);
+      if (tangentLength < 0.001) return;
+
+      const unitX = tangent.x / tangentLength;
+      const unitY = tangent.y / tangentLength;
+      const normalX = -unitY;
+      const normalY = unitX;
+      const headLength = screenToWorldLength(34);
+      const headSpread = screenToWorldLength(10);
+      const strokeWidth = Math.max(lineWidth * 0.82, screenToWorldLength(2.1));
+      const tip = geometry.end;
+      const upper = {
+        x: tip.x - unitX * headLength + normalX * headSpread * 1.18,
+        y: tip.y - unitY * headLength + normalY * headSpread * 1.18
+      };
+      const lower = {
+        x: tip.x - unitX * headLength * 0.82 - normalX * headSpread * 0.78,
+        y: tip.y - unitY * headLength * 0.82 - normalY * headSpread * 0.78
+      };
+
+      const arrow = document.createElementNS(SVG_NS, "path");
+      arrow.setAttribute("class", "connection-line-arrowhead");
+      arrow.setAttribute(
+        "d",
+        [
+          "M", formatLineNumber(upper.x), formatLineNumber(upper.y),
+          "L", formatLineNumber(tip.x), formatLineNumber(tip.y),
+          "L", formatLineNumber(lower.x), formatLineNumber(lower.y)
+        ].join(" ")
+      );
+      arrow.style.strokeWidth = `${formatLineNumber(strokeWidth)}px`;
+      group.appendChild(arrow);
+    }
+
     function shouldRenderLineGeometry(geometry, startWidth, endWidth) {
       const scale = getCameraScale();
       const screenDistance = geometry.distance * scale;
@@ -5702,6 +5763,7 @@
         0,
         { dashed: options.draft }
       );
+      if (options.arrow) appendArrowHead(group, geometry, endWidth);
       appendCalcOperationMarker(group, geometry, options.operation);
       lineRenderRoot.appendChild(group);
 
@@ -5810,6 +5872,7 @@
         if (!points) continue;
         appendConnectionPath(getNaturalLineGeometry(points.start, points.end, line.id), {
           id: line.id,
+          arrow: isArrowLine(line),
           operation: line.operation,
           startWidth: getNodeLineWidth(sourceNode),
           endWidth: getNodeLineWidth(targetNode),
@@ -5829,6 +5892,7 @@
       const draftWidth = getNodeLineWidth(lineDraft.sourceNode);
       appendConnectionPath(getNaturalLineGeometry(start, end, `draft:${lineDraft.sourceId}`), {
         draft: true,
+        arrow: lineDraft.kind === LINE_KIND_ARROW,
         startWidth: draftWidth,
         endWidth: lineDraft.displayEndWidth
       });
@@ -5878,7 +5942,7 @@
       requestLineDraftAnimation();
     }
 
-    function beginLineDraft(sourceNode, clientX, clientY) {
+    function beginLineDraft(sourceNode, clientX, clientY, options = {}) {
       if (!(sourceNode instanceof HTMLElement) || !world.contains(sourceNode)) return;
       if (isNodeDeleted(sourceNode)) return;
       cancelLineDraft();
@@ -5889,9 +5953,11 @@
         ? screenToWorld(clientX, clientY)
         : center;
       const startWidth = getNodeLineWidth(sourceNode);
+      const kind = normalizeLineKind(options.kind);
       lineDraft = {
         sourceNode,
         sourceId: normalizeLineEndpointId(sourceNode.dataset.nodeId || ""),
+        kind,
         cursorX: startPoint.x,
         cursorY: startPoint.y,
         displayX: startPoint.x,
@@ -5963,7 +6029,9 @@
     function completeLineDraft(targetNode) {
       const sourceNode = lineDraft ? lineDraft.sourceNode : null;
       if (!sourceNode || targetNode === sourceNode) return false;
-      return createLineConnection(sourceNode, targetNode);
+      return createLineConnection(sourceNode, targetNode, {
+        kind: lineDraft.kind
+      });
     }
 
     function getSelectedNodeLayoutItems() {
@@ -7299,6 +7367,7 @@
         createUploadedFileState,
         getSpaceText: getSpaceTextSnapshot,
         getSpaceTextVersion: () => spaceTextVersion,
+        startOutgoingArrowTargets: () => startOutgoingArrowTargets(node),
         canCreateChildSpace: isCurrentUserSpacePath(),
         openSpace(slug) {
           window.location.assign(getSpacePathFromSlug(slug));
@@ -7377,6 +7446,45 @@
       refreshSelectionBounds();
       updateDocumentTitle();
       if (options.autosave !== false) scheduleAutosave();
+    }
+
+    function startCommandNode(node, visitedNodeIds = new Set()) {
+      if (!isCommandNode(node) || !world.contains(node) || isNodeDeleted(node)) return false;
+      const nodeId = node.dataset.nodeId || "";
+      if (!nodeId || visitedNodeIds.has(nodeId)) return false;
+      visitedNodeIds.add(nodeId);
+
+      const commandId = node.dataset.commandId || "";
+      const command = getLoadedStaticCommand(commandId) || getCommand(commandId);
+      if (command && typeof command.start === "function") {
+        const nextState = command.start(readCommandState(node), getCommandRenderContext(node));
+        if (nextState && typeof nextState === "object") {
+          updateCommandNodeState(node, nextState);
+          return true;
+        }
+      }
+
+      const startButton = node.querySelector('[data-action="start"]:not(:disabled), [data-action="play"]:not(:disabled)');
+      if (startButton instanceof HTMLElement) {
+        startButton.click();
+        return true;
+      }
+      return false;
+    }
+
+    function startOutgoingArrowTargets(sourceNode, visitedNodeIds = new Set()) {
+      if (!(sourceNode instanceof HTMLElement)) return false;
+      const sourceId = sourceNode.dataset.nodeId || "";
+      if (!sourceId) return false;
+      let started = false;
+
+      for (const line of lineConnections) {
+        if (line.deletedAt || !isArrowLine(line) || line.from !== sourceId) continue;
+        const targetNode = getNodeById(line.to);
+        if (!targetNode || isFloatingNode(targetNode)) continue;
+        started = startCommandNode(targetNode, visitedNodeIds) || started;
+      }
+      return started;
     }
 
     function serializeNode(node) {
@@ -10999,6 +11107,21 @@
       closeNodeContextMenu();
       if (!sourceNode) return;
       beginLineDraft(sourceNode, startX, startY);
+    });
+
+    drawArrowBtn.addEventListener("click", (event) => {
+      const sourceNode = contextMenuNode;
+      const menuRect = nodeContextMenu.getBoundingClientRect();
+      const hasPointerLocation =
+        Number.isFinite(event.clientX) &&
+        Number.isFinite(event.clientY) &&
+        event.clientX > 0 &&
+        event.clientY > 0;
+      const startX = hasPointerLocation ? event.clientX : menuRect.left + 12;
+      const startY = hasPointerLocation ? event.clientY : menuRect.top + 12;
+      closeNodeContextMenu();
+      if (!sourceNode) return;
+      beginLineDraft(sourceNode, startX, startY, { kind: LINE_KIND_ARROW });
     });
 
     linkSelectionBtn.addEventListener("click", (event) => {

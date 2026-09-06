@@ -171,7 +171,22 @@
       return remainingMs <= 0 || (state && state.completed) ? "Done" : formatRemaining(remainingMs);
     },
 
-    render(container, state, updateState) {
+    start(state) {
+      const durationMs = getDurationMs(state || {});
+      const remainingMs = state && state.completed ? durationMs : getRemainingMs(state || {});
+      return {
+        ...(state || {}),
+        durationMs,
+        running: true,
+        startedAt: Date.now(),
+        remainingMs: remainingMs > 0 ? remainingMs : durationMs,
+        completed: false,
+        completedAt: null,
+        alarmed: false
+      };
+    },
+
+    render(container, state, updateState, context = {}) {
       clearTimer(container);
 
       container.innerHTML = `
@@ -257,6 +272,9 @@
           completedAt: Date.now(),
           alarmed: true
         });
+        if (typeof context.startOutgoingArrowTargets === "function") {
+          setTimeout(() => context.startOutgoingArrowTargets(), 0);
+        }
       }
 
       function paint() {
