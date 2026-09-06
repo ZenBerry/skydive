@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-09-06: Added Shift+Arrow shortcuts to smoothly align multi-selected nodes to the matching selection rectangle edge, using rotated node corners and selection-space geometry so canvas and node rotation stay correct. Bumped `APP_VERSION` to 194.
+
 - 2026-09-05: Smoothed the reader page-turn by replacing the clipped live DOM cover with an exact bitmap cover prepared alongside the peel snapshot, avoiding per-frame EPUB repaint stalls. Bumped `APP_VERSION` to 193.
 
 - 2026-09-05: Fixed the reader page-turn start by holding the old page in a static cover while the next page commits underneath, and clipping the WebGL peel to the curling strip so text no longer jumps before the animation. Bumped `APP_VERSION` to 192.
