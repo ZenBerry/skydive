@@ -16,11 +16,42 @@
     }
 
     html, body {
+      --skydive-bg: #fff;
+      --skydive-text: #111;
+      --skydive-muted-text: #4b5563;
+      --skydive-line: rgba(54, 59, 68, 0.5);
+      --skydive-line-draft: rgba(46, 52, 62, 0.42);
+      --skydive-line-operation-bg: #fff;
+      --skydive-line-operation-border: rgba(17, 24, 39, 0.38);
+      --skydive-line-operation-text: #111;
+      --skydive-line-operation-stroke: #fff;
+      --skydive-selection: rgba(29, 78, 216, 0.5);
+      --skydive-markdown-quote-border: rgba(17, 24, 39, 0.28);
+      --skydive-markdown-code-bg: #f2f4f7;
+      --skydive-markdown-pre-bg: #f7f7f5;
+      --skydive-markdown-link: #2563eb;
+      --skydive-command-menu-bg: #fff;
+      --skydive-command-menu-text: #111;
+      --skydive-command-menu-muted: #6b7280;
+      --skydive-command-menu-border: rgba(17, 24, 39, 0.12);
+      --skydive-command-menu-selected-bg: rgba(17, 24, 39, 0.08);
+      --skydive-widget-bg: #ffffff;
+      --skydive-widget-text: #3f3328;
+      --skydive-widget-muted: #7b6650;
+      --skydive-widget-border: #d6d6d6;
+      --skydive-widget-field-bg: #ffffff;
+      --skydive-widget-field-border: #d6d6d6;
+      --skydive-widget-button-bg: hsl(0 0% 91% / 44%);
+      --skydive-widget-button-hover-bg: hsl(0 0% 94% / 44%);
+      --skydive-widget-float-shadow: #f6f6f6;
+      --skydive-avatar-bg: #111;
+      --skydive-avatar-fg: #fff;
+      --skydive-avatar-border: #111;
       margin: 0;
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background: #fff;
+      background: var(--skydive-bg);
       font-family: "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
       -webkit-user-select: none;
       user-select: none;
@@ -44,7 +75,7 @@
       inset: 0;
       overflow: hidden;
       touch-action: none;
-      background: #fff;
+      background: var(--skydive-bg);
       cursor: default;
       opacity: 0;
       transition: opacity 520ms cubic-bezier(0.2, 0, 0, 1);
@@ -79,7 +110,7 @@
       width: 100%;
       height: 100%;
       overflow: visible;
-      background: #fff;
+      background: var(--skydive-bg);
       pointer-events: none;
     }
 
@@ -99,7 +130,7 @@
     }
 
     .spacing-guide-line {
-      stroke: #111;
+      stroke: var(--skydive-text);
       stroke-width: 1;
       vector-effect: non-scaling-stroke;
     }
@@ -114,12 +145,12 @@
     }
 
     .connection-line-stroke {
-      fill: rgba(54, 59, 68, 0.5);
+      fill: var(--skydive-line);
     }
 
     .connection-line-arrowhead {
       fill: none;
-      stroke: rgba(54, 59, 68, 0.5);
+      stroke: var(--skydive-line);
       stroke-linecap: round;
       stroke-linejoin: round;
       pointer-events: none;
@@ -130,7 +161,7 @@
     }
 
     .connection-line-draft .connection-line-stroke {
-      fill: rgba(46, 52, 62, 0.42);
+      fill: var(--skydive-line-draft);
     }
 
     .connection-line-hit {
@@ -148,19 +179,19 @@
     }
 
     .connection-line-operation circle {
-      fill: #fff;
-      stroke: rgba(17, 24, 39, 0.38);
+      fill: var(--skydive-line-operation-bg);
+      stroke: var(--skydive-line-operation-border);
       stroke-width: 1.2;
       vector-effect: non-scaling-stroke;
     }
 
     .connection-line-operation text {
-      fill: #111;
+      fill: var(--skydive-line-operation-text);
       font: 700 13px/1 "Roboto", "Helvetica Neue", Arial, sans-serif;
       dominant-baseline: central;
       text-anchor: middle;
       paint-order: stroke;
-      stroke: #fff;
+      stroke: var(--skydive-line-operation-stroke);
       stroke-width: 0.7;
       vector-effect: non-scaling-stroke;
     }
@@ -234,8 +265,8 @@
       z-index: 5000;
       display: grid;
       place-items: center;
-      background: #fff;
-      color: #111;
+      background: var(--skydive-bg);
+      color: var(--skydive-text);
       font: 400 16px/1.4 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
       letter-spacing: 0;
       opacity: 0;
@@ -262,7 +293,7 @@
       min-width: 0;
       min-height: 1em;
       line-height: 1.25;
-      color: #111;
+      color: var(--skydive-text);
       white-space: pre;
       width: max-content;
       max-width: none;
@@ -341,7 +372,7 @@
     }
 
     .text-node.selected {
-      outline: calc(1px / var(--camera-scale, 1)) solid rgba(29, 78, 216, 0.5);
+      outline: calc(1px / var(--camera-scale, 1)) solid var(--skydive-selection);
       outline-offset: calc(2px / var(--camera-scale, 1));
     }
 
@@ -356,9 +387,9 @@
       display: grid;
       place-items: center;
       border-radius: 50%;
-      background: var(--creator-avatar-bg, #111);
-      border: 0.045em solid var(--creator-avatar-border, #111);
-      color: var(--creator-avatar-fg, #fff);
+      background: var(--creator-avatar-bg, var(--skydive-avatar-bg));
+      border: 0.045em solid var(--creator-avatar-border, var(--skydive-avatar-border));
+      color: var(--creator-avatar-fg, var(--skydive-avatar-fg));
       font: 700 0.28em/1 "Roboto", "Helvetica Neue", Arial, sans-serif;
       letter-spacing: 0;
       text-transform: uppercase;
@@ -455,8 +486,8 @@
 
     .text-node[data-view-mode="markdown"]:not(.editing) blockquote {
       padding-left: 0.58em;
-      border-left: 0.08em solid rgba(17, 24, 39, 0.28);
-      color: #4b5563;
+      border-left: 0.08em solid var(--skydive-markdown-quote-border);
+      color: var(--skydive-muted-text);
     }
 
     .text-node[data-view-mode="markdown"]:not(.editing) code,
@@ -467,7 +498,7 @@
     .text-node[data-view-mode="markdown"]:not(.editing) code {
       padding: 0.02em 0.22em;
       border-radius: 0.18em;
-      background: #f2f4f7;
+      background: var(--skydive-markdown-code-bg);
       font-size: 0.86em;
     }
 
@@ -476,7 +507,7 @@
       overflow: auto;
       padding: 0.48em 0.58em;
       border-radius: 0.28em;
-      background: #f7f7f5;
+      background: var(--skydive-markdown-pre-bg);
       white-space: pre;
     }
 
@@ -487,7 +518,7 @@
     }
 
     .text-node[data-view-mode="markdown"]:not(.editing) a {
-      color: #2563eb;
+      color: var(--skydive-markdown-link);
       text-decoration: underline;
       text-decoration-thickness: from-font;
     }
@@ -496,7 +527,7 @@
       width: 100%;
       margin: 0.55em 0;
       border: 0;
-      border-top: 0.05em solid rgba(17, 24, 39, 0.25);
+      border-top: 0.05em solid var(--skydive-markdown-quote-border);
     }
 
     .text-node[data-view-mode="html"] {
@@ -534,13 +565,13 @@
 
     .command-node,
     .external-link-card {
-      --widget-color: #ffffff;
-      --widget-button-color: hsl(0 0% 91% / 44%);
-      --widget-button-hover-color: hsl(0 0% 94% / 44%);
-      --widget-border-color: #d6d6d6;
-      --widget-field-color: #ffffff;
-      --widget-field-border-color: #d6d6d6;
-      --widget-float-shadow-color: #f6f6f6;
+      --widget-color: var(--skydive-widget-bg);
+      --widget-button-color: var(--skydive-widget-button-bg);
+      --widget-button-hover-color: var(--skydive-widget-button-hover-bg);
+      --widget-border-color: var(--skydive-widget-border);
+      --widget-field-color: var(--skydive-widget-field-bg);
+      --widget-field-border-color: var(--skydive-widget-field-border);
+      --widget-float-shadow-color: var(--skydive-widget-float-shadow);
       --widget-corner-shape: squircle;
       --widget-shell-radius: 1.82em;
       --widget-control-radius: 1.52em;
@@ -642,21 +673,21 @@
     }
 
     .internal-link {
-      color: #6b7280;
+      color: var(--skydive-muted-text);
       text-decoration: underline;
       text-decoration-thickness: from-font;
       cursor: pointer;
     }
 
     .external-link-plain {
-      color: #2563eb;
+      color: var(--skydive-markdown-link);
       text-decoration: underline;
       text-decoration-thickness: from-font;
       cursor: pointer;
     }
 
     .tag-link {
-      color: #111;
+      color: var(--skydive-text);
       text-decoration: underline;
       text-decoration-thickness: from-font;
       cursor: pointer;
@@ -681,7 +712,7 @@
       border-radius: 0.55em;
       background: var(--widget-color);
       box-shadow: none;
-      color: #3f3328;
+      color: var(--skydive-widget-text);
       cursor: grab;
       vertical-align: middle;
       white-space: normal;
@@ -726,7 +757,7 @@
 
     .external-link-label {
       overflow: hidden;
-      color: #4b3b2d;
+      color: var(--skydive-widget-text);
       display: block;
       cursor: pointer;
       font: 500 0.78em/1.16 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
@@ -748,7 +779,7 @@
       border-radius: 0.38em;
       background: var(--widget-button-color);
       padding: 0.26em 0.42em;
-      color: #4b3b2d;
+      color: var(--skydive-widget-text);
       font: 500 0.45em/1 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
       cursor: pointer;
     }
@@ -774,7 +805,7 @@
       border-radius: 0.38em;
       background: var(--widget-field-color);
       padding: 0.28em 0.38em;
-      color: #3f3328;
+      color: var(--skydive-widget-text);
       font: 400 0.46em/1.2 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
       outline: none;
     }
@@ -817,9 +848,9 @@
       z-index: 4700;
       min-width: 190px;
       padding: 6px;
-      border: 1px solid #d0d0d0;
+      border: 1px solid var(--skydive-command-menu-border);
       border-radius: 8px;
-      background: #fff;
+      background: var(--skydive-command-menu-bg);
       box-shadow: 0 6px 22px rgba(0, 0, 0, 0.12);
       display: grid;
       gap: 4px;
@@ -840,14 +871,14 @@
       text-align: left;
       border-radius: 6px;
       font: 500 14px/1.2 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
-      color: #111;
+      color: var(--skydive-command-menu-text);
       cursor: pointer;
     }
 
     #node-context-menu button:hover:not(:disabled),
     #line-context-menu button:hover:not(:disabled),
     #canvas-context-menu button:hover:not(:disabled) {
-      background: #f2f4f7;
+      background: var(--skydive-command-menu-selected-bg);
     }
 
     #node-context-menu button:disabled,
@@ -916,9 +947,9 @@
       padding: 0;
       border: 1px solid rgba(78, 70, 62, 0.17);
       border-radius: 50%;
-      background: #fff;
+      background: var(--skydive-line-operation-bg);
       box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.48);
-      color: #111;
+      color: var(--skydive-line-operation-text);
       text-align: center;
       font: 700 13px/1 "Roboto", "Helvetica Neue", Arial, sans-serif;
       cursor: pointer;
@@ -926,7 +957,7 @@
     }
 
     #line-context-menu button.calc-operation-btn:hover:not(:disabled) {
-      background: #fff;
+      background: var(--skydive-line-operation-bg);
       transform: scale(1.08);
     }
 
@@ -948,9 +979,9 @@
       z-index: 4700;
       width: min(300px, calc(100vw - 16px));
       padding: 6px;
-      border: 1px solid #d0d0d0;
+      border: 1px solid var(--skydive-command-menu-border);
       border-radius: 8px;
-      background: #fff;
+      background: var(--skydive-command-menu-bg);
       box-shadow: 0 6px 22px rgba(0, 0, 0, 0.12);
       display: grid;
       gap: 4px;
@@ -966,7 +997,7 @@
       padding: 8px 10px 6px;
       border-radius: 6px;
       font: 500 14px/1.2 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
-      color: #111;
+      color: var(--skydive-command-menu-text);
       touch-action: none;
     }
 
@@ -981,12 +1012,12 @@
     #link-node-dialog-input,
     #template-dialog-input,
     #template-dialog-description {
-      border: 1px solid #d0d0d0;
+      border: 1px solid var(--skydive-command-menu-border);
       border-radius: 6px;
       margin: 8px;
       padding: 8px 10px;
       font: 500 14px/1.2 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
-      color: #111;
+      color: var(--skydive-command-menu-text);
       outline: none;
     }
 
@@ -998,7 +1029,7 @@
     #link-node-dialog-input:focus,
     #template-dialog-input:focus,
     #template-dialog-description:focus {
-      border-color: #d0d0d0;
+      border-color: var(--skydive-command-menu-border);
       box-shadow: none;
     }
 
@@ -1006,7 +1037,7 @@
       min-height: 16px;
       padding: 0 10px 2px;
       font: 400 12px/1.25 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
-      color: #7b6a58;
+      color: var(--skydive-command-menu-muted);
     }
 
     #template-dialog-message[data-tone="warn"] {
@@ -1028,13 +1059,13 @@
       text-align: left;
       border-radius: 6px;
       font: 500 14px/1.2 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
-      color: #111;
+      color: var(--skydive-command-menu-text);
       cursor: pointer;
     }
 
     #link-node-dialog button:hover:not(:disabled),
     #template-dialog button:hover:not(:disabled) {
-      background: #f2f4f7;
+      background: var(--skydive-command-menu-selected-bg);
     }
 
     #template-dialog button:disabled {
@@ -1047,9 +1078,9 @@
       z-index: 4700;
       width: min(240px, calc(100vw - 16px));
       padding: 6px;
-      border: 1px solid #e2d7c7;
+      border: 1px solid var(--skydive-command-menu-border);
       border-radius: 10px;
-      background: #fffaf3;
+      background: var(--skydive-command-menu-bg);
       box-shadow: 0 10px 28px rgba(83, 63, 43, 0.12);
       display: grid;
       gap: 3px;
@@ -1065,13 +1096,13 @@
       background: transparent;
       padding: 8px 9px;
       text-align: left;
-      color: #3f3328;
+      color: var(--skydive-command-menu-text);
       cursor: pointer;
     }
 
     .slash-command-option[aria-selected="true"],
     .slash-command-option:hover {
-      background: #f2e6d7;
+      background: var(--skydive-command-menu-selected-bg);
     }
 
     .slash-command-name {
@@ -1083,7 +1114,7 @@
       display: block;
       margin-top: 2px;
       font: 400 12px/1.25 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
-      color: #7b6a58;
+      color: var(--skydive-command-menu-muted);
     }
 
     #marquee-selection {
@@ -1101,7 +1132,7 @@
     #group-selection-box {
       position: absolute;
       z-index: 4700;
-      border: 1px solid #111;
+      border: 1px solid var(--skydive-selection);
       background: transparent;
       cursor: move;
       touch-action: none;
@@ -1116,8 +1147,8 @@
       position: absolute;
       width: 12px;
       height: 12px;
-      border: 1px solid #111;
-      background: #111;
+      border: 1px solid var(--skydive-selection);
+      background: var(--skydive-selection);
       box-sizing: border-box;
       touch-action: none;
     }
@@ -1139,7 +1170,7 @@
     #group-selection-box[data-mode="rotate"] .group-selection-handle {
       width: 14px;
       height: 14px;
-      border-color: #111;
+      border-color: var(--skydive-selection);
       background: transparent;
       cursor: grab;
     }
@@ -1225,8 +1256,8 @@
       padding: 7px;
       border: 1px solid rgba(17, 24, 39, 0.15);
       border-radius: 6px;
-      background: #fff;
-      color: #111827;
+      background: var(--skydive-command-menu-bg);
+      color: var(--skydive-command-menu-text);
       touch-action: manipulation;
       -webkit-tap-highlight-color: transparent;
     }
@@ -1301,8 +1332,8 @@
       place-items: center;
       border: 1px solid rgba(17, 24, 39, 0.15);
       border-radius: 6px;
-      background: #fff;
-      color: #111827;
+      background: var(--skydive-command-menu-bg);
+      color: var(--skydive-command-menu-text);
       font: 700 18px/1 "Roboto", "Helvetica Neue", Arial, sans-serif;
       cursor: pointer;
     }
@@ -1438,6 +1469,7 @@
   <script src="/commands/count.js"></script>
   <script src="/commands/timer.js"></script>
   <script src="/commands/file.js"></script>
+  <script src="/commands/theme.js"></script>
   <script src="/commands/rec.js"></script>
   <script src="/commands/delorean.js"></script>
   <script src="/commands/days.js"></script>
@@ -1543,7 +1575,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 198; // Increment once for each commit.
+    const APP_VERSION = 199; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -1555,6 +1587,7 @@
     const DEFAULT_TEMPLATE_DESCRIPTION = "A pre-saved template";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
+    const THEME_WIDGET_COMMAND_ID = "theme";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
     const WIDGET_COLOR_STATE_KEY = "_widgetColor";
     const DEFAULT_WIDGET_COLOR = "#ffffff";
@@ -1796,6 +1829,7 @@
     let lineConnections = [];
     let lineRenderRoot = lineLayer;
     let spaceMeta = {};
+    let activeSpaceThemePalette = null;
     let currentUser = null;
     let globalTemplates = [];
     let deloreanModified = false;
@@ -2238,6 +2272,14 @@
     }
 
     function applyNodeCreatorAvatar(node, creator) {
+      if (activeSpaceThemePalette) {
+        node.style.setProperty("--creator-avatar-bg", activeSpaceThemePalette.avatarBg);
+        node.style.setProperty("--creator-avatar-border", activeSpaceThemePalette.avatarBorder);
+        node.style.setProperty("--creator-avatar-fg", activeSpaceThemePalette.avatarFg);
+        delete node.dataset.creatorAvatarImage;
+        node.style.removeProperty("--creator-avatar-image");
+        return;
+      }
       const palette = getAvatarPalette(getCreatorAccentColor(creator));
       node.style.setProperty("--creator-avatar-bg", palette.background);
       node.style.setProperty("--creator-avatar-border", palette.border);
@@ -4165,6 +4207,442 @@
 
     function clamp(value, min, max) {
       return Math.min(max, Math.max(min, value));
+    }
+
+    function normalizeThemeHex(value) {
+      const raw = typeof value === "string" ? value.trim() : "";
+      const match = /^#([0-9a-f]{3,8})$/i.exec(raw);
+      if (!match) return "";
+      const hex = match[1];
+      if (hex.length === 3 || hex.length === 4) {
+        return `#${hex.split("").map((char) => char + char).join("")}`.slice(0, 9).toLowerCase();
+      }
+      if (hex.length === 6 || hex.length === 8) return `#${hex.toLowerCase()}`;
+      return "";
+    }
+
+    function parseThemeColor(value) {
+      const hex = normalizeThemeHex(value);
+      if (!hex) return null;
+      const red = parseInt(hex.slice(1, 3), 16);
+      const green = parseInt(hex.slice(3, 5), 16);
+      const blue = parseInt(hex.slice(5, 7), 16);
+      const alpha = hex.length === 9 ? parseInt(hex.slice(7, 9), 16) / 255 : 1;
+      if (![red, green, blue, alpha].every(Number.isFinite)) return null;
+      return { red, green, blue, alpha };
+    }
+
+    function themeColorToHex(color, alpha = null) {
+      if (!color) return "";
+      const a = alpha === null ? color.alpha : alpha;
+      const parts = [color.red, color.green, color.blue].map((part) => (
+        clamp(Math.round(part), 0, 255).toString(16).padStart(2, "0")
+      ));
+      if (a !== null && a < 0.999) {
+        parts.push(clamp(Math.round(a * 255), 0, 255).toString(16).padStart(2, "0"));
+      }
+      return `#${parts.join("")}`;
+    }
+
+    function mixThemeColors(first, second, amount) {
+      const left = parseThemeColor(first);
+      const right = parseThemeColor(second);
+      if (!left || !right) return normalizeThemeHex(first) || normalizeThemeHex(second) || "";
+      const t = clamp(Number(amount), 0, 1);
+      const alpha = left.alpha + (right.alpha - left.alpha) * t;
+      return themeColorToHex({
+        red: left.red + (right.red - left.red) * t,
+        green: left.green + (right.green - left.green) * t,
+        blue: left.blue + (right.blue - left.blue) * t,
+        alpha
+      }, alpha);
+    }
+
+    function getThemeLuminance(value) {
+      const color = parseThemeColor(value);
+      if (!color) return 1;
+      const channel = (part) => {
+        const next = part / 255;
+        return next <= 0.03928 ? next / 12.92 : Math.pow((next + 0.055) / 1.055, 2.4);
+      };
+      return 0.2126 * channel(color.red) + 0.7152 * channel(color.green) + 0.0722 * channel(color.blue);
+    }
+
+    function getThemeContrast(first, second) {
+      const light = Math.max(getThemeLuminance(first), getThemeLuminance(second));
+      const dark = Math.min(getThemeLuminance(first), getThemeLuminance(second));
+      return (light + 0.05) / (dark + 0.05);
+    }
+
+    function ensureThemeContrast(foreground, background, light = "#ffffff", dark = "#111111", ratio = 4.5) {
+      const normalized = normalizeThemeHex(foreground);
+      if (normalized && getThemeContrast(normalized, background) >= ratio) return normalized;
+      const lightContrast = getThemeContrast(light, background);
+      const darkContrast = getThemeContrast(dark, background);
+      return lightContrast >= darkContrast ? light : dark;
+    }
+
+    function getThemeColor(theme, keys, fallback = "") {
+      const colors = theme && theme.colors && typeof theme.colors === "object" ? theme.colors : {};
+      for (const key of keys) {
+        const color = normalizeThemeHex(colors[key]);
+        if (color) return color;
+      }
+      return fallback;
+    }
+
+    function collectThemeAccentCandidates(theme) {
+      const colors = theme && theme.colors && typeof theme.colors === "object" ? theme.colors : {};
+      const weightedKeys = new Map([
+        ["button.background", 9],
+        ["button.hoverBackground", 7],
+        ["badge.background", 8],
+        ["activityBarBadge.background", 8],
+        ["progressBar.background", 7],
+        ["editorCursor.foreground", 6],
+        ["editorLineNumber.activeForeground", 5],
+        ["editorSuggestWidget.highlightForeground", 6],
+        ["list.highlightForeground", 6],
+        ["list.activeSelectionBackground", 5],
+        ["textLink.foreground", 6],
+        ["panelTitle.activeBorder", 5],
+        ["tab.activeBorderTop", 5],
+        ["terminal.ansiCyan", 5],
+        ["terminal.ansiBlue", 5],
+        ["terminal.ansiMagenta", 5],
+        ["terminal.ansiGreen", 5],
+        ["terminal.ansiYellow", 4]
+      ]);
+      const candidates = [];
+      Object.entries(colors).forEach(([key, value]) => {
+        const color = normalizeThemeHex(value);
+        if (!color) return;
+        const baseWeight = weightedKeys.get(key) || (/foreground|background|border/i.test(key) ? 1 : 0.5);
+        if (baseWeight > 0) candidates.push({ color, weight: baseWeight });
+      });
+
+      const tokenColors = Array.isArray(theme && theme.tokenColors) ? theme.tokenColors : [];
+      tokenColors.forEach((token) => {
+        const foreground = normalizeThemeHex(token && token.settings && token.settings.foreground);
+        if (foreground) candidates.push({ color: foreground, weight: 3 });
+      });
+
+      return candidates;
+    }
+
+    function pickThemeAccents(theme, background, foreground) {
+      const scores = new Map();
+      const backgroundLum = getThemeLuminance(background);
+      collectThemeAccentCandidates(theme).forEach(({ color, weight }) => {
+        const opaque = themeColorToHex(parseThemeColor(color), 1);
+        if (!opaque) return;
+        if (getThemeContrast(opaque, background) < 1.35) return;
+        const luminance = getThemeLuminance(opaque);
+        const foregroundDistance = getThemeContrast(opaque, foreground);
+        const vibrancy = Math.abs(luminance - backgroundLum) + Math.min(2.2, foregroundDistance) * 0.14;
+        scores.set(opaque, (scores.get(opaque) || 0) + weight * vibrancy);
+      });
+      const sorted = Array.from(scores.entries())
+        .sort((left, right) => right[1] - left[1])
+        .map(([color]) => color);
+      const fallback = ensureThemeContrast(getThemeColor(theme, ["button.background", "textLink.foreground"], foreground), background);
+      return {
+        primary: sorted[0] || fallback,
+        secondary: sorted.find((color) => getThemeContrast(color, sorted[0] || fallback) > 1.25) || sorted[1] || fallback
+      };
+    }
+
+    function deriveSkydiveThemePalette(theme) {
+      const type = typeof theme.type === "string" ? theme.type.toLowerCase() : "";
+      const darkFallback = type !== "light";
+      const background = getThemeColor(theme, [
+        "editor.background",
+        "terminal.background",
+        "sideBar.background",
+        "panel.background"
+      ], darkFallback ? "#1f1f1f" : "#ffffff");
+      const foreground = ensureThemeContrast(getThemeColor(theme, [
+        "editor.foreground",
+        "foreground",
+        "terminal.foreground",
+        "sideBar.foreground"
+      ], darkFallback ? "#e5e7eb" : "#111111"), background);
+      const muted = ensureThemeContrast(getThemeColor(theme, [
+        "descriptionForeground",
+        "sideBar.foreground",
+        "editorLineNumber.foreground"
+      ], foreground), background, foreground, darkFallback ? "#cbd5e1" : "#4b5563", 3);
+      const accents = pickThemeAccents(theme, background, foreground);
+      const panel = getThemeColor(theme, [
+        "editorWidget.background",
+        "panel.background",
+        "sideBar.background",
+        "input.background"
+      ], mixThemeColors(background, foreground, darkFallback ? 0.1 : 0.045));
+      const panelText = ensureThemeContrast(getThemeColor(theme, [
+        "editorWidget.foreground",
+        "sideBar.foreground",
+        "foreground"
+      ], foreground), panel);
+      const panelBorder = getThemeColor(theme, [
+        "editorWidget.border",
+        "panel.border",
+        "sideBar.border",
+        "focusBorder"
+      ], mixThemeColors(panel, foreground, 0.22));
+      const selection = getThemeColor(theme, [
+        "editor.selectionBackground",
+        "selection.background",
+        "list.activeSelectionBackground"
+      ], mixThemeColors(accents.primary, background, 0.34));
+      const button = getThemeColor(theme, ["button.background"], mixThemeColors(accents.primary, panel, 0.38));
+      const buttonHover = getThemeColor(theme, ["button.hoverBackground"], mixThemeColors(button, foreground, darkFallback ? 0.16 : 0.08));
+      const line = ensureThemeContrast(getThemeColor(theme, [
+        "editorIndentGuide.activeBackground",
+        "editorRuler.foreground",
+        "panel.border",
+        "focusBorder"
+      ], mixThemeColors(accents.secondary, foreground, 0.42)), background, foreground, accents.primary, 2.1);
+      const avatarBg = ensureThemeContrast(accents.primary, background, foreground, accents.secondary, 2.4);
+      const avatarFg = ensureThemeContrast(getThemeColor(theme, ["badge.foreground", "button.foreground"], foreground), avatarBg);
+      return {
+        name: typeof theme.name === "string" && theme.name.trim() ? theme.name.trim().slice(0, 120) : "VS Code Theme",
+        type: darkFallback ? "dark" : "light",
+        background,
+        foreground,
+        muted,
+        accent: accents.primary,
+        accent2: accents.secondary,
+        line,
+        lineDraft: mixThemeColors(line, background, 0.26),
+        selection,
+        panel,
+        panelText,
+        panelMuted: ensureThemeContrast(muted, panel, panelText, foreground, 3),
+        panelBorder,
+        button,
+        buttonHover,
+        buttonText: ensureThemeContrast(getThemeColor(theme, ["button.foreground"], foreground), button),
+        markdownCodeBg: getThemeColor(theme, ["textCodeBlock.background"], mixThemeColors(background, foreground, darkFallback ? 0.12 : 0.06)),
+        markdownPreBg: getThemeColor(theme, ["textPreformat.background", "textCodeBlock.background"], mixThemeColors(background, foreground, darkFallback ? 0.1 : 0.045)),
+        link: ensureThemeContrast(getThemeColor(theme, ["textLink.foreground", "editorLink.activeForeground"], accents.primary), background, foreground, accents.primary, 3),
+        avatarBg,
+        avatarFg,
+        avatarBorder: mixThemeColors(avatarBg, background, 0.35)
+      };
+    }
+
+    function isVsCodeThemeJson(value) {
+      return Boolean(
+        value &&
+        typeof value === "object" &&
+        value.colors &&
+        typeof value.colors === "object" &&
+        (
+          normalizeThemeHex(value.colors["editor.background"]) ||
+          normalizeThemeHex(value.colors["editor.foreground"]) ||
+          normalizeThemeHex(value.colors.foreground)
+        )
+      );
+    }
+
+    function parseVsCodeThemeText(text) {
+      const data = JSON.parse(text);
+      if (!isVsCodeThemeJson(data)) throw new Error("Not a VS Code color theme.");
+      return {
+        source: data,
+        palette: deriveSkydiveThemePalette(data)
+      };
+    }
+
+    function getSpaceThemeMeta() {
+      return spaceMeta && spaceMeta.theme && typeof spaceMeta.theme === "object" ? spaceMeta.theme : null;
+    }
+
+    function getSpaceThemeNodeId() {
+      const theme = getSpaceThemeMeta();
+      return theme && typeof theme.activeNodeId === "string" ? theme.activeNodeId : "";
+    }
+
+    function getThemeNodeState(nodeId) {
+      if (!nodeId) return null;
+      const node = getNodeById(nodeId);
+      if (!isCommandNode(node) || node.dataset.commandId !== THEME_WIDGET_COMMAND_ID || isNodeDeleted(node)) return null;
+      return readCommandState(node);
+    }
+
+    function normalizeThemePalette(value) {
+      if (!value || typeof value !== "object") return null;
+      const background = normalizeThemeHex(value.background);
+      const foreground = normalizeThemeHex(value.foreground);
+      if (!background || !foreground) return null;
+      return {
+        name: typeof value.name === "string" ? value.name : "VS Code Theme",
+        type: value.type === "light" ? "light" : "dark",
+        background,
+        foreground: ensureThemeContrast(foreground, background),
+        muted: ensureThemeContrast(value.muted, background, foreground, "#6b7280", 3),
+        accent: normalizeThemeHex(value.accent) || foreground,
+        accent2: normalizeThemeHex(value.accent2) || normalizeThemeHex(value.accent) || foreground,
+        line: ensureThemeContrast(value.line, background, foreground, normalizeThemeHex(value.accent) || foreground, 2.1),
+        lineDraft: normalizeThemeHex(value.lineDraft) || mixThemeColors(value.line || foreground, background, 0.25),
+        selection: normalizeThemeHex(value.selection) || mixThemeColors(value.accent || foreground, background, 0.36),
+        panel: normalizeThemeHex(value.panel) || mixThemeColors(background, foreground, 0.1),
+        panelText: ensureThemeContrast(value.panelText || foreground, normalizeThemeHex(value.panel) || background),
+        panelMuted: ensureThemeContrast(value.panelMuted || value.muted || foreground, normalizeThemeHex(value.panel) || background, foreground, "#6b7280", 3),
+        panelBorder: normalizeThemeHex(value.panelBorder) || mixThemeColors(background, foreground, 0.18),
+        button: normalizeThemeHex(value.button) || normalizeThemeHex(value.accent) || foreground,
+        buttonHover: normalizeThemeHex(value.buttonHover) || normalizeThemeHex(value.button) || normalizeThemeHex(value.accent) || foreground,
+        buttonText: ensureThemeContrast(value.buttonText || foreground, normalizeThemeHex(value.button) || background),
+        markdownCodeBg: normalizeThemeHex(value.markdownCodeBg) || mixThemeColors(background, foreground, 0.12),
+        markdownPreBg: normalizeThemeHex(value.markdownPreBg) || mixThemeColors(background, foreground, 0.1),
+        link: ensureThemeContrast(value.link || value.accent || foreground, background, foreground, normalizeThemeHex(value.accent) || foreground, 3),
+        avatarBg: ensureThemeContrast(value.avatarBg || value.accent || foreground, background, foreground, normalizeThemeHex(value.accent2) || foreground, 2.4),
+        avatarFg: ensureThemeContrast(value.avatarFg || foreground, normalizeThemeHex(value.avatarBg) || normalizeThemeHex(value.accent) || background),
+        avatarBorder: normalizeThemeHex(value.avatarBorder) || mixThemeColors(value.avatarBg || value.accent || foreground, background, 0.35)
+      };
+    }
+
+    function setSkydiveThemeVars(palette) {
+      const root = document.documentElement;
+      const body = document.body;
+      const vars = [
+        "--skydive-bg",
+        "--skydive-text",
+        "--skydive-muted-text",
+        "--skydive-line",
+        "--skydive-line-draft",
+        "--skydive-line-operation-bg",
+        "--skydive-line-operation-border",
+        "--skydive-line-operation-text",
+        "--skydive-line-operation-stroke",
+        "--skydive-selection",
+        "--skydive-markdown-quote-border",
+        "--skydive-markdown-code-bg",
+        "--skydive-markdown-pre-bg",
+        "--skydive-markdown-link",
+        "--skydive-command-menu-bg",
+        "--skydive-command-menu-text",
+        "--skydive-command-menu-muted",
+        "--skydive-command-menu-border",
+        "--skydive-command-menu-selected-bg",
+        "--skydive-widget-bg",
+        "--skydive-widget-text",
+        "--skydive-widget-muted",
+        "--skydive-widget-border",
+        "--skydive-widget-field-bg",
+        "--skydive-widget-field-border",
+        "--skydive-widget-button-bg",
+        "--skydive-widget-button-hover-bg",
+        "--skydive-widget-float-shadow",
+        "--skydive-avatar-bg",
+        "--skydive-avatar-fg",
+        "--skydive-avatar-border"
+      ];
+      if (!palette) {
+        vars.forEach((name) => {
+          root.style.removeProperty(name);
+          body.style.removeProperty(name);
+        });
+        activeSpaceThemePalette = null;
+        document.body.dataset.spaceTheme = "default";
+        refreshCreatorAvatars();
+        return;
+      }
+
+      const panelShadow = mixThemeColors(palette.accent, palette.background, 0.58);
+      const widgetButton = mixThemeColors(palette.panel, "#000000", 0.12);
+      const widgetButtonHover = mixThemeColors(palette.panel, "#000000", 0.07);
+      const map = {
+        "--skydive-bg": palette.background,
+        "--skydive-text": palette.foreground,
+        "--skydive-muted-text": palette.muted,
+        "--skydive-line": palette.line,
+        "--skydive-line-draft": palette.lineDraft,
+        "--skydive-line-operation-bg": palette.panel,
+        "--skydive-line-operation-border": palette.panelBorder,
+        "--skydive-line-operation-text": palette.panelText,
+        "--skydive-line-operation-stroke": palette.panel,
+        "--skydive-selection": palette.selection,
+        "--skydive-markdown-quote-border": palette.panelBorder,
+        "--skydive-markdown-code-bg": palette.markdownCodeBg,
+        "--skydive-markdown-pre-bg": palette.markdownPreBg,
+        "--skydive-markdown-link": palette.link,
+        "--skydive-command-menu-bg": palette.panel,
+        "--skydive-command-menu-text": palette.panelText,
+        "--skydive-command-menu-muted": palette.panelMuted,
+        "--skydive-command-menu-border": palette.panelBorder,
+        "--skydive-command-menu-selected-bg": mixThemeColors(palette.accent, palette.panel, 0.72),
+        "--skydive-widget-bg": palette.panel,
+        "--skydive-widget-text": palette.panelText,
+        "--skydive-widget-muted": palette.panelMuted,
+        "--skydive-widget-border": palette.panelBorder,
+        "--skydive-widget-field-bg": mixThemeColors(palette.panel, palette.background, 0.32),
+        "--skydive-widget-field-border": palette.panelBorder,
+        "--skydive-widget-button-bg": widgetButton,
+        "--skydive-widget-button-hover-bg": widgetButtonHover,
+        "--skydive-widget-float-shadow": panelShadow,
+        "--skydive-avatar-bg": palette.avatarBg,
+        "--skydive-avatar-fg": palette.avatarFg,
+        "--skydive-avatar-border": palette.avatarBorder
+      };
+      Object.entries(map).forEach(([name, value]) => {
+        root.style.setProperty(name, value);
+        body.style.setProperty(name, value);
+      });
+      activeSpaceThemePalette = palette;
+      document.body.dataset.spaceTheme = palette.type || "custom";
+      refreshCreatorAvatars();
+    }
+
+    function applyActiveSpaceTheme() {
+      const activeNodeId = getSpaceThemeNodeId();
+      const state = getThemeNodeState(activeNodeId);
+      const palette = normalizeThemePalette(state && state.palette);
+      setSkydiveThemeVars(palette);
+    }
+
+    function refreshThemeCommandWidgets(skipNode = null) {
+      for (const node of world.children) {
+        if (
+          node instanceof HTMLElement &&
+          node !== skipNode &&
+          isCommandNode(node) &&
+          node.dataset.commandId === THEME_WIDGET_COMMAND_ID &&
+          !isNodeDeleted(node)
+        ) {
+          renderCommandNodeContent(node);
+        }
+      }
+    }
+
+    function applySpaceThemeFromNode(node, palette) {
+      if (!isCommandNode(node) || node.dataset.commandId !== THEME_WIDGET_COMMAND_ID) return false;
+      const normalized = normalizeThemePalette(palette);
+      if (!normalized) return false;
+      spaceMeta = cloneJson(spaceMeta, {});
+      spaceMeta.theme = {
+        activeNodeId: node.dataset.nodeId || "",
+        name: normalized.name,
+        appliedAt: Date.now()
+      };
+      setSkydiveThemeVars(normalized);
+      refreshThemeCommandWidgets(node);
+      scheduleAutosave();
+      return true;
+    }
+
+    function dismissSpaceThemeFromNode(node) {
+      if (!isCommandNode(node) || node.dataset.commandId !== THEME_WIDGET_COMMAND_ID) return false;
+      const activeNodeId = getSpaceThemeNodeId();
+      if (activeNodeId && activeNodeId !== (node.dataset.nodeId || "")) return false;
+      spaceMeta = cloneJson(spaceMeta, {});
+      delete spaceMeta.theme;
+      if (Object.keys(spaceMeta).length === 0) spaceMeta = {};
+      setSkydiveThemeVars(null);
+      refreshThemeCommandWidgets(node);
+      scheduleAutosave();
+      return true;
     }
 
     function normalizeRotation(value) {
@@ -7185,8 +7663,20 @@
     function applyWidgetColor(node) {
       if (!isWidgetColorable(node)) return;
       const color = getWidgetColor(node);
-      if (isCommandNode(node) || color !== DEFAULT_WIDGET_COLOR) node.dataset.widgetColor = color;
-      else delete node.dataset.widgetColor;
+      if (color === DEFAULT_WIDGET_COLOR) {
+        delete node.dataset.widgetColor;
+        [
+          "--widget-color",
+          "--widget-button-color",
+          "--widget-button-hover-color",
+          "--widget-border-color",
+          "--widget-field-color",
+          "--widget-field-border-color",
+          "--widget-float-shadow-color"
+        ].forEach((name) => node.style.removeProperty(name));
+        return;
+      }
+      node.dataset.widgetColor = color;
       node.style.setProperty("--widget-color", color);
       node.style.setProperty("--widget-button-color", adjustWidgetColorLightness(color, -9, 0.44));
       node.style.setProperty("--widget-button-hover-color", adjustWidgetColorLightness(color, -6, 0.44));
@@ -7466,6 +7956,9 @@
         ),
         uploadFile: uploadFileToCloudinary,
         createUploadedFileState,
+        isActiveSpaceTheme: () => getSpaceThemeNodeId() === (node && node.dataset ? node.dataset.nodeId || "" : ""),
+        applySpaceTheme: (palette) => applySpaceThemeFromNode(node, palette),
+        dismissSpaceTheme: () => dismissSpaceThemeFromNode(node),
         getSpaceText: getSpaceTextSnapshot,
         getSpaceTextVersion: () => spaceTextVersion,
         startOutgoingArrowTargets: () => startOutgoingArrowTargets(node),
@@ -9993,6 +10486,7 @@
       });
 
       loadLineConnections(nextLines);
+      applyActiveSpaceTheme();
       updateDocumentTitle();
       markSpaceTextChanged();
 
@@ -10076,6 +10570,7 @@
         await waitForLoadingFrame();
 
         loadLineConnections(nextLines, { onProgress: reportLines });
+        applyActiveSpaceTheme();
         updateDocumentTitle();
         markSpaceTextChanged();
         await waitForLoadingFrame();
@@ -10231,6 +10726,30 @@
       };
     }
 
+    function createUploadingThemeState(file, parsedTheme) {
+      const uploading = createUploadingFileState(file);
+      const palette = normalizeThemePalette(parsedTheme && parsedTheme.palette);
+      return {
+        ...uploading,
+        themeName: palette && palette.name ? palette.name : uploading.fileName,
+        palette,
+        sourceKind: "vscode-theme"
+      };
+    }
+
+    function createUploadedThemeState(file, upload, previousState = {}) {
+      const uploaded = createUploadedFileState(file, upload);
+      const palette = normalizeThemePalette(previousState.palette);
+      return {
+        ...uploaded,
+        themeName: typeof previousState.themeName === "string" && previousState.themeName.trim()
+          ? previousState.themeName.trim()
+          : (palette && palette.name) || uploaded.fileName,
+        palette,
+        sourceKind: "vscode-theme"
+      };
+    }
+
     async function requestCloudinaryUploadSignature(file) {
       const response = await fetch(CLOUDINARY_SIGNATURE_URL, {
         method: "POST",
@@ -10318,6 +10837,16 @@
       );
     }
 
+    function createThemeUploadNode(file, parsedTheme, worldX, worldY) {
+      return createCommandNode(
+        worldX,
+        worldY,
+        THEME_WIDGET_COMMAND_ID,
+        createUploadingThemeState(file, parsedTheme),
+        BASE_TEXT_PX / camera.scale
+      );
+    }
+
     function isAudioFile(file) {
       const mimeType = file && typeof file.type === "string" ? file.type.toLowerCase() : "";
       if (mimeType.startsWith("audio/")) return true;
@@ -10355,6 +10884,32 @@
       } catch (error) {
         console.error("File upload failed:", error);
         updateCommandNodeState(node, createFailedFileState(file, error));
+      }
+    }
+
+    async function uploadThemeForNode(file, node) {
+      try {
+        const upload = await uploadFileToCloudinary(file, (progress) => {
+          const state = readCommandState(node);
+          updateCommandNodeState(node, {
+            ...state,
+            status: "uploading",
+            progress
+          });
+        });
+
+        const previousState = readCommandState(node);
+        updateCommandNodeState(node, createUploadedThemeState(file, upload, previousState));
+      } catch (error) {
+        console.error("Theme upload failed:", error);
+        const state = readCommandState(node);
+        updateCommandNodeState(node, {
+          ...state,
+          ...createFailedFileState(file, error),
+          themeName: state.themeName || (state.palette && state.palette.name) || (file && file.name) || "Theme",
+          palette: normalizeThemePalette(state.palette),
+          sourceKind: "vscode-theme"
+        });
       }
     }
 
@@ -10401,6 +10956,27 @@
       return Array.from(transfer.files).filter((file) => file && typeof file.name === "string");
     }
 
+    async function createNodeForDroppedFile(file, x, y) {
+      if (file && typeof file.name === "string" && /\.json$/i.test(file.name)) {
+        try {
+          const parsedTheme = parseVsCodeThemeText(await file.text());
+          const node = createThemeUploadNode(file, parsedTheme, x, y);
+          void uploadThemeForNode(file, node);
+          return;
+        } catch (error) {
+          // Ordinary JSON drops should keep the existing file-upload behavior.
+        }
+      }
+
+      if (isAudioFile(file)) {
+        const node = createAudioUploadNode(file, x, y);
+        void uploadAudioForNode(file, node);
+        return;
+      }
+      const node = createFileUploadNode(file, x, y);
+      void uploadFileForNode(file, node);
+    }
+
     function handleDroppedFiles(files, clientX, clientY) {
       if (files.length === 0) return;
 
@@ -10409,13 +10985,7 @@
       files.forEach((file, index) => {
         const x = point.x + index * offset;
         const y = point.y + index * offset;
-        if (isAudioFile(file)) {
-          const node = createAudioUploadNode(file, x, y);
-          void uploadAudioForNode(file, node);
-          return;
-        }
-        const node = createFileUploadNode(file, x, y);
-        void uploadFileForNode(file, node);
+        void createNodeForDroppedFile(file, x, y);
       });
     }
 
