@@ -89,6 +89,30 @@
       transition: none;
     }
 
+    body.theme-transitioning,
+    body.theme-transitioning #viewport,
+    body.theme-transitioning #line-layer,
+    body.theme-transitioning .text-node,
+    body.theme-transitioning .command-node > :first-child,
+    body.theme-transitioning .command-node button,
+    body.theme-transitioning .command-node input,
+    body.theme-transitioning .command-node textarea,
+    body.theme-transitioning .command-node select,
+    body.theme-transitioning .external-link-card,
+    body.theme-transitioning .external-link-card button,
+    body.theme-transitioning #node-context-menu,
+    body.theme-transitioning #line-context-menu,
+    body.theme-transitioning #canvas-context-menu,
+    body.theme-transitioning #slash-command-menu,
+    body.theme-transitioning .connection-line-stroke,
+    body.theme-transitioning .connection-line-arrowhead,
+    body.theme-transitioning .connection-line-operation circle,
+    body.theme-transitioning .connection-line-operation text {
+      transition-duration: 260ms;
+      transition-property: background-color, background, color, border-color, fill, stroke, outline-color, box-shadow, filter;
+      transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+    }
+
     #viewport.panning,
     #viewport.panning .text-node,
     #viewport.panning .external-link-card,
@@ -1354,6 +1378,125 @@
       text-align: center;
     }
   </style>
+  <script>
+    (function () {
+      const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
+      const THEME_WIDGET_COMMAND_ID = "theme";
+
+      function decodePathPart(part) {
+        try {
+          return decodeURIComponent(part).trim();
+        } catch (error) {
+          return String(part || "").trim();
+        }
+      }
+
+      function getSharedSpaceSlug() {
+        const reserved = new Set(["agents", "api", "playground"]);
+        const parts = window.location.pathname.split("/").filter(Boolean);
+        if (parts.length === 0 || (parts.length === 1 && parts[0] === "index.html")) return "";
+        const decoded = parts.map(decodePathPart).filter(Boolean);
+        if (decoded.length === 0 || reserved.has(decoded[0])) return "";
+        return decoded.join("/");
+      }
+
+      function findCachedThemePalette(state) {
+        const activeNodeId = state &&
+          state.meta &&
+          state.meta.theme &&
+          typeof state.meta.theme.activeNodeId === "string"
+          ? state.meta.theme.activeNodeId
+          : "";
+        const nodes = state && Array.isArray(state.nodes) ? state.nodes : [];
+        const themeNode = nodes.find((node) => (
+          node &&
+          node.id === activeNodeId &&
+          node.kind === "command" &&
+          node.commandId === THEME_WIDGET_COMMAND_ID &&
+          !node.deletedAt
+        ));
+        const palette = themeNode &&
+          themeNode.commandState &&
+          typeof themeNode.commandState === "object"
+          ? themeNode.commandState.palette
+          : null;
+        return palette && typeof palette === "object" ? palette : null;
+      }
+
+      function mix(color, other, amount) {
+        const left = /^#([0-9a-f]{6})$/i.exec(String(color || ""));
+        const right = /^#([0-9a-f]{6})$/i.exec(String(other || ""));
+        if (!left || !right) return color || other || "";
+        const t = Math.min(1, Math.max(0, Number(amount) || 0));
+        const parts = [0, 2, 4].map((offset) => {
+          const a = parseInt(left[1].slice(offset, offset + 2), 16);
+          const b = parseInt(right[1].slice(offset, offset + 2), 16);
+          return Math.round(a + (b - a) * t).toString(16).padStart(2, "0");
+        });
+        return `#${parts.join("")}`;
+      }
+
+      function applyCachedThemePalette(palette) {
+        if (!palette || !palette.background || !palette.foreground || !palette.panel) return;
+        const widgetButton = mix(palette.panel, "#000000", 0.12);
+        const widgetButtonHover = mix(palette.panel, "#000000", 0.07);
+        const values = {
+          "--skydive-bg": palette.background,
+          "--skydive-text": palette.foreground,
+          "--skydive-muted-text": palette.muted,
+          "--skydive-line": palette.line,
+          "--skydive-line-draft": palette.lineDraft,
+          "--skydive-line-operation-bg": palette.panel,
+          "--skydive-line-operation-border": palette.panelBorder,
+          "--skydive-line-operation-text": palette.panelText,
+          "--skydive-line-operation-stroke": palette.panel,
+          "--skydive-selection": palette.selection,
+          "--skydive-markdown-quote-border": palette.panelBorder,
+          "--skydive-markdown-code-bg": palette.markdownCodeBg,
+          "--skydive-markdown-pre-bg": palette.markdownPreBg,
+          "--skydive-markdown-link": palette.link,
+          "--skydive-command-menu-bg": palette.panel,
+          "--skydive-command-menu-text": palette.panelText,
+          "--skydive-command-menu-muted": palette.panelMuted,
+          "--skydive-command-menu-border": palette.panelBorder,
+          "--skydive-command-menu-selected-bg": mix(palette.accent, palette.panel, 0.72),
+          "--skydive-widget-bg": palette.panel,
+          "--skydive-widget-text": palette.panelText,
+          "--skydive-widget-muted": palette.panelMuted,
+          "--skydive-widget-border": palette.panelBorder,
+          "--skydive-widget-field-bg": mix(palette.panel, palette.background, 0.32),
+          "--skydive-widget-field-border": palette.panelBorder,
+          "--skydive-widget-button-bg": widgetButton,
+          "--skydive-widget-button-hover-bg": widgetButtonHover,
+          "--skydive-widget-float-shadow": mix(palette.accent, palette.background, 0.58),
+          "--skydive-avatar-bg": palette.avatarBg,
+          "--skydive-avatar-fg": palette.avatarFg,
+          "--skydive-avatar-border": palette.avatarBorder
+        };
+        const css = Object.entries(values)
+          .filter((entry) => typeof entry[1] === "string" && entry[1])
+          .map(([name, value]) => `${name}: ${value};`)
+          .join("");
+        if (!css) return;
+        const style = document.createElement("style");
+        style.id = "early-space-theme";
+        style.textContent = `html,body{${css}}`;
+        document.head.appendChild(style);
+        document.documentElement.dataset.spaceTheme = palette.type || "custom";
+      }
+
+      try {
+        const slug = getSharedSpaceSlug();
+        if (!slug) return;
+        const raw = localStorage.getItem(`${SHARED_SPACE_CACHE_KEY}.${slug}`);
+        if (!raw) return;
+        const cache = JSON.parse(raw);
+        applyCachedThemePalette(findCachedThemePalette(cache && cache.state));
+      } catch (error) {
+        document.documentElement.removeAttribute("data-space-theme");
+      }
+    })();
+  </script>
 </head>
 <body>
   <quico hidden>S</quico>
@@ -1575,7 +1718,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 199; // Increment once for each commit.
+    const APP_VERSION = 200; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -4503,7 +4646,24 @@
       };
     }
 
-    function setSkydiveThemeVars(palette) {
+    function runThemeTransition() {
+      if (!document.body || !document.body.classList) return;
+      document.body.classList.add("theme-transitioning");
+      void document.body.offsetWidth;
+      window.setTimeout(() => {
+        if (document.body) document.body.classList.remove("theme-transitioning");
+      }, 320);
+    }
+
+    function clearEarlySpaceTheme() {
+      const earlyTheme = document.getElementById("early-space-theme");
+      if (earlyTheme) earlyTheme.remove();
+      document.documentElement.removeAttribute("data-space-theme");
+    }
+
+    function setSkydiveThemeVars(palette, options = {}) {
+      if (options.smooth === true) runThemeTransition();
+      clearEarlySpaceTheme();
       const root = document.documentElement;
       const body = document.body;
       const vars = [
@@ -4626,7 +4786,7 @@
         name: normalized.name,
         appliedAt: Date.now()
       };
-      setSkydiveThemeVars(normalized);
+      setSkydiveThemeVars(normalized, { smooth: true });
       refreshThemeCommandWidgets(node);
       scheduleAutosave();
       return true;
@@ -4639,7 +4799,7 @@
       spaceMeta = cloneJson(spaceMeta, {});
       delete spaceMeta.theme;
       if (Object.keys(spaceMeta).length === 0) spaceMeta = {};
-      setSkydiveThemeVars(null);
+      setSkydiveThemeVars(null, { smooth: true });
       refreshThemeCommandWidgets(node);
       scheduleAutosave();
       return true;
