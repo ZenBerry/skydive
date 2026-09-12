@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-09-12: Refined `/tuwer` with container-scaled graph drawing, a traveling playhead dot, simultaneous active synth layers, and balanced formula slash-command capture. Bumped `APP_VERSION` to 202 and `tuwer` to 1.0.1.
+
 - 2026-09-12: Added lazy-loaded `/tuwer`, a dependency-free graphed-function synth widget with formula preview, keyboard activation, and semitone key mapping. Bumped `APP_VERSION` to 201 and added `tuwer` command registry metadata.
 
 - 2026-09-06: Added Shift+Arrow shortcuts to smoothly align multi-selected nodes to the matching selection rectangle edge, using rotated node corners and selection-space geometry so canvas and node rotation stay correct. Bumped `APP_VERSION` to 194.

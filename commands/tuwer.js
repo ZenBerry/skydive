@@ -8,6 +8,8 @@
   const ATTACK_SECONDS = 0.012;
   const RELEASE_SECONDS = 0.17;
   const SAMPLE_COUNT = 256;
+  const GRAPH_FALLBACK_WIDTH = 220;
+  const GRAPH_FALLBACK_HEIGHT = 82;
   const SAFE_IDENTIFIERS = new Set([
     "x", "y", "t", "phase", "pi", "e", "sin", "cos", "tan", "asin", "acos", "atan",
     "atan2", "sinh", "cosh", "tanh", "abs", "sqrt", "cbrt", "pow", "exp", "log",
@@ -15,7 +17,6 @@
     "random", "mod", "clamp"
   ]);
   const runtimes = new WeakMap();
-  let activeRuntime = null;
 
   function cleanFormula(value) {
     const withoutComment = String(value || "").split("//")[0].trim();
@@ -110,14 +111,14 @@
     return runtime.audioContext;
   }
 
-  function drawGraph(canvas, wave, activeIndex) {
-    const width = 190;
-    const height = 70;
+  function drawGraph(canvas, wave, playheads = []) {
+    const cssWidth = Math.round(canvas.clientWidth || GRAPH_FALLBACK_WIDTH);
+    const cssHeight = Math.round(canvas.clientHeight || GRAPH_FALLBACK_HEIGHT);
+    const width = Math.max(1, cssWidth);
+    const height = Math.max(1, cssHeight);
     const scale = window.devicePixelRatio || 1;
     canvas.width = Math.round(width * scale);
     canvas.height = Math.round(height * scale);
-    canvas.style.width = `${width}px`;
-    canvas.style.height = `${height}px`;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.setTransform(scale, 0, 0, scale, 0, 0);
@@ -146,14 +147,61 @@
       else ctx.lineTo(x, y);
     });
     ctx.stroke();
-    if (Number.isFinite(activeIndex)) {
-      const x = activeIndex / Math.max(1, KEYBOARD_ORDER.length - 1) * width;
-      ctx.strokeStyle = "rgba(239, 97, 61, 0.72)";
+    playheads.forEach((playhead) => {
+      const phase = Number(playhead && playhead.phase);
+      if (!Number.isFinite(phase)) return;
+      const normalizedPhase = phase - Math.floor(phase);
+      const wavePosition = normalizedPhase * wave.length;
+      const sampleIndex = Math.floor(wavePosition) % wave.length;
+      const nextIndex = (sampleIndex + 1) % wave.length;
+      const blend = wavePosition - Math.floor(wavePosition);
+      const value = wave[sampleIndex] * (1 - blend) + wave[nextIndex] * blend;
+      const x = normalizedPhase * width;
+      const y = height / 2 - value * (height * 0.38);
+      ctx.strokeStyle = "rgba(239, 97, 61, 0.38)";
       ctx.beginPath();
       ctx.moveTo(x, 0);
       ctx.lineTo(x, height);
       ctx.stroke();
-    }
+      ctx.fillStyle = "#ef613d";
+      ctx.beginPath();
+      ctx.arc(x, y, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255, 250, 244, 0.92)";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    });
+  }
+
+  function getRuntimePlayheads(runtime) {
+    if (!runtime || !runtime.audioContext) return [];
+    return Array.from(runtime.notes.values()).map((note) => ({
+      phase: (runtime.audioContext.currentTime - note.startedAt) * note.frequency
+    }));
+  }
+
+  function renderRuntimeGraph(runtime) {
+    drawGraph(runtime.canvas, runtime.wave, getRuntimePlayheads(runtime));
+  }
+
+  function stopAnimation(runtime) {
+    if (!runtime || !runtime.animationFrame) return;
+    cancelAnimationFrame(runtime.animationFrame);
+    runtime.animationFrame = null;
+  }
+
+  function startAnimation(runtime) {
+    if (!runtime || runtime.animationFrame) return;
+    const tick = () => {
+      runtime.animationFrame = null;
+      if (!runtime.notes.size || !runtime.card.isConnected) {
+        renderRuntimeGraph(runtime);
+        return;
+      }
+      renderRuntimeGraph(runtime);
+      runtime.animationFrame = requestAnimationFrame(tick);
+    };
+    runtime.animationFrame = requestAnimationFrame(tick);
   }
 
   function stopNote(runtime, key) {
@@ -203,10 +251,17 @@
       source.disconnect();
       gain.disconnect();
     }, { once: true });
-    runtime.notes.set(key, { source, gain, audioContext });
+    runtime.notes.set(key, {
+      source,
+      gain,
+      audioContext,
+      frequency,
+      startedAt: audioContext.currentTime
+    });
     runtime.card.dataset.playing = "true";
     runtime.activeKey.textContent = key === " " ? "Space" : key;
-    drawGraph(runtime.canvas, runtime.wave, index);
+    renderRuntimeGraph(runtime);
+    startAnimation(runtime);
   }
 
   function clearRuntime(container) {
@@ -216,10 +271,11 @@
     runtime.notes.clear();
     document.removeEventListener("keydown", runtime.onKeyDown, true);
     document.removeEventListener("keyup", runtime.onKeyUp, true);
+    window.removeEventListener("resize", runtime.onResize);
+    stopAnimation(runtime);
     if (runtime.audioContext && runtime.audioContext.state !== "closed") {
       void runtime.audioContext.close().catch(() => {});
     }
-    if (activeRuntime === runtime) activeRuntime = null;
     runtimes.delete(container);
   }
 
@@ -232,8 +288,8 @@
     runtime.card.dataset.playing = "false";
     runtime.button.textContent = "Activate keyboard";
     runtime.activeKey.textContent = "";
-    drawGraph(runtime.canvas, runtime.wave, null);
-    if (activeRuntime === runtime) activeRuntime = null;
+    stopAnimation(runtime);
+    renderRuntimeGraph(runtime);
   }
 
   window.SkydiveCommands.push({
@@ -275,7 +331,7 @@
             <div class="tuwer-title">Tuwer</div>
             <div class="tuwer-key" aria-live="polite"></div>
           </div>
-          <canvas class="tuwer-graph" width="190" height="70" aria-label="Tuwer function graph"></canvas>
+          <canvas class="tuwer-graph" aria-label="Tuwer function graph"></canvas>
           <input class="tuwer-formula" data-command-interactive spellcheck="false" aria-label="Tuwer formula">
           <div class="tuwer-actions">
             <button class="tuwer-button" type="button" data-command-interactive data-action="activate">Activate keyboard</button>
@@ -289,7 +345,7 @@
         .tuwer-card {
           display: grid;
           gap: 0.38em;
-          width: 9.3em;
+          width: 12.8em;
           box-sizing: border-box;
           padding: 0.55em 0.62em 0.58em;
           border: 0.04em solid var(--widget-border-color, #d8d0c4);
@@ -322,8 +378,8 @@
 
         .tuwer-graph {
           display: block;
-          width: 100%;
-          height: auto;
+          inline-size: 100%;
+          block-size: 3.62em;
           aspect-ratio: 19 / 7;
           box-sizing: border-box;
           border: 0.04em solid rgba(54, 45, 36, 0.14);
@@ -376,11 +432,12 @@
       const activeKey = container.querySelector(".tuwer-key");
       input.value = formula;
       errorNode.textContent = error;
-      drawGraph(canvas, wave.length ? wave : [0, 0], null);
+      drawGraph(canvas, wave.length ? wave : [0, 0]);
 
       const runtime = {
         active: false,
         audioContext: null,
+        animationFrame: null,
         button,
         canvas,
         card,
@@ -388,7 +445,8 @@
         notes: new Map(),
         wave,
         onKeyDown: null,
-        onKeyUp: null
+        onKeyUp: null,
+        onResize: null
       };
 
       runtime.onKeyDown = (event) => {
@@ -408,13 +466,20 @@
         if (runtime.notes.size === 0) {
           runtime.card.dataset.playing = "false";
           runtime.activeKey.textContent = "";
-          drawGraph(runtime.canvas, runtime.wave, null);
+          stopAnimation(runtime);
+          renderRuntimeGraph(runtime);
         }
       };
+      runtime.onResize = () => renderRuntimeGraph(runtime);
 
       document.addEventListener("keydown", runtime.onKeyDown, true);
       document.addEventListener("keyup", runtime.onKeyUp, true);
+      window.addEventListener("resize", runtime.onResize);
       runtimes.set(container, runtime);
+      requestAnimationFrame(() => {
+        if (!container.isConnected || runtimes.get(container) !== runtime) return;
+        renderRuntimeGraph(runtime);
+      });
 
       input.addEventListener("keydown", (event) => {
         if (event.key !== "Enter") return;
@@ -438,9 +503,7 @@
           deactivateRuntime(runtime);
           return;
         }
-        if (activeRuntime && activeRuntime !== runtime) deactivateRuntime(activeRuntime);
         runtime.active = true;
-        activeRuntime = runtime;
         card.dataset.active = "true";
         button.textContent = "Keyboard active";
       });

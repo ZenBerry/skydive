@@ -200,7 +200,7 @@
     },
     {
       "id": "tuwer",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "title": "Tuwer",
       "description": "Play a graphed-function instrument from the keyboard.",
       "aliases": ["graph-synth", "function-synth"],

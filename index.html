@@ -1718,7 +1718,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 201; // Increment once for each commit.
+    const APP_VERSION = 202; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -8537,6 +8537,27 @@
       normalizeNodeMarkup(node);
     }
 
+    function getCommandExecutionSession(command, node, session) {
+      if (!command || command.id !== "tuwer" || !session || !node) return session;
+      const text = node.textContent || "";
+      const trailingMatch = text.slice(session.tokenEnd).match(/^\S+/);
+      if (!trailingMatch) return session;
+
+      const args = String(session.args || "");
+      const balance = Array.from(args).reduce((total, character) => {
+        if (character === "(") return total + 1;
+        if (character === ")") return total - 1;
+        return total;
+      }, 0);
+      if (balance <= 0 && !/^[)\]}]/.test(trailingMatch[0])) return session;
+
+      return {
+        ...session,
+        args: `${args}${trailingMatch[0]}`.trim(),
+        tokenEnd: session.tokenEnd + trailingMatch[0].length
+      };
+    }
+
     function insertTextAtCaretInNode(node, text) {
       const selection = window.getSelection();
       if (!selection || selection.rangeCount === 0) return false;
@@ -8637,12 +8658,13 @@
       if (!session) return;
       const command = session.commands[index];
       if (!command) return;
+      const executionSession = getCommandExecutionSession(command, session.node, session);
 
-      const sourceNode = session.node;
+      const sourceNode = executionSession.node;
       const size = getNodeWorldSize(sourceNode);
       const sourceX = Number(sourceNode.dataset.x);
       const sourceY = Number(sourceNode.dataset.y);
-      removeSlashToken(sourceNode, session);
+      removeSlashToken(sourceNode, executionSession);
 
       if (command.kind === "template") {
         const insertX = sourceX;
@@ -8675,7 +8697,7 @@
       }
 
       if (command.output === "text" && typeof command.createText === "function") {
-        insertTextAtCaretInNode(sourceNode, command.createText({ args: session.args || "", query: session.query || "" }));
+        insertTextAtCaretInNode(sourceNode, command.createText({ args: executionSession.args || "", query: executionSession.query || "" }));
         sourceNode.focus();
         closeSlashCommandMenu();
         scheduleAutosave();
@@ -8683,7 +8705,7 @@
       }
 
       const state = typeof command.createState === "function"
-        ? command.createState({ args: session.args || "", query: session.query || "" })
+        ? command.createState({ args: executionSession.args || "", query: executionSession.query || "" })
         : {};
       const commandNode = createCommandNode(
         sourceX,
