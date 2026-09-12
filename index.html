@@ -1718,7 +1718,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 200; // Increment once for each commit.
+    const APP_VERSION = 201; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -1956,6 +1956,26 @@
         source: "static",
         dynamicExecutable: false,
         script: "/commands/broadcast.js"
+      }],
+      ["tuwer", {
+        id: "tuwer",
+        title: "Tuwer",
+        description: "Play a graphed-function instrument from the keyboard.",
+        aliases: ["graph-synth", "function-synth"],
+        acceptsArgs: true,
+        source: "static",
+        dynamicExecutable: false,
+        script: "/commands/tuwer.js",
+        createState(context = {}) {
+          const formula = String(context.args || "").split("//")[0].trim();
+          return {
+            formula: formula || "x=sin(y)"
+          };
+        },
+        getTitle(state) {
+          const formula = String(state && state.formula || "").split("//")[0].trim();
+          return formula ? `Tuwer ${formula}` : "Tuwer";
+        }
       }]
     ]);
     let externalLinkCardPointer = null;

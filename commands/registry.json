@@ -199,6 +199,22 @@
       }
     },
     {
+      "id": "tuwer",
+      "version": "1.0.0",
+      "title": "Tuwer",
+      "description": "Play a graphed-function instrument from the keyboard.",
+      "aliases": ["graph-synth", "function-synth"],
+      "acceptsArgs": true,
+      "source": "static",
+      "dynamicExecutable": false,
+      "stateSchema": {
+        "type": "object",
+        "properties": {
+          "formula": { "type": "string" }
+        }
+      }
+    },
+    {
       "id": "delorean",
       "version": "1.0.0",
       "title": "Delorean",
