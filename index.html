@@ -1718,7 +1718,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 203; // Increment once for each commit.
+    const APP_VERSION = 204; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -1728,6 +1728,7 @@
     const SHARED_REALTIME_PATCH_SETTLE_MS = 1500;
     const REMOTE_POINTER_COLORS = ["#10b981", "#3b82f6", "#f97316", "#ec4899", "#8b5cf6", "#06b6d4", "#84cc16", "#f43f5e"];
     const NODE_CLIPBOARD_TYPE = "skydive.nodes.v1";
+    const NODE_CLIPBOARD_MIME = "application/x-skydive-nodes";
     const NODE_DUPLICATE_OFFSET_SCREEN_PX = 36;
     const DEFAULT_TEMPLATE_DESCRIPTION = "A pre-saved template";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
@@ -2009,6 +2010,7 @@
     let suppressMobileNativeDblClickUntil = 0;
     let suppressMobileClickUntil = 0;
     let mobileSuppressedClickTarget = null;
+    let lastPointerClient = { x: window.innerWidth * 0.5, y: window.innerHeight * 0.5 };
     const mobileLongPressPointerIds = new Set();
     const mobileTouchPoints = new Map();
     const nodeHighlightTimeouts = new WeakMap();
@@ -8693,22 +8695,29 @@
       }
     }
 
+    function getNodeClipboardPayload(clipboardData) {
+      if (!clipboardData) return null;
+      return (
+        parseNodeClipboardEnvelope(clipboardData.getData(NODE_CLIPBOARD_MIME) || "") ||
+        parseNodeClipboardEnvelope(clipboardData.getData(NODE_CLIPBOARD_TYPE) || "") ||
+        parseNodeClipboardEnvelope(clipboardData.getData("text/plain") || "")
+      );
+    }
+
+    function updateNodeClipboardPointer(event) {
+      if (!event) return;
+      const x = Number(event.clientX);
+      const y = Number(event.clientY);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+      lastPointerClient = { x, y };
+    }
+
     function getNodeClipboardPastePoint(payload) {
       const nodes = payload && Array.isArray(payload.nodes) ? payload.nodes : [];
-      const xs = nodes.map((entry) => Number(entry && entry.x)).filter(Number.isFinite);
-      const ys = nodes.map((entry) => Number(entry && entry.y)).filter(Number.isFinite);
-      const minX = xs.length > 0 ? Math.min(...xs) : 0;
-      const maxX = xs.length > 0 ? Math.max(...xs) : 0;
-      const minY = ys.length > 0 ? Math.min(...ys) : 0;
-      const maxY = ys.length > 0 ? Math.max(...ys) : 0;
       const allFloating = nodes.length > 0 && nodes.every((entry) => entry && entry.floating === true);
-      const center = allFloating
-        ? { x: window.innerWidth * 0.5, y: window.innerHeight * 0.5 }
-        : screenToWorld(window.innerWidth * 0.5, window.innerHeight * 0.5);
-      return {
-        x: center.x - (minX + maxX) * 0.5,
-        y: center.y - (minY + maxY) * 0.5
-      };
+      return allFloating
+        ? { ...lastPointerClient }
+        : screenToWorld(lastPointerClient.x, lastPointerClient.y);
     }
 
     function pasteNodeClipboardPayload(payload, options = {}) {
@@ -8733,7 +8742,10 @@
       if (!clipboardData || selectedNodes.size === 0) return false;
       const text = stringifyNodeClipboardEnvelope(Array.from(selectedNodes));
       if (!text) return false;
-      clipboardData.setData("text/plain", text);
+      if (typeof clipboardData.clearData === "function") clipboardData.clearData();
+      clipboardData.setData(NODE_CLIPBOARD_MIME, text);
+      clipboardData.setData(NODE_CLIPBOARD_TYPE, text);
+      clipboardData.setData("text/plain", "");
       return true;
     }
 
@@ -12225,6 +12237,8 @@
     }
 
     window.addEventListener("pointermove", updateGroupTransform, { capture: true });
+    window.addEventListener("pointermove", updateNodeClipboardPointer, { capture: true });
+    window.addEventListener("pointerdown", updateNodeClipboardPointer, { capture: true });
     window.addEventListener("pointermove", scheduleSharedRealtimePointer, { capture: true });
     window.addEventListener("pointerup", endGroupTransform, { capture: true });
     window.addEventListener("pointercancel", endGroupTransform, { capture: true });
@@ -12343,6 +12357,7 @@
 
     viewport.addEventListener("wheel", (event) => {
       event.preventDefault();
+      updateNodeClipboardPointer(event);
       handleCanvasWheelInput({
         clientX: event.clientX,
         clientY: event.clientY,
@@ -12457,7 +12472,7 @@
     window.addEventListener("paste", (event) => {
       if (!shouldUseNodeClipboardForEvent(event)) return;
       const clipboard = event.clipboardData;
-      const payload = parseNodeClipboardEnvelope(clipboard ? clipboard.getData("text/plain") || "" : "");
+      const payload = getNodeClipboardPayload(clipboard);
       if (!payload) return;
       event.preventDefault();
       event.stopPropagation();
