@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-09-13: Version 207: Added viewport-aware vertical scrolling to the slash-command menu so long command/template lists stay neat and selectable without overflowing the screen.
+
 - 2026-09-13: Version 206: Added `/twimla` as a traced equation-path synth whose playhead and audio both follow the same selected graph path, preserving `/flufi` as its own equation-wave variant.
 
 - 2026-09-13: Version 205: Added `/flufi` as a separate equation-graph synth for explicit `y=f(x)`, explicit `x=f(y)`, and implicit `left=right` formulas, preserving `/tuwer` as the existing waveform synth. Hardened implicit contour drawing against odd crossing counts.

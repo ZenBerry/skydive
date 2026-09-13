@@ -1108,6 +1108,10 @@
       box-shadow: 0 10px 28px rgba(83, 63, 43, 0.12);
       display: grid;
       gap: 3px;
+      max-height: calc(100vh - 16px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-gutter: stable;
     }
 
     #slash-command-menu[hidden] {
@@ -1718,7 +1722,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 206; // Increment once for each commit.
+    const APP_VERSION = 207; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -8511,11 +8515,24 @@
     function positionSlashCommandMenu(range, fallbackNode) {
       const rect = range.getBoundingClientRect();
       const fallbackRect = fallbackNode.getBoundingClientRect();
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+      const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
       const x = rect.left || fallbackRect.left;
       const y = (rect.bottom || fallbackRect.bottom) + 8;
+      const anchorTop = rect.top || fallbackRect.top;
+      const availableBelow = Math.max(0, viewportHeight - y - 8);
+      const availableAbove = Math.max(0, anchorTop - 8);
+      slashCommandMenu.style.maxHeight = "";
       const menuRect = slashCommandMenu.getBoundingClientRect();
-      slashCommandMenu.style.left = `${clamp(x, 8, Math.max(8, window.innerWidth - menuRect.width - 8))}px`;
-      slashCommandMenu.style.top = `${clamp(y, 8, Math.max(8, window.innerHeight - menuRect.height - 8))}px`;
+      const shouldOpenAbove = menuRect.height > availableBelow && availableAbove > availableBelow;
+      const availableHeight = shouldOpenAbove ? availableAbove : availableBelow;
+      slashCommandMenu.style.maxHeight = `${Math.max(48, availableHeight)}px`;
+      const visibleHeight = Math.min(menuRect.height, Math.max(48, availableHeight));
+      const top = shouldOpenAbove
+        ? anchorTop - visibleHeight - 8
+        : y;
+      slashCommandMenu.style.left = `${clamp(x, 8, Math.max(8, viewportWidth - menuRect.width - 8))}px`;
+      slashCommandMenu.style.top = `${clamp(top, 8, Math.max(8, viewportHeight - visibleHeight - 8))}px`;
     }
 
     function renderSlashCommandMenu() {
@@ -8546,6 +8563,7 @@
 
       slashCommandMenu.hidden = false;
       positionSlashCommandMenu(range, node);
+      slashCommandMenu.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
     }
 
     function updateSlashMenuForNode(node) {
