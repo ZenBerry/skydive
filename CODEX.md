@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-09-13: Version 205: Added `/flufi` as a separate equation-graph synth for explicit `y=f(x)`, explicit `x=f(y)`, and implicit `left=right` formulas, preserving `/tuwer` as the existing waveform synth. Hardened implicit contour drawing against odd crossing counts.
+
 - 2026-09-13: Version 204: Anchored pasted node groups at the latest mouse pointer position and moved node clipboard payloads into Skydive-specific clipboard formats with an empty plain-text flavor to avoid leaking node JSON into unrelated editors.
 
 - 2026-09-13: Version 203: Added node-level copy/paste/duplicate shortcuts for selected canvas nodes, including cross-space clipboard payloads. Also added a saved `/tuwer` loop-speed slider with very slow playback support and global Escape deactivation for active Tuwer widgets. Bumped `tuwer` to 1.0.2.

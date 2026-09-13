@@ -216,6 +216,23 @@
       }
     },
     {
+      "id": "flufi",
+      "version": "1.0.0",
+      "title": "Flufi",
+      "description": "Play explicit and implicit equation graphs from the keyboard.",
+      "aliases": ["graph-equation", "equation-synth"],
+      "acceptsArgs": true,
+      "source": "static",
+      "dynamicExecutable": false,
+      "stateSchema": {
+        "type": "object",
+        "properties": {
+          "formula": { "type": "string" },
+          "speed": { "type": "number" }
+        }
+      }
+    },
+    {
       "id": "delorean",
       "version": "1.0.0",
       "title": "Delorean",
