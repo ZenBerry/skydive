@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-09-13: Version 203: Added node-level copy/paste/duplicate shortcuts for selected canvas nodes, including cross-space clipboard payloads. Also added a saved `/tuwer` loop-speed slider with very slow playback support and global Escape deactivation for active Tuwer widgets. Bumped `tuwer` to 1.0.2.
+
 - 2026-09-12: Refined `/tuwer` with container-scaled graph drawing, a traveling playhead dot, simultaneous active synth layers, and balanced formula slash-command capture. Bumped `APP_VERSION` to 202 and `tuwer` to 1.0.1.
 
 - 2026-09-12: Added lazy-loaded `/tuwer`, a dependency-free graphed-function synth widget with formula preview, keyboard activation, and semitone key mapping. Bumped `APP_VERSION` to 201 and added `tuwer` command registry metadata.

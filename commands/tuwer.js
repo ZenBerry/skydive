@@ -10,6 +10,9 @@
   const SAMPLE_COUNT = 256;
   const GRAPH_FALLBACK_WIDTH = 220;
   const GRAPH_FALLBACK_HEIGHT = 82;
+  const DEFAULT_SPEED = 1;
+  const MIN_SPEED_EXPONENT = -6;
+  const MAX_SPEED_EXPONENT = 2;
   const SAFE_IDENTIFIERS = new Set([
     "x", "y", "t", "phase", "pi", "e", "sin", "cos", "tan", "asin", "acos", "atan",
     "atan2", "sinh", "cosh", "tanh", "abs", "sqrt", "cbrt", "pow", "exp", "log",
@@ -17,6 +20,34 @@
     "random", "mod", "clamp"
   ]);
   const runtimes = new WeakMap();
+  const activeRuntimes = new Set();
+
+  function clampNumber(value, min, max) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return min;
+    return Math.min(max, Math.max(min, number));
+  }
+
+  function speedToSliderValue(speed) {
+    const normalizedSpeed = clampNumber(speed, Math.pow(2, MIN_SPEED_EXPONENT), Math.pow(2, MAX_SPEED_EXPONENT));
+    return clampNumber(Math.log2(normalizedSpeed), MIN_SPEED_EXPONENT, MAX_SPEED_EXPONENT);
+  }
+
+  function sliderValueToSpeed(value) {
+    return Math.pow(2, clampNumber(value, MIN_SPEED_EXPONENT, MAX_SPEED_EXPONENT));
+  }
+
+  function normalizeSpeed(value) {
+    return sliderValueToSpeed(speedToSliderValue(value || DEFAULT_SPEED));
+  }
+
+  function formatSpeed(speed) {
+    const normalizedSpeed = normalizeSpeed(speed);
+    if (normalizedSpeed < 0.1) return `${normalizedSpeed.toFixed(3)}x`;
+    if (normalizedSpeed < 1) return `${normalizedSpeed.toFixed(2)}x`;
+    if (normalizedSpeed < 10) return `${normalizedSpeed.toFixed(1)}x`;
+    return `${normalizedSpeed.toFixed(0)}x`;
+  }
 
   function cleanFormula(value) {
     const withoutComment = String(value || "").split("//")[0].trim();
@@ -176,7 +207,7 @@
   function getRuntimePlayheads(runtime) {
     if (!runtime || !runtime.audioContext) return [];
     return Array.from(runtime.notes.values()).map((note) => ({
-      phase: (runtime.audioContext.currentTime - note.startedAt) * note.frequency
+      phase: (runtime.audioContext.currentTime - note.startedAt) * note.frequency * runtime.speed
     }));
   }
 
@@ -243,6 +274,7 @@
     const gain = audioContext.createGain();
     source.buffer = buffer;
     source.loop = true;
+    source.playbackRate.setValueAtTime(runtime.speed, audioContext.currentTime);
     gain.gain.setValueAtTime(0.0001, audioContext.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.24, audioContext.currentTime + ATTACK_SECONDS);
     source.connect(gain).connect(audioContext.destination);
@@ -272,6 +304,7 @@
     document.removeEventListener("keydown", runtime.onKeyDown, true);
     document.removeEventListener("keyup", runtime.onKeyUp, true);
     window.removeEventListener("resize", runtime.onResize);
+    activeRuntimes.delete(runtime);
     stopAnimation(runtime);
     if (runtime.audioContext && runtime.audioContext.state !== "closed") {
       void runtime.audioContext.close().catch(() => {});
@@ -282,6 +315,7 @@
   function deactivateRuntime(runtime) {
     if (!runtime) return;
     runtime.active = false;
+    activeRuntimes.delete(runtime);
     runtime.notes.forEach((note, key) => stopNote(runtime, key));
     runtime.notes.clear();
     runtime.card.dataset.active = "false";
@@ -292,6 +326,19 @@
     renderRuntimeGraph(runtime);
   }
 
+  function deactivateAllActiveRuntimes() {
+    if (activeRuntimes.size === 0) return false;
+    Array.from(activeRuntimes).forEach((runtime) => deactivateRuntime(runtime));
+    return true;
+  }
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    if (!deactivateAllActiveRuntimes()) return;
+    event.preventDefault();
+    event.stopPropagation();
+  }, true);
+
   window.SkydiveCommands.push({
     id: "tuwer",
     aliases: ["graph-synth", "function-synth"],
@@ -301,7 +348,8 @@
 
     createState(context = {}) {
       return {
-        formula: cleanFormula(context.args)
+        formula: cleanFormula(context.args),
+        speed: DEFAULT_SPEED
       };
     },
 
@@ -317,6 +365,7 @@
     render(container, state, updateState) {
       clearRuntime(container);
       const formula = cleanFormula(state && state.formula);
+      const speed = normalizeSpeed(state && state.speed);
       let wave = [];
       let error = "";
       try {
@@ -333,6 +382,11 @@
           </div>
           <canvas class="tuwer-graph" aria-label="Tuwer function graph"></canvas>
           <input class="tuwer-formula" data-command-interactive spellcheck="false" aria-label="Tuwer formula">
+          <label class="tuwer-speed-row">
+            <span class="tuwer-speed-label">Loop speed</span>
+            <input class="tuwer-speed" data-command-interactive type="range" min="${MIN_SPEED_EXPONENT}" max="${MAX_SPEED_EXPONENT}" step="0.05" aria-label="Tuwer loop speed">
+            <span class="tuwer-speed-value"></span>
+          </label>
           <div class="tuwer-actions">
             <button class="tuwer-button" type="button" data-command-interactive data-action="activate">Activate keyboard</button>
           </div>
@@ -356,7 +410,8 @@
         }
 
         .tuwer-head,
-        .tuwer-actions {
+        .tuwer-actions,
+        .tuwer-speed-row {
           display: flex;
           align-items: center;
           justify-content: space-between;
@@ -403,6 +458,29 @@
           outline: 0.08em solid rgba(45, 108, 223, 0.28);
         }
 
+        .tuwer-speed-row {
+          display: grid;
+          grid-template-columns: auto minmax(0, 1fr) 3.2em;
+          gap: 0.34em;
+          color: #625446;
+          font-size: 0.78em;
+        }
+
+        .tuwer-speed-label,
+        .tuwer-speed-value {
+          white-space: nowrap;
+        }
+
+        .tuwer-speed-value {
+          text-align: right;
+          font-variant-numeric: tabular-nums;
+        }
+
+        .tuwer-speed {
+          min-width: 0;
+          accent-color: #2d6cdf;
+        }
+
         .tuwer-button {
           border: 0;
           border-radius: 0.38em;
@@ -427,10 +505,14 @@
       const card = container.querySelector(".tuwer-card");
       const canvas = container.querySelector(".tuwer-graph");
       const input = container.querySelector(".tuwer-formula");
+      const speedInput = container.querySelector(".tuwer-speed");
+      const speedValue = container.querySelector(".tuwer-speed-value");
       const button = container.querySelector('[data-action="activate"]');
       const errorNode = container.querySelector(".tuwer-error");
       const activeKey = container.querySelector(".tuwer-key");
       input.value = formula;
+      speedInput.value = String(speedToSliderValue(speed));
+      speedValue.textContent = formatSpeed(speed);
       errorNode.textContent = error;
       drawGraph(canvas, wave.length ? wave : [0, 0]);
 
@@ -443,6 +525,7 @@
         card,
         activeKey,
         notes: new Map(),
+        speed,
         wave,
         onKeyDown: null,
         onKeyUp: null,
@@ -497,6 +580,24 @@
           formula: nextFormula
         });
       });
+      speedInput.addEventListener("input", () => {
+        const nextSpeed = sliderValueToSpeed(speedInput.value);
+        runtime.speed = nextSpeed;
+        speedValue.textContent = formatSpeed(nextSpeed);
+        if (runtime.audioContext) {
+          runtime.notes.forEach((note) => {
+            note.source.playbackRate.setValueAtTime(nextSpeed, runtime.audioContext.currentTime);
+          });
+        }
+        renderRuntimeGraph(runtime);
+      });
+      speedInput.addEventListener("change", () => {
+        updateState({
+          ...state,
+          formula: cleanFormula(input.value),
+          speed: normalizeSpeed(runtime.speed)
+        });
+      });
       button.addEventListener("click", () => {
         if (!runtime.wave.length) return;
         if (runtime.active) {
@@ -504,6 +605,7 @@
           return;
         }
         runtime.active = true;
+        activeRuntimes.add(runtime);
         card.dataset.active = "true";
         button.textContent = "Keyboard active";
       });

@@ -200,7 +200,7 @@
     },
     {
       "id": "tuwer",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "title": "Tuwer",
       "description": "Play a graphed-function instrument from the keyboard.",
       "aliases": ["graph-synth", "function-synth"],
@@ -210,7 +210,8 @@
       "stateSchema": {
         "type": "object",
         "properties": {
-          "formula": { "type": "string" }
+          "formula": { "type": "string" },
+          "speed": { "type": "number" }
         }
       }
     },

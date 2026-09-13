@@ -1718,7 +1718,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 202; // Increment once for each commit.
+    const APP_VERSION = 203; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -1727,6 +1727,8 @@
     const REMOTE_POINTER_LERP = 0.38;
     const SHARED_REALTIME_PATCH_SETTLE_MS = 1500;
     const REMOTE_POINTER_COLORS = ["#10b981", "#3b82f6", "#f97316", "#ec4899", "#8b5cf6", "#06b6d4", "#84cc16", "#f43f5e"];
+    const NODE_CLIPBOARD_TYPE = "skydive.nodes.v1";
+    const NODE_DUPLICATE_OFFSET_SCREEN_PX = 36;
     const DEFAULT_TEMPLATE_DESCRIPTION = "A pre-saved template";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
@@ -1969,7 +1971,8 @@
         createState(context = {}) {
           const formula = String(context.args || "").split("//")[0].trim();
           return {
-            formula: formula || "x=sin(y)"
+            formula: formula || "x=sin(y)",
+            speed: 1
           };
         },
         getTitle(state) {
@@ -7638,6 +7641,11 @@
       return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
     }
 
+    function shouldUseNodeClipboardForEvent(event) {
+      if (!event || isEditableTarget(event.target) || isNativeTextInteractionTarget(event.target)) return false;
+      return !getActiveEditingNode();
+    }
+
     function isNativeTextInteractionTarget(target) {
       const element = target instanceof Element
         ? target
@@ -8602,10 +8610,12 @@
         const nodeBaseFontSize = Number.isFinite(Number(entry.baseFontSize)) && Number(entry.baseFontSize) > 0
           ? Number(entry.baseFontSize) * templateScale
           : targetBaseFontSize;
+        const viewMode = entry.viewMode === "markdown" || entry.viewMode === "html" ? entry.viewMode : "";
         const options = {
           rotation: Number.isFinite(Number(entry.rotation)) ? Number(entry.rotation) : 0,
           variable: entry.variable === true,
-          viewMode: entry.viewMode === "markdown" ? "markdown" : ""
+          viewMode,
+          floating: entry.floating === true
         };
         const node = entry.kind === "command"
           ? createCommandNode(
@@ -8639,11 +8649,13 @@
         const to = idMap.get(String(line.to || ""));
         if (!from || !to || from === to || hasLineConnection(from, to)) return;
         const operation = normalizeCalcOperation(line.operation);
+        const kind = normalizeLineKind(line.kind);
         lineConnections.push({
           id: generateLineId(),
           from,
           to,
           createdAt: Date.now(),
+          ...(kind ? { kind } : {}),
           ...(operation ? { operation } : {})
         });
       });
@@ -8651,6 +8663,92 @@
       renderLineConnections();
       updateCalcVariables();
       return createdNodes;
+    }
+
+    function buildNodeClipboardEnvelope(nodes) {
+      const payload = buildTemplatePayload(nodes);
+      if (!payload) return null;
+      return {
+        type: NODE_CLIPBOARD_TYPE,
+        version: 1,
+        payload
+      };
+    }
+
+    function stringifyNodeClipboardEnvelope(nodes) {
+      const envelope = buildNodeClipboardEnvelope(nodes);
+      return envelope ? JSON.stringify(envelope) : "";
+    }
+
+    function parseNodeClipboardEnvelope(text) {
+      if (typeof text !== "string" || !text.trim()) return null;
+      try {
+        const envelope = JSON.parse(text);
+        if (!envelope || envelope.type !== NODE_CLIPBOARD_TYPE) return null;
+        const payload = envelope.payload;
+        if (!payload || typeof payload !== "object" || !Array.isArray(payload.nodes)) return null;
+        return payload;
+      } catch (error) {
+        return null;
+      }
+    }
+
+    function getNodeClipboardPastePoint(payload) {
+      const nodes = payload && Array.isArray(payload.nodes) ? payload.nodes : [];
+      const xs = nodes.map((entry) => Number(entry && entry.x)).filter(Number.isFinite);
+      const ys = nodes.map((entry) => Number(entry && entry.y)).filter(Number.isFinite);
+      const minX = xs.length > 0 ? Math.min(...xs) : 0;
+      const maxX = xs.length > 0 ? Math.max(...xs) : 0;
+      const minY = ys.length > 0 ? Math.min(...ys) : 0;
+      const maxY = ys.length > 0 ? Math.max(...ys) : 0;
+      const allFloating = nodes.length > 0 && nodes.every((entry) => entry && entry.floating === true);
+      const center = allFloating
+        ? { x: window.innerWidth * 0.5, y: window.innerHeight * 0.5 }
+        : screenToWorld(window.innerWidth * 0.5, window.innerHeight * 0.5);
+      return {
+        x: center.x - (minX + maxX) * 0.5,
+        y: center.y - (minY + maxY) * 0.5
+      };
+    }
+
+    function pasteNodeClipboardPayload(payload, options = {}) {
+      if (!payload || !Array.isArray(payload.nodes) || payload.nodes.length === 0) return false;
+      const point = options.point || getNodeClipboardPastePoint(payload);
+      const baseFontSize = getTemplateReferenceBaseFontSize(payload, payload.nodes);
+      const createdNodes = createNodesFromTemplate({ payload }, point.x, point.y, baseFontSize);
+      if (createdNodes.length === 0) return false;
+      closeNodeContextMenu();
+      closeLineContextMenu();
+      closeCanvasContextMenu();
+      closeLinkNodeDialog();
+      closeTemplateDialog();
+      closeSlashCommandMenu();
+      setSelectedNodes(createdNodes);
+      markSpaceTextChanged();
+      scheduleAutosave();
+      return true;
+    }
+
+    function copySelectedNodesToClipboardData(clipboardData) {
+      if (!clipboardData || selectedNodes.size === 0) return false;
+      const text = stringifyNodeClipboardEnvelope(Array.from(selectedNodes));
+      if (!text) return false;
+      clipboardData.setData("text/plain", text);
+      return true;
+    }
+
+    function duplicateSelectedNodes() {
+      if (selectedNodes.size === 0) return false;
+      const envelope = buildNodeClipboardEnvelope(Array.from(selectedNodes));
+      if (!envelope) return false;
+      const offset = screenToWorldLength(NODE_DUPLICATE_OFFSET_SCREEN_PX);
+      const origin = envelope.payload.origin || { x: 0, y: 0 };
+      return pasteNodeClipboardPayload(envelope.payload, {
+        point: {
+          x: Number(origin.x || 0) + offset,
+          y: Number(origin.y || 0) + offset
+        }
+      });
     }
 
     function executeSlashCommand(index = slashCommandSelectedIndex) {
@@ -12349,6 +12447,23 @@
       handleDroppedFiles(files, event.clientX, event.clientY);
     });
 
+    window.addEventListener("copy", (event) => {
+      if (selectedNodes.size === 0 || !shouldUseNodeClipboardForEvent(event)) return;
+      if (!copySelectedNodesToClipboardData(event.clipboardData)) return;
+      event.preventDefault();
+      event.stopPropagation();
+    }, { capture: true });
+
+    window.addEventListener("paste", (event) => {
+      if (!shouldUseNodeClipboardForEvent(event)) return;
+      const clipboard = event.clipboardData;
+      const payload = parseNodeClipboardEnvelope(clipboard ? clipboard.getData("text/plain") || "" : "");
+      if (!payload) return;
+      event.preventDefault();
+      event.stopPropagation();
+      pasteNodeClipboardPayload(payload);
+    }, { capture: true });
+
     openFileInput.addEventListener("change", async () => {
       const file = openFileInput.files && openFileInput.files[0];
       if (!file) return;
@@ -12481,6 +12596,13 @@
 
       const hasPrimaryModifier = event.metaKey || event.ctrlKey;
       if (!hasPrimaryModifier) return;
+
+      if (key === "d" && selectedNodes.size > 0 && !event.altKey && !event.shiftKey && shouldUseNodeClipboardForEvent(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        duplicateSelectedNodes();
+        return;
+      }
 
       if (key === "s") {
         event.preventDefault();
