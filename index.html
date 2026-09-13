@@ -1100,7 +1100,8 @@
     #slash-command-menu {
       position: fixed;
       z-index: 4700;
-      width: min(240px, calc(100vw - 16px));
+      box-sizing: border-box;
+      width: min(240px, calc(100vw - 24px));
       padding: 6px;
       border: 1px solid var(--skydive-command-menu-border);
       border-radius: 10px;
@@ -1108,7 +1109,7 @@
       box-shadow: 0 10px 28px rgba(83, 63, 43, 0.12);
       display: grid;
       gap: 3px;
-      max-height: calc(100vh - 16px);
+      max-height: calc(100vh - 24px);
       overflow-y: auto;
       overscroll-behavior: contain;
       scrollbar-gutter: stable;
@@ -1693,6 +1694,8 @@
     const NAVIGATION_VIEWPORT_FILL = 0.8;
     const MIN_NAVIGATION_SCALE = 0.08;
     const MARQUEE_DRAG_THRESHOLD_PX = 3;
+    const SLASH_COMMAND_VIEWPORT_MARGIN_PX = 12;
+    const SLASH_COMMAND_MIN_VISIBLE_HEIGHT_PX = 48;
     const GROUP_SELECTION_PADDING_PX = 8;
     const LINE_ENDPOINT_GAP_SCREEN_PX = 4.5;
     const LINE_ANCHOR_ELLIPSE_PADDING_FONT_RATIO = 0.32;
@@ -1722,7 +1725,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 207; // Increment once for each commit.
+    const APP_VERSION = 208; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -8509,6 +8512,7 @@
       slashCommandSession = null;
       slashCommandSelectedIndex = 0;
       slashCommandMenu.hidden = true;
+      slashCommandMenu.scrollTop = 0;
       slashCommandMenu.replaceChildren();
     }
 
@@ -8517,27 +8521,31 @@
       const fallbackRect = fallbackNode.getBoundingClientRect();
       const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
       const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+      const margin = SLASH_COMMAND_VIEWPORT_MARGIN_PX;
+      const minVisibleHeight = Math.min(SLASH_COMMAND_MIN_VISIBLE_HEIGHT_PX, Math.max(0, viewportHeight - margin * 2));
       const x = rect.left || fallbackRect.left;
-      const y = (rect.bottom || fallbackRect.bottom) + 8;
+      const y = (rect.bottom || fallbackRect.bottom) + margin;
       const anchorTop = rect.top || fallbackRect.top;
-      const availableBelow = Math.max(0, viewportHeight - y - 8);
-      const availableAbove = Math.max(0, anchorTop - 8);
+      const availableBelow = Math.max(0, viewportHeight - y - margin);
+      const availableAbove = Math.max(0, anchorTop - margin);
       slashCommandMenu.style.maxHeight = "";
       const menuRect = slashCommandMenu.getBoundingClientRect();
       const shouldOpenAbove = menuRect.height > availableBelow && availableAbove > availableBelow;
       const availableHeight = shouldOpenAbove ? availableAbove : availableBelow;
-      slashCommandMenu.style.maxHeight = `${Math.max(48, availableHeight)}px`;
-      const visibleHeight = Math.min(menuRect.height, Math.max(48, availableHeight));
+      const cappedHeight = Math.max(minVisibleHeight, availableHeight);
+      slashCommandMenu.style.maxHeight = `${cappedHeight}px`;
+      const visibleHeight = Math.min(menuRect.height, cappedHeight);
       const top = shouldOpenAbove
-        ? anchorTop - visibleHeight - 8
+        ? anchorTop - visibleHeight - margin
         : y;
-      slashCommandMenu.style.left = `${clamp(x, 8, Math.max(8, viewportWidth - menuRect.width - 8))}px`;
-      slashCommandMenu.style.top = `${clamp(top, 8, Math.max(8, viewportHeight - visibleHeight - 8))}px`;
+      slashCommandMenu.style.left = `${clamp(x, margin, Math.max(margin, viewportWidth - menuRect.width - margin))}px`;
+      slashCommandMenu.style.top = `${clamp(top, margin, Math.max(margin, viewportHeight - visibleHeight - margin))}px`;
     }
 
     function renderSlashCommandMenu() {
       if (!slashCommandSession) return;
       const { node, commands, range } = slashCommandSession;
+      const shouldResetMenuScroll = slashCommandSelectedIndex === 0;
       slashCommandMenu.replaceChildren();
       slashCommandSelectedIndex = clamp(slashCommandSelectedIndex, 0, Math.max(0, commands.length - 1));
 
@@ -8563,7 +8571,11 @@
 
       slashCommandMenu.hidden = false;
       positionSlashCommandMenu(range, node);
-      slashCommandMenu.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+      if (shouldResetMenuScroll) {
+        slashCommandMenu.scrollTop = 0;
+      } else {
+        slashCommandMenu.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+      }
     }
 
     function updateSlashMenuForNode(node) {
