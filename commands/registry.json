@@ -233,6 +233,23 @@
       }
     },
     {
+      "id": "twimla",
+      "version": "1.0.0",
+      "title": "Twimla",
+      "description": "Play traced equation paths from the keyboard.",
+      "aliases": ["graph-trace", "path-synth"],
+      "acceptsArgs": true,
+      "source": "static",
+      "dynamicExecutable": false,
+      "stateSchema": {
+        "type": "object",
+        "properties": {
+          "formula": { "type": "string" },
+          "speed": { "type": "number" }
+        }
+      }
+    },
+    {
       "id": "delorean",
       "version": "1.0.0",
       "title": "Delorean",

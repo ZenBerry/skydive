@@ -1718,7 +1718,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 205; // Increment once for each commit.
+    const APP_VERSION = 206; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -2000,6 +2000,27 @@
         getTitle(state) {
           const formula = String(state && state.formula || "").split("//")[0].trim();
           return formula ? `Flufi ${formula}` : "Flufi";
+        }
+      }],
+      ["twimla", {
+        id: "twimla",
+        title: "Twimla",
+        description: "Play traced equation paths from the keyboard.",
+        aliases: ["graph-trace", "path-synth"],
+        acceptsArgs: true,
+        source: "static",
+        dynamicExecutable: false,
+        script: "/commands/twimla.js",
+        createState(context = {}) {
+          const formula = String(context.args || "").split("//")[0].trim();
+          return {
+            formula: formula || "y=sin(x)",
+            speed: 1
+          };
+        },
+        getTitle(state) {
+          const formula = String(state && state.formula || "").split("//")[0].trim();
+          return formula ? `Twimla ${formula}` : "Twimla";
         }
       }]
     ]);
@@ -8569,7 +8590,7 @@
     }
 
     function getCommandExecutionSession(command, node, session) {
-      if (!command || !["tuwer", "flufi"].includes(command.id) || !session || !node) return session;
+      if (!command || !["tuwer", "flufi", "twimla"].includes(command.id) || !session || !node) return session;
       const text = node.textContent || "";
       const trailingMatch = text.slice(session.tokenEnd).match(/^\S+/);
       if (!trailingMatch) return session;

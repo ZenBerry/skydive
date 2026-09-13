@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-09-13: Version 206: Added `/twimla` as a traced equation-path synth whose playhead and audio both follow the same selected graph path, preserving `/flufi` as its own equation-wave variant.
+
 - 2026-09-13: Version 205: Added `/flufi` as a separate equation-graph synth for explicit `y=f(x)`, explicit `x=f(y)`, and implicit `left=right` formulas, preserving `/tuwer` as the existing waveform synth. Hardened implicit contour drawing against odd crossing counts.
 
 - 2026-09-13: Version 204: Anchored pasted node groups at the latest mouse pointer position and moved node clipboard payloads into Skydive-specific clipboard formats with an empty plain-text flavor to avoid leaking node JSON into unrelated editors.
