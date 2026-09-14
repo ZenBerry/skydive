@@ -6,9 +6,11 @@
   const CHANNELS = 2;
   const BYTES_PER_SAMPLE = 2;
   const FRAME_BYTES = CHANNELS * BYTES_PER_SAMPLE;
-  const START_BUFFER_SECONDS = 2.4;
-  const TARGET_BUFFER_SECONDS = 4.2;
-  const MAX_BUFFER_SECONDS = 9;
+  const START_BUFFER_SECONDS = 7;
+  const RECOVERY_BUFFER_SECONDS = 3.6;
+  const SCHEDULE_SAFETY_SECONDS = 0.06;
+  const TARGET_BUFFER_SECONDS = 8;
+  const MAX_BUFFER_SECONDS = 18;
   const FADE_SECONDS = 0.22;
   const RECONNECT_DELAY_MS = 450;
   const STREAM_STALL_MS = 15000;
@@ -84,8 +86,10 @@
 
     const audioBuffer = pcmToAudioBuffer(audioContext, bytes);
     const now = audioContext.currentTime;
-    if (!runtime.nextStartTime || runtime.nextStartTime < now + START_BUFFER_SECONDS) {
-      runtime.nextStartTime = now + START_BUFFER_SECONDS;
+    const isFirstAudio = !runtime.audibleAt;
+    if (!runtime.nextStartTime || runtime.nextStartTime < now + SCHEDULE_SAFETY_SECONDS) {
+      runtime.nextStartTime = now + (isFirstAudio ? START_BUFFER_SECONDS : RECOVERY_BUFFER_SECONDS);
+      runtime.audibleAt = runtime.nextStartTime;
     }
 
     const source = audioContext.createBufferSource();
@@ -95,7 +99,6 @@
     source.addEventListener("ended", () => source.disconnect(), { once: true });
     runtime.nextStartTime += audioBuffer.duration;
 
-    if (!runtime.audibleAt) runtime.audibleAt = runtime.nextStartTime - audioBuffer.duration;
     runtime.outputGain.gain.cancelScheduledValues(now);
     runtime.outputGain.gain.setTargetAtTime(0.9, now, FADE_SECONDS);
   }
