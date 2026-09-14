@@ -12,6 +12,7 @@
   const TARGET_BUFFER_SECONDS = 20;
   const MAX_BUFFER_SECONDS = 60;
   const FADE_SECONDS = 0.22;
+  const PLAYBACK_RATE = 0.65;
   const RECONNECT_DELAY_MS = 450;
   const STREAM_STALL_MS = 15000;
   const runtimes = new WeakMap();
@@ -94,10 +95,11 @@
 
     const source = audioContext.createBufferSource();
     source.buffer = audioBuffer;
+    source.playbackRate.setValueAtTime(PLAYBACK_RATE, now);
     source.connect(runtime.outputGain);
     source.start(runtime.nextStartTime);
     source.addEventListener("ended", () => source.disconnect(), { once: true });
-    runtime.nextStartTime += audioBuffer.duration;
+    runtime.nextStartTime += audioBuffer.duration / PLAYBACK_RATE;
 
     runtime.outputGain.gain.cancelScheduledValues(now);
     runtime.outputGain.gain.setTargetAtTime(0.9, now, FADE_SECONDS);

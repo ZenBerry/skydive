@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-09-14: Version 217: Tested `/iriver` smooth playback by slowing scheduled PCM buffers to 0.65x so slow stream delivery drains the queue less aggressively.
+
 - 2026-09-14: Version 216: Increased `/iriver`'s playback reservoir substantially so slow Lyria/Netlify delivery causes less frequent underruns during testing.
 
 - 2026-09-14: Version 215: Smoothed `/iriver` playback scheduling by avoiding artificial restart gaps when the buffer runs low and increased the startup/recovery buffer window.
