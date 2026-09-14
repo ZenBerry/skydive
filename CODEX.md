@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-09-14: Version 211: Fixed `/iriver`'s Lyria websocket parser to decode binary setup/audio-control messages before JSON parsing in Netlify's Node runtime.
+
 - 2026-09-14: Version 210: Made `/iriver` ignore its streaming flush silence in playback, report missing Lyria audio honestly, and added a JSON debug probe for upstream Lyria websocket status.
 
 - 2026-09-14: Version 209: Added lazy-loaded `/iriver` as an endless prompt-based Lyria music widget with larger client-side PCM buffering and a dependency-free Netlify streaming bridge.

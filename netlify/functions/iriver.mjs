@@ -53,6 +53,16 @@ function sendJson(socket, value) {
   socket.send(JSON.stringify(value));
 }
 
+function eventDataToText(data) {
+  if (typeof data === "string") return data;
+  if (typeof Buffer !== "undefined") {
+    if (Buffer.isBuffer(data)) return data.toString("utf8");
+    if (data instanceof ArrayBuffer) return Buffer.from(data).toString("utf8");
+    if (ArrayBuffer.isView(data)) return Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("utf8");
+  }
+  return String(data || "{}");
+}
+
 function startMusic(socket, prompt) {
   sendJson(socket, {
     musicGenerationConfig: {
@@ -137,7 +147,7 @@ function debugMusic(prompt, apiKey) {
     socket.addEventListener("message", (event) => {
       let message = null;
       try {
-        message = JSON.parse(String(event.data || "{}"));
+        message = JSON.parse(eventDataToText(event.data));
       } catch (error) {
         events.push({ type: "parse_error", atMs: Date.now() - startedAt });
         return;
@@ -245,7 +255,7 @@ export default async function handler(request) {
         if (closed) return;
         let message = null;
         try {
-          message = JSON.parse(String(event.data || "{}"));
+          message = JSON.parse(eventDataToText(event.data));
         } catch (error) {
           return;
         }
