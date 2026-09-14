@@ -146,6 +146,8 @@
   async function readStream(runtime, token, response) {
     const reader = response.body.getReader();
     let carry = runtime.carry || new Uint8Array(0);
+    let skipBytes = Number(response.headers.get("x-iriver-prelude-bytes")) || 0;
+    let receivedAudio = false;
     while (runtime.playToken === token) {
       await waitForBufferRoom(runtime, token);
       const result = await Promise.race([
@@ -155,10 +157,19 @@
       if (result.stalled) throw new Error("Stream stalled; reconnecting.");
       const { value, done } = result;
       if (done) break;
-      const incoming = value instanceof Uint8Array ? value : new Uint8Array(value || []);
+      let incoming = value instanceof Uint8Array ? value : new Uint8Array(value || []);
+      if (skipBytes > 0) {
+        if (incoming.length <= skipBytes) {
+          skipBytes -= incoming.length;
+          continue;
+        }
+        incoming = incoming.slice(skipBytes);
+        skipBytes = 0;
+      }
       const merged = concatBytes(carry, incoming);
       const alignedLength = merged.length - (merged.length % FRAME_BYTES);
       if (alignedLength > 0) {
+        receivedAudio = true;
         schedulePcm(runtime, merged.slice(0, alignedLength));
       }
       carry = merged.slice(alignedLength);
@@ -168,6 +179,9 @@
       reader.releaseLock();
     } catch (error) {
       // Older readers may already be released after abort.
+    }
+    if (!receivedAudio && runtime.playToken === token) {
+      throw new Error("No Lyria audio received.");
     }
   }
 

@@ -7,6 +7,7 @@ const MAX_PROMPT_LENGTH = 600;
 const STREAM_MS = 52000;
 const FIRST_AUDIO_TIMEOUT_MS = 12000;
 const INITIAL_SILENCE_SECONDS = 0.25;
+const INITIAL_SILENCE_BYTES = Math.round(SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE * INITIAL_SILENCE_SECONDS);
 
 function json(status, body) {
   return new Response(JSON.stringify(body), {
@@ -69,6 +70,109 @@ function startMusic(socket, prompt) {
   sendJson(socket, { playbackControl: "PLAY" });
 }
 
+function summarizeMessage(message) {
+  if (!message || typeof message !== "object") return { type: "unknown" };
+  if (message.setupComplete || message.setup_complete) return { type: "setupComplete" };
+  if (message.filteredPrompt || message.filtered_prompt) {
+    return {
+      type: "filteredPrompt",
+      reason: message.filteredPrompt?.filteredReason || message.filtered_prompt?.filtered_reason || ""
+    };
+  }
+  if (message.warning) return { type: "warning", warning: String(message.warning).slice(0, 500) };
+  const content = message.serverContent || message.server_content;
+  const chunks = content && (content.audioChunks || content.audio_chunks);
+  if (Array.isArray(chunks)) {
+    return {
+      type: "audio",
+      chunks: chunks.length,
+      bytes: chunks.reduce((total, chunk) => total + (decodeBase64(chunk && chunk.data)?.length || 0), 0)
+    };
+  }
+  return { type: "other", keys: Object.keys(message).slice(0, 12) };
+}
+
+function debugMusic(prompt, apiKey) {
+  return new Promise((resolve) => {
+    const events = [];
+    const startedAt = Date.now();
+    let socket = null;
+    let started = false;
+    let settled = false;
+
+    function settle(status, extra = {}) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      try {
+        if (socket && socket.readyState <= 1) socket.close(1000, "debug done");
+      } catch (error) {
+        // Ignore debug cleanup failures.
+      }
+      resolve({
+        ok: status === "audio",
+        status,
+        elapsedMs: Date.now() - startedAt,
+        events,
+        ...extra
+      });
+    }
+
+    const timeout = setTimeout(() => {
+      settle("timeout", { error: "Timed out waiting for Lyria audio." });
+    }, FIRST_AUDIO_TIMEOUT_MS);
+
+    try {
+      socket = createMusicSocket(apiKey);
+    } catch (error) {
+      settle("socket_create_failed", { error: error && error.message ? error.message : String(error) });
+      return;
+    }
+
+    socket.addEventListener("open", () => {
+      events.push({ type: "open", atMs: Date.now() - startedAt });
+      sendJson(socket, { setup: { model: MODEL } });
+    });
+
+    socket.addEventListener("message", (event) => {
+      let message = null;
+      try {
+        message = JSON.parse(String(event.data || "{}"));
+      } catch (error) {
+        events.push({ type: "parse_error", atMs: Date.now() - startedAt });
+        return;
+      }
+      const summary = summarizeMessage(message);
+      events.push({ ...summary, atMs: Date.now() - startedAt });
+      if (summary.type === "setupComplete" && !started) {
+        started = true;
+        startMusic(socket, prompt);
+        return;
+      }
+      if (summary.type === "audio" && summary.bytes > 0) {
+        settle("audio", { audioBytes: summary.bytes });
+      } else if (summary.type === "filteredPrompt") {
+        settle("filtered", { error: summary.reason || "Prompt was filtered." });
+      }
+    });
+
+    socket.addEventListener("error", () => {
+      events.push({ type: "error", atMs: Date.now() - startedAt });
+      settle("socket_error", { error: "Could not connect to Lyria." });
+    });
+
+    socket.addEventListener("close", (event) => {
+      events.push({
+        type: "close",
+        atMs: Date.now() - startedAt,
+        code: event.code,
+        reason: event.reason || ""
+      });
+      settle("closed", { error: event.reason || "Lyria closed before sending audio." });
+    });
+  });
+}
+
 export default async function handler(request) {
   if (request.method === "OPTIONS") {
     return new Response(null, {
@@ -91,6 +195,10 @@ export default async function handler(request) {
   const url = new URL(request.url);
   const prompt = cleanPrompt(url.searchParams.get("prompt"));
   if (!prompt) return json(400, { error: "Prompt is required." });
+
+  if (url.searchParams.get("debug") === "1") {
+    return json(200, await debugMusic(prompt, apiKey));
+  }
 
   const body = new ReadableStream({
     start(controller) {
@@ -123,7 +231,7 @@ export default async function handler(request) {
       }
 
       socket = createMusicSocket(apiKey);
-      controller.enqueue(new Uint8Array(Math.round(SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE * INITIAL_SILENCE_SECONDS)));
+      controller.enqueue(new Uint8Array(INITIAL_SILENCE_BYTES));
       closeTimer = setTimeout(closeSocket, STREAM_MS);
       firstAudioTimer = setTimeout(() => {
         if (!sentAudio) closeSocket(new Error("Timed out waiting for Lyria audio."));
@@ -188,7 +296,8 @@ export default async function handler(request) {
       "access-control-allow-origin": "*",
       "cache-control": "no-store",
       "content-type": "application/octet-stream",
-      "x-iriver-audio": `pcm16;rate=${SAMPLE_RATE};channels=${CHANNELS}`
+      "x-iriver-audio": `pcm16;rate=${SAMPLE_RATE};channels=${CHANNELS}`,
+      "x-iriver-prelude-bytes": String(INITIAL_SILENCE_BYTES)
     }
   });
 }
