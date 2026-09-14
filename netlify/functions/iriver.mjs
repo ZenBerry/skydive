@@ -53,12 +53,26 @@ function sendJson(socket, value) {
   socket.send(JSON.stringify(value));
 }
 
-function eventDataToText(data) {
+function getEventDataType(data) {
+  if (data === null) return "null";
+  if (data === undefined) return "undefined";
+  if (typeof data === "string") return "string";
+  if (typeof Buffer !== "undefined" && Buffer.isBuffer(data)) return "buffer";
+  if (data instanceof ArrayBuffer) return "arrayBuffer";
+  if (ArrayBuffer.isView(data)) return data.constructor && data.constructor.name ? data.constructor.name : "typedArray";
+  if (typeof Blob !== "undefined" && data instanceof Blob) return "blob";
+  return data.constructor && data.constructor.name ? data.constructor.name : typeof data;
+}
+
+async function eventDataToText(data) {
   if (typeof data === "string") return data;
   if (typeof Buffer !== "undefined") {
     if (Buffer.isBuffer(data)) return data.toString("utf8");
     if (data instanceof ArrayBuffer) return Buffer.from(data).toString("utf8");
     if (ArrayBuffer.isView(data)) return Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("utf8");
+  }
+  if (typeof Blob !== "undefined" && data instanceof Blob) {
+    return eventDataToText(await data.arrayBuffer());
   }
   return String(data || "{}");
 }
@@ -144,12 +158,12 @@ function debugMusic(prompt, apiKey) {
       sendJson(socket, { setup: { model: MODEL } });
     });
 
-    socket.addEventListener("message", (event) => {
+    socket.addEventListener("message", async (event) => {
       let message = null;
       try {
-        message = JSON.parse(eventDataToText(event.data));
+        message = JSON.parse(await eventDataToText(event.data));
       } catch (error) {
-        events.push({ type: "parse_error", atMs: Date.now() - startedAt });
+        events.push({ type: "parse_error", dataType: getEventDataType(event.data), atMs: Date.now() - startedAt });
         return;
       }
       const summary = summarizeMessage(message);
@@ -251,11 +265,11 @@ export default async function handler(request) {
         sendJson(socket, { setup: { model: MODEL } });
       });
 
-      socket.addEventListener("message", (event) => {
+      socket.addEventListener("message", async (event) => {
         if (closed) return;
         let message = null;
         try {
-          message = JSON.parse(eventDataToText(event.data));
+          message = JSON.parse(await eventDataToText(event.data));
         } catch (error) {
           return;
         }
