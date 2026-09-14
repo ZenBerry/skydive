@@ -81,9 +81,7 @@ function startMusic(socket, prompt) {
   sendJson(socket, {
     musicGenerationConfig: {
       temperature: 0.7,
-      guidance: 5.0,
-      audioFormat: "pcm16",
-      sampleRateHz: SAMPLE_RATE
+      guidance: 5.0
     }
   });
   sendJson(socket, {

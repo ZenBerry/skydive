@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-09-14: Version 213: Removed unsupported raw Lyria websocket `audioFormat` and `sampleRateHz` fields from `/iriver` music generation config.
+
 - 2026-09-14: Version 212: Added Blob decoding for `/iriver` Lyria websocket messages and surfaced the raw event data type in the debug probe.
 
 - 2026-09-14: Version 211: Fixed `/iriver`'s Lyria websocket parser to decode binary setup/audio-control messages before JSON parsing in Netlify's Node runtime.
