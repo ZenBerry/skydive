@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-09-14: Version 209: Added lazy-loaded `/iriver` as an endless prompt-based Lyria music widget with larger client-side PCM buffering and a dependency-free Netlify streaming bridge.
+
 - 2026-09-13: Version 208: Kept the slash-command menu container inside a neat viewport margin and reset its scroll position to the top on initial command-list renders.
 
 - 2026-09-13: Version 207: Added viewport-aware vertical scrolling to the slash-command menu so long command/template lists stay neat and selectable without overflowing the screen.

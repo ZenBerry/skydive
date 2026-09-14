@@ -216,6 +216,22 @@
       }
     },
     {
+      "id": "iriver",
+      "version": "1.0.0",
+      "title": "iRiver",
+      "description": "Stream endless prompt-based instrumental music.",
+      "aliases": ["river", "endless-radio"],
+      "acceptsArgs": true,
+      "source": "static",
+      "dynamicExecutable": false,
+      "stateSchema": {
+        "type": "object",
+        "properties": {
+          "prompt": { "type": "string" }
+        }
+      }
+    },
+    {
       "id": "flufi",
       "version": "1.0.0",
       "title": "Flufi",
