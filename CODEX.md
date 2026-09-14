@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-09-14: Version 216: Increased `/iriver`'s playback reservoir substantially so slow Lyria/Netlify delivery causes less frequent underruns during testing.
+
 - 2026-09-14: Version 215: Smoothed `/iriver` playback scheduling by avoiding artificial restart gaps when the buffer runs low and increased the startup/recovery buffer window.
 
 - 2026-09-14: Version 214: Pointed `/iriver` directly at its Netlify function path to bypass stale `/api/iriver` rewrite behavior during audio streaming.
