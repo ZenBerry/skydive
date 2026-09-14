@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-09-14: Version 214: Pointed `/iriver` directly at its Netlify function path to bypass stale `/api/iriver` rewrite behavior during audio streaming.
+
 - 2026-09-14: Version 213: Removed unsupported raw Lyria websocket `audioFormat` and `sampleRateHz` fields from `/iriver` music generation config.
 
 - 2026-09-14: Version 212: Added Blob decoding for `/iriver` Lyria websocket messages and surfaced the raw event data type in the debug probe.

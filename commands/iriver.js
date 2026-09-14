@@ -190,7 +190,7 @@
       const controller = new AbortController();
       runtime.abortController = controller;
       try {
-        const url = `/api/iriver?prompt=${encodeURIComponent(runtime.prompt)}`;
+        const url = `/.netlify/functions/iriver?prompt=${encodeURIComponent(runtime.prompt)}`;
         const response = await fetch(url, {
           cache: "no-store",
           signal: controller.signal
