@@ -12,6 +12,7 @@
   const TARGET_BUFFER_SECONDS = 20;
   const MAX_BUFFER_SECONDS = 60;
   const FADE_SECONDS = 0.22;
+  const CROSSFADE_SECONDS = 5;
   const PLAYBACK_RATE = 0.65;
   const RECONNECT_DELAY_MS = 450;
   const STREAM_STALL_MS = 15000;
@@ -76,7 +77,28 @@
     return buffer;
   }
 
-  function schedulePcm(runtime, bytes) {
+  function removeScheduledSource(runtime, entry) {
+    const index = runtime.scheduledSources.indexOf(entry);
+    if (index !== -1) runtime.scheduledSources.splice(index, 1);
+  }
+
+  function crossfadePreviousGeneration(runtime, generationId, startTime, fadeSeconds) {
+    runtime.scheduledSources.slice().forEach((entry) => {
+      if (!entry || entry.generationId === generationId || entry.endTime <= startTime) return;
+      const fadeEnd = startTime + fadeSeconds;
+      try {
+        entry.gain.gain.cancelScheduledValues(startTime);
+        entry.gain.gain.setValueAtTime(Math.max(0.0001, entry.gain.gain.value || 1), startTime);
+        entry.gain.gain.linearRampToValueAtTime(0.0001, fadeEnd);
+        entry.source.stop(fadeEnd + 0.03);
+      } catch (error) {
+        // A scheduled source may already have ended or be stopping.
+      }
+      entry.endTime = Math.min(entry.endTime, fadeEnd);
+    });
+  }
+
+  function schedulePcm(runtime, bytes, generationId) {
     const audioContext = getAudioContext(runtime);
     if (!audioContext || !bytes.length) return;
     if (!runtime.outputGain) {
@@ -88,18 +110,42 @@
     const audioBuffer = pcmToAudioBuffer(audioContext, bytes);
     const now = audioContext.currentTime;
     const isFirstAudio = !runtime.audibleAt;
+    const isNewGeneration = !isFirstAudio && generationId !== runtime.lastScheduledGenerationId;
     if (!runtime.nextStartTime || runtime.nextStartTime < now + SCHEDULE_SAFETY_SECONDS) {
       runtime.nextStartTime = now + (isFirstAudio ? START_BUFFER_SECONDS : RECOVERY_BUFFER_SECONDS);
       runtime.audibleAt = runtime.nextStartTime;
+    } else if (isNewGeneration) {
+      runtime.nextStartTime = Math.max(now + SCHEDULE_SAFETY_SECONDS, runtime.nextStartTime - CROSSFADE_SECONDS);
     }
 
+    const startTime = runtime.nextStartTime;
+    const duration = audioBuffer.duration / PLAYBACK_RATE;
+    const fadeSeconds = Math.min(CROSSFADE_SECONDS, Math.max(0.2, duration * 0.5));
     const source = audioContext.createBufferSource();
+    const sourceGain = audioContext.createGain();
     source.buffer = audioBuffer;
     source.playbackRate.setValueAtTime(PLAYBACK_RATE, now);
-    source.connect(runtime.outputGain);
-    source.start(runtime.nextStartTime);
-    source.addEventListener("ended", () => source.disconnect(), { once: true });
-    runtime.nextStartTime += audioBuffer.duration / PLAYBACK_RATE;
+    source.connect(sourceGain).connect(runtime.outputGain);
+    sourceGain.gain.setValueAtTime(isNewGeneration ? 0.0001 : 1, startTime);
+    if (isNewGeneration) {
+      sourceGain.gain.linearRampToValueAtTime(1, startTime + fadeSeconds);
+      crossfadePreviousGeneration(runtime, generationId, startTime, fadeSeconds);
+    }
+    source.start(startTime);
+    const entry = {
+      generationId,
+      source,
+      gain: sourceGain,
+      endTime: startTime + duration
+    };
+    runtime.scheduledSources.push(entry);
+    source.addEventListener("ended", () => {
+      removeScheduledSource(runtime, entry);
+      source.disconnect();
+      sourceGain.disconnect();
+    }, { once: true });
+    runtime.nextStartTime += duration;
+    runtime.lastScheduledGenerationId = generationId;
 
     runtime.outputGain.gain.cancelScheduledValues(now);
     runtime.outputGain.gain.setTargetAtTime(0.9, now, FADE_SECONDS);
@@ -148,7 +194,7 @@
     runtime.animationFrame = null;
   }
 
-  async function readStream(runtime, token, response) {
+  async function readStream(runtime, token, response, generationId) {
     const reader = response.body.getReader();
     let carry = runtime.carry || new Uint8Array(0);
     let skipBytes = Number(response.headers.get("x-iriver-prelude-bytes")) || 0;
@@ -175,7 +221,7 @@
       const alignedLength = merged.length - (merged.length % FRAME_BYTES);
       if (alignedLength > 0) {
         receivedAudio = true;
-        schedulePcm(runtime, merged.slice(0, alignedLength));
+        schedulePcm(runtime, merged.slice(0, alignedLength), generationId);
       }
       carry = merged.slice(alignedLength);
     }
@@ -192,6 +238,8 @@
 
   async function streamLoop(runtime, token) {
     while (runtime.playToken === token) {
+      const generationId = runtime.nextGenerationId;
+      runtime.nextGenerationId += 1;
       const controller = new AbortController();
       runtime.abortController = controller;
       try {
@@ -205,7 +253,7 @@
           throw new Error(detail || `Stream failed (${response.status})`);
         }
         updateStatus(runtime, "Buffering stream...");
-        await readStream(runtime, token, response);
+        await readStream(runtime, token, response, generationId);
       } catch (error) {
         if (runtime.playToken !== token || controller.signal.aborted) break;
         const message = error && error.message ? error.message.replace(/[{}"]/g, "").slice(0, 120) : "Stream interrupted";
@@ -231,6 +279,9 @@
     runtime.nextStartTime = 0;
     runtime.audibleAt = 0;
     runtime.carry = new Uint8Array(0);
+    runtime.lastScheduledGenerationId = "";
+    runtime.nextGenerationId = 1;
+    runtime.scheduledSources = [];
     runtime.card.dataset.playing = "true";
     runtime.button.textContent = "Stop";
     runtime.input.disabled = true;
@@ -246,6 +297,16 @@
     runtime.button.textContent = "Play";
     runtime.input.disabled = false;
     if (runtime.abortController) runtime.abortController.abort();
+    if (Array.isArray(runtime.scheduledSources)) {
+      runtime.scheduledSources.forEach((entry) => {
+        try {
+          entry.source.stop();
+        } catch (error) {
+          // It may already have ended.
+        }
+      });
+      runtime.scheduledSources = [];
+    }
     if (runtime.outputGain && runtime.audioContext) {
       const now = runtime.audioContext.currentTime;
       runtime.outputGain.gain.cancelScheduledValues(now);
@@ -439,6 +500,9 @@
         playing: false,
         playToken: 0,
         prompt,
+        lastScheduledGenerationId: "",
+        nextGenerationId: 1,
+        scheduledSources: [],
         status
       };
       runtimes.set(container, runtime);

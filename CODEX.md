@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-09-14: Version 218: Lengthened `/iriver` Lyria generations and added client-side crossfades between stream generations using per-buffer gain ramps.
+
 - 2026-09-14: Version 217: Tested `/iriver` smooth playback by slowing scheduled PCM buffers to 0.65x so slow stream delivery drains the queue less aggressively.
 
 - 2026-09-14: Version 216: Increased `/iriver`'s playback reservoir substantially so slow Lyria/Netlify delivery causes less frequent underruns during testing.
