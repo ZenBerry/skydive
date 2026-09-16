@@ -378,6 +378,30 @@ function cleanFindContextSpace(value) {
   return cleanSpaceSlug(value);
 }
 
+function listArgumentSpaceSlug(value) {
+  let candidate = String(value || "").trim();
+  const markdownTarget = candidate.match(/\]\((https?:\/\/[^)\s]+|\/[^)\s]+)\)/i);
+  if (markdownTarget) candidate = markdownTarget[1];
+  candidate = candidate.replace(/^<|>$/g, "");
+
+  if (/^https?:\/\//i.test(candidate)) {
+    try {
+      candidate = new URL(candidate).pathname;
+    } catch (error) {
+      return "";
+    }
+  } else {
+    candidate = candidate.split(/[?#]/, 1)[0];
+  }
+
+  try {
+    candidate = decodeURIComponent(candidate);
+  } catch (error) {
+    return "";
+  }
+  return cleanSpaceSlug(candidate);
+}
+
 function escapeMarkdownLinkText(value) {
   return String(value || "").replace(/[[\]\\]/g, "").replace(/\s+/g, " ").trim();
 }
@@ -877,6 +901,36 @@ async function listSpacesForSlashCommand(event, timeZone) {
   }).join("\n\n");
 }
 
+function listItemLabel(node, index) {
+  if (node && node.kind === "command") {
+    const commandId = String(node.commandId || "command").trim();
+    const state = node.commandState && typeof node.commandState === "object" ? node.commandState : {};
+    const detail = [state.label, state.input, state.formula, state.fileName, state.themeName, state.targetSlug]
+      .find((value) => typeof value === "string" && value.trim());
+    return `/${commandId}${detail ? ` ${detail.trim()}` : ""}`.slice(0, 240);
+  }
+
+  const text = typeof node?.text === "string" ? node.text : "";
+  const html = typeof node?.html === "string" ? node.html.replace(/<[^>]*>/g, " ") : "";
+  return decodeHtmlEntities(text || html).replace(/\s+/g, " ").trim().slice(0, 240) || `Item ${index + 1}`;
+}
+
+async function listSpaceItemsForSlashCommand(event, argument) {
+  const space = listArgumentSpaceSlug(argument);
+  if (!space) return "Use `/list <space link or path>` to list every item in a space.";
+
+  const result = await callSkydive(event, `/api/agent?space=${encodeURIComponent(space)}`);
+  if (!result.ok) return `I couldn’t read ${space}: ${result.error || "Skydive returned an error."}`;
+  const state = result.data && result.data.state;
+  const nodes = activeNodes(state);
+  if (!nodes.length) return `${markdownLink(space, getSpacePath(space))} has no active items.`;
+
+  const lines = nodes.map((node, index) => (
+    `• ${markdownLink(listItemLabel(node, index), getNodePath(space, node.id))}`
+  ));
+  return `Items in ${markdownLink(space, getSpacePath(space))}:\n\n${lines.join("\n")}`;
+}
+
 async function findNodesForSlashCommand(event, query) {
   const params = new URLSearchParams(String(event.rawQuery || ""));
   const result = await searchNodes(event, { query, includeArchives: false, contextSpace: params.get("space") || "" });
@@ -923,7 +977,11 @@ async function handleSlashCommand(event, messages, timeZone) {
   if (!match) return null;
   const command = match[1].toLowerCase();
   const argument = String(match[2] || "").trim();
-  if (command === "list") return listSpacesForSlashCommand(event, timeZone);
+  if (command === "list") {
+    return argument
+      ? listSpaceItemsForSlashCommand(event, argument)
+      : listSpacesForSlashCommand(event, timeZone);
+  }
   if (command === "find") {
     if (!argument) return "Use `/find text` to search node text.";
     return findNodesForSlashCommand(event, argument);

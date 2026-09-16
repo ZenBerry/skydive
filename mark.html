@@ -651,6 +651,9 @@
       if (/^Nodes containing /m.test(withoutDebug) && bulletCount) {
         return `[Mark listed ${bulletCount} nodes matching the requested search.]`;
       }
+      if (/^Items in /m.test(withoutDebug) && bulletCount) {
+        return `[Mark listed ${bulletCount} items from the requested space.]`;
+      }
       return withoutDebug.length > 1200
         ? `${withoutDebug.slice(0, 1200).trim()}\n[Previous assistant reply truncated for context.]`
         : withoutDebug;
