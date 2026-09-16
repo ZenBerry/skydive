@@ -35,6 +35,23 @@
       }
     },
     {
+      "id": "clicker",
+      "version": "1.0.0",
+      "title": "Clicker",
+      "description": "Track an integer with plus and minus buttons.",
+      "aliases": ["counter", "tally"],
+      "acceptsArgs": true,
+      "source": "static",
+      "dynamicExecutable": false,
+      "stateSchema": {
+        "type": "object",
+        "properties": {
+          "label": { "type": "string" },
+          "value": { "type": "integer" }
+        }
+      }
+    },
+    {
       "id": "timer",
       "version": "1.0.2",
       "title": "Timer",

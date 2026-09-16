@@ -1615,6 +1615,7 @@
   <script src="https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js"></script>
   <script src="/commands/stw.js"></script>
   <script src="/commands/count.js"></script>
+  <script src="/commands/clicker.js"></script>
   <script src="/commands/timer.js"></script>
   <script src="/commands/file.js"></script>
   <script src="/commands/theme.js"></script>
@@ -1725,7 +1726,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 218; // Increment once for each commit.
+    const APP_VERSION = 219; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -5712,6 +5713,12 @@
 
     function getNodeNumericValue(node) {
       if (!(node instanceof HTMLElement)) return null;
+      if (isCommandNode(node)) {
+        const command = getLoadedStaticCommand(node.dataset.commandId || "") || getCommand(node.dataset.commandId || "");
+        if (!command || typeof command.getNumericValue !== "function") return null;
+        const value = Number(command.getNumericValue(readCommandState(node)));
+        return Number.isFinite(value) ? value : null;
+      }
       const text = (node.textContent || "").replace(/,/g, "").trim();
       if (!text) return null;
       const value = Number(text);
@@ -8285,6 +8292,7 @@
       command.render(node, state, (nextState) => {
         writeCommandState(node, preserveWidgetColor(node, nextState));
         renderCommandNodeContent(node);
+        updateCalcVariables();
         refreshSelectionBounds();
         updateDocumentTitle();
         scheduleAutosave();
@@ -8296,6 +8304,7 @@
       if (!isCommandNode(node) || !world.contains(node)) return;
       writeCommandState(node, preserveWidgetColor(node, nextState));
       renderCommandNodeContent(node);
+      updateCalcVariables();
       refreshSelectionBounds();
       updateDocumentTitle();
       if (options.autosave !== false) scheduleAutosave();
