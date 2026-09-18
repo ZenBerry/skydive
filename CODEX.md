@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-09-18: Version 221: Added a mobile canvas rotate icon refresh, a Level canvas context-menu action, and center-anchored canvas rotation for desktop wheel rotation and mobile rotate mode.
+
 - 2026-09-16: Version 220: Extended Mark's `/list` command so `/list <space link or path>` returns every active item in that space as a flat list of clickable node links, while keeping bare `/list` for the existing space directory.
 
 - 2026-09-16: Version 219: Added `/clicker` integer tracker widgets with large plus/minus controls and live numeric output for calculation lines.

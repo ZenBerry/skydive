@@ -1588,6 +1588,7 @@
     <button id="delete-line-btn" type="button">Delete line</button>
   </div>
   <div id="canvas-context-menu" hidden>
+    <button id="level-canvas-btn" type="button">Level</button>
     <button id="birds-eye-view-btn" type="button">Bird's eye view</button>
   </div>
   <div id="link-node-dialog" hidden>
@@ -1656,6 +1657,7 @@
     const calcOperationPicker = document.getElementById("calc-operation-picker");
     const deleteLineBtn = document.getElementById("delete-line-btn");
     const canvasContextMenu = document.getElementById("canvas-context-menu");
+    const levelCanvasBtn = document.getElementById("level-canvas-btn");
     const birdsEyeViewBtn = document.getElementById("birds-eye-view-btn");
     const linkNodeDialog = document.getElementById("link-node-dialog");
     const linkNodeDialogTitle = document.getElementById("link-node-dialog-title");
@@ -1726,7 +1728,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 220; // Increment once for each commit.
+    const APP_VERSION = 221; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -5251,6 +5253,19 @@
       render();
       scheduleViewportSave();
       return true;
+    }
+
+    function getViewportCenterClientPoint() {
+      const rect = viewport.getBoundingClientRect();
+      return {
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top + rect.height / 2
+      };
+    }
+
+    function setCameraRotationAroundViewportCenter(nextRotation) {
+      const center = getViewportCenterClientPoint();
+      return setCameraTransformAt(center.clientX, center.clientY, camera.scale, nextRotation);
     }
 
     function easeInOutHeavy(t) {
@@ -9264,7 +9279,6 @@
         startClientX: event.clientX,
         startClientY: event.clientY,
         startRotation: camera.rotation,
-        anchorWorld: screenToWorld(event.clientX, event.clientY),
         moved: false
       };
 
@@ -9278,11 +9292,7 @@
       const dx = event.clientX - mobileAttitudeSession.startClientX;
       const dy = event.clientY - mobileAttitudeSession.startClientY;
       mobileAttitudeSession.moved = mobileAttitudeSession.moved || Math.hypot(dx, dy) >= MARQUEE_DRAG_THRESHOLD_PX;
-      setCameraTransformForWorldPoint(
-        mobileAttitudeSession.anchorWorld,
-        mobileAttitudeSession.startClientX,
-        mobileAttitudeSession.startClientY,
-        camera.scale,
+      setCameraRotationAroundViewportCenter(
         mobileAttitudeSession.startRotation + dx * MOBILE_ATTITUDE_ROTATION_SENSITIVITY
       );
       event.preventDefault();
@@ -10214,7 +10224,7 @@
     }
 
     function rotateTo(newRotation, clientX, clientY) {
-      setCameraTransformAt(clientX, clientY, camera.scale, newRotation);
+      setCameraRotationAroundViewportCenter(newRotation);
     }
 
     function cancelPhysicalWheelZoomAnimation() {
@@ -12171,6 +12181,13 @@
       const lineId = contextMenuLineId;
       closeLineContextMenu();
       removeLineConnection(lineId);
+    });
+
+    levelCanvasBtn.addEventListener("click", () => {
+      closeCanvasContextMenu();
+      cancelCameraAnimation();
+      cancelNodeLayoutAnimation();
+      setCameraRotationAroundViewportCenter(0);
     });
 
     birdsEyeViewBtn.addEventListener("click", () => {
