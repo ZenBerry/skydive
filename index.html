@@ -1588,8 +1588,8 @@
     <button id="delete-line-btn" type="button">Delete line</button>
   </div>
   <div id="canvas-context-menu" hidden>
-    <button id="level-canvas-btn" type="button">Level</button>
     <button id="birds-eye-view-btn" type="button">Bird's eye view</button>
+    <button id="level-canvas-btn" type="button">Level</button>
   </div>
   <div id="link-node-dialog" hidden>
     <div id="link-node-dialog-title">Paste target node ID</div>
@@ -1728,7 +1728,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 221; // Increment once for each commit.
+    const APP_VERSION = 222; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -1798,7 +1798,6 @@
     const MOBILE_GESTURE_MOVE_TOLERANCE_PX = 10;
     const MOBILE_DOUBLE_TAP_MS = 350;
     const MOBILE_DOUBLE_TAP_DISTANCE_PX = 28;
-    const MOBILE_ATTITUDE_ROTATION_SENSITIVITY = 0.006;
     const ALIGN_ANIMATION_DURATION_MS = 620;
     const SELECTION_EDGE_BY_ARROW_CODE = {
       ArrowUp: "top",
@@ -2075,7 +2074,6 @@
     let mobileInteractionMode = "pan";
     let mobilePointerSession = null;
     let mobilePinchSession = null;
-    let mobileAttitudeSession = null;
     let nativeGestureActive = false;
     let suppressMobilePointerPinchUntil = 0;
     let lastMobileTap = null;
@@ -5268,6 +5266,21 @@
       return setCameraTransformAt(center.clientX, center.clientY, camera.scale, nextRotation);
     }
 
+    function animateCameraRotationAroundViewportCenter(nextRotation, durationMs = 760) {
+      const center = getViewportCenterClientPoint();
+      const worldPoint = screenToWorld(center.clientX, center.clientY);
+      const rotation = normalizeRotation(nextRotation);
+      const offset = getCameraScreenOffset(worldPoint.x, worldPoint.y, camera.scale, rotation);
+      animateCameraTo(
+        center.clientX - offset.x,
+        center.clientY - offset.y,
+        camera.scale,
+        durationMs,
+        null,
+        rotation
+      );
+    }
+
     function easeInOutHeavy(t) {
       if (t < 0.5) {
         return 16 * Math.pow(t, 5);
@@ -7259,11 +7272,13 @@
       nodeHighlightTimeouts.set(node, timeoutId);
     }
 
-    function animateCameraTo(targetX, targetY, targetScale, durationMs = 760, onComplete = null) {
+    function animateCameraTo(targetX, targetY, targetScale, durationMs = 760, onComplete = null, targetRotation = camera.rotation) {
       cancelCameraAnimation();
       const startX = camera.x;
       const startY = camera.y;
       const startScale = camera.scale;
+      const startRotation = camera.rotation;
+      const rotationDelta = normalizeRotation(targetRotation - startRotation);
       const start = performance.now();
 
       function tick(now) {
@@ -7273,6 +7288,7 @@
         camera.x = startX + (targetX - startX) * eased;
         camera.y = startY + (targetY - startY) * eased;
         camera.scale = startScale + (targetScale - startScale) * eased;
+        camera.rotation = normalizeRotation(startRotation + rotationDelta * eased);
         render();
         if (t < 1) {
           cameraAnimationFrame = requestAnimationFrame(tick);
@@ -9256,60 +9272,6 @@
       return Boolean(target.closest("button, input, textarea, select, [data-command-interactive], .editing"));
     }
 
-    function beginMobileAttitudeRotation(event) {
-      if (
-        !IS_MOBILE_DEVICE ||
-        mobileInteractionMode !== "attitude" ||
-        event.pointerType !== "touch" ||
-        event.button !== 0 ||
-        event.isPrimary === false ||
-        isCanvasPanExcludedTarget(event.target)
-      ) return;
-
-      closeNodeContextMenu();
-      closeLineContextMenu();
-      closeCanvasContextMenu();
-      cancelCameraAnimation();
-      cancelNodeLayoutAnimation();
-      cancelMobileCanvasSessions(event.pointerId);
-      cancelMobilePointerTrackingSession();
-
-      mobileAttitudeSession = {
-        pointerId: event.pointerId,
-        startClientX: event.clientX,
-        startClientY: event.clientY,
-        startRotation: camera.rotation,
-        moved: false
-      };
-
-      viewport.setPointerCapture(event.pointerId);
-      event.preventDefault();
-      event.stopImmediatePropagation();
-    }
-
-    function updateMobileAttitudeRotation(event) {
-      if (!mobileAttitudeSession || event.pointerId !== mobileAttitudeSession.pointerId) return;
-      const dx = event.clientX - mobileAttitudeSession.startClientX;
-      const dy = event.clientY - mobileAttitudeSession.startClientY;
-      mobileAttitudeSession.moved = mobileAttitudeSession.moved || Math.hypot(dx, dy) >= MARQUEE_DRAG_THRESHOLD_PX;
-      setCameraRotationAroundViewportCenter(
-        mobileAttitudeSession.startRotation + dx * MOBILE_ATTITUDE_ROTATION_SENSITIVITY
-      );
-      event.preventDefault();
-      event.stopPropagation();
-    }
-
-    function endMobileAttitudeRotation(event) {
-      if (!mobileAttitudeSession || event.pointerId !== mobileAttitudeSession.pointerId) return;
-      if (viewport.hasPointerCapture(event.pointerId)) {
-        viewport.releasePointerCapture(event.pointerId);
-      }
-      if (mobileAttitudeSession.moved) scheduleViewportSave();
-      mobileAttitudeSession = null;
-      event.preventDefault();
-      event.stopPropagation();
-    }
-
     function beginCanvasPan(event) {
       const isMobileTouchPan =
         IS_MOBILE_DEVICE &&
@@ -9496,20 +9458,15 @@
       return Math.hypot(first.clientX - second.clientX, first.clientY - second.clientY);
     }
 
+    function getMobileTouchAngle(first, second) {
+      return Math.atan2(second.clientY - first.clientY, second.clientX - first.clientX);
+    }
+
     function getMobileTouchCenter(first, second) {
       return {
         clientX: (first.clientX + second.clientX) / 2,
         clientY: (first.clientY + second.clientY) / 2
       };
-    }
-
-    function cancelMobileAttitudeRotation() {
-      if (!mobileAttitudeSession) return;
-      const pointerId = mobileAttitudeSession.pointerId;
-      if (viewport.hasPointerCapture(pointerId)) {
-        viewport.releasePointerCapture(pointerId);
-      }
-      mobileAttitudeSession = null;
     }
 
     function beginMobilePinchGesture() {
@@ -9529,15 +9486,19 @@
       cancelMobileCanvasSessions(firstPointerId);
       cancelMobileCanvasSessions(secondPointerId);
       cancelMobilePointerTrackingSession();
-      cancelMobileAttitudeRotation();
 
       const center = getMobileTouchCenter(first, second);
+      const startAngle = getMobileTouchAngle(first, second);
+      const rotateAroundViewportCenter = mobileInteractionMode === "attitude";
+      const anchor = rotateAroundViewportCenter ? getViewportCenterClientPoint() : center;
       mobilePinchSession = {
         pointerIds: new Set([firstPointerId, secondPointerId]),
         startDistance,
+        startAngle,
         startScale: camera.scale,
         startRotation: camera.rotation,
-        centerWorld: screenToWorld(center.clientX, center.clientY)
+        rotateAroundViewportCenter,
+        centerWorld: screenToWorld(anchor.clientX, anchor.clientY)
       };
     }
 
@@ -9557,12 +9518,19 @@
       if (!Number.isFinite(distance) || distance <= 0) return true;
 
       const center = getMobileTouchCenter(points[0], points[1]);
+      const angle = getMobileTouchAngle(points[0], points[1]);
+      const rotation = mobilePinchSession.rotateAroundViewportCenter
+        ? mobilePinchSession.startRotation + normalizeRotation(angle - mobilePinchSession.startAngle)
+        : mobilePinchSession.startRotation;
+      const anchor = mobilePinchSession.rotateAroundViewportCenter
+        ? getViewportCenterClientPoint()
+        : center;
       setCameraTransformForWorldPoint(
         mobilePinchSession.centerWorld,
-        center.clientX,
-        center.clientY,
+        anchor.clientX,
+        anchor.clientY,
         mobilePinchSession.startScale * (distance / mobilePinchSession.startDistance),
-        mobilePinchSession.startRotation
+        rotation
       );
       event.preventDefault();
       event.stopPropagation();
@@ -9615,7 +9583,6 @@
       for (const pointerId of pointerIds) {
         cancelMobileCanvasSessions(pointerId);
       }
-      cancelMobileAttitudeRotation();
       cancelMobilePointerTrackingSession();
     }
 
@@ -9692,6 +9659,7 @@
         event.pointerType !== "touch" ||
         event.button !== 0 ||
         event.isPrimary === false ||
+        mobileInteractionMode === "attitude" ||
         !(event.target instanceof Node) ||
         !viewport.contains(event.target)
       ) return;
@@ -12187,7 +12155,7 @@
       closeCanvasContextMenu();
       cancelCameraAnimation();
       cancelNodeLayoutAnimation();
-      setCameraRotationAroundViewportCenter(0);
+      animateCameraRotationAroundViewportCenter(0);
     });
 
     birdsEyeViewBtn.addEventListener("click", () => {
@@ -12410,7 +12378,6 @@
       }
     }, { capture: true });
 
-    viewport.addEventListener("pointerdown", beginMobileAttitudeRotation, { capture: true });
     viewport.addEventListener("pointerdown", beginCanvasPan, { capture: true });
 
     viewport.addEventListener("pointerdown", (event) => {
@@ -12431,10 +12398,6 @@
     viewport.addEventListener("pointermove", updateCanvasPan);
     viewport.addEventListener("pointerup", endCanvasPan);
     viewport.addEventListener("pointercancel", endCanvasPan);
-
-    viewport.addEventListener("pointermove", updateMobileAttitudeRotation);
-    viewport.addEventListener("pointerup", endMobileAttitudeRotation);
-    viewport.addEventListener("pointercancel", endMobileAttitudeRotation);
 
     viewport.addEventListener("pointermove", updateMarqueeSelection);
     viewport.addEventListener("pointerup", endMarqueeSelection);
@@ -12490,6 +12453,8 @@
 
     let gestureStartScale = camera.scale;
     let gestureStartRotation = camera.rotation;
+    let gestureStartWorldPoint = null;
+    let gestureUseViewportCenter = false;
     viewport.addEventListener("gesturestart", (event) => {
       event.preventDefault();
       nativeGestureActive = true;
@@ -12503,28 +12468,39 @@
       if (IS_MOBILE_DEVICE) cancelMobileSessionsForPinch();
       gestureStartScale = camera.scale;
       gestureStartRotation = camera.rotation;
+      gestureUseViewportCenter = IS_MOBILE_DEVICE && mobileInteractionMode === "attitude";
+      const anchor = gestureUseViewportCenter ? getViewportCenterClientPoint() : getGestureZoomCenter(event);
+      gestureStartWorldPoint = screenToWorld(anchor.clientX, anchor.clientY);
     });
 
     viewport.addEventListener("gesturechange", (event) => {
       event.preventDefault();
-      const center = getGestureZoomCenter(event);
+      const center = gestureUseViewportCenter ? getViewportCenterClientPoint() : getGestureZoomCenter(event);
       const scale = Number.isFinite(event.scale) ? event.scale : 1;
-      setCameraTransformAt(
+      const rotationDelta = gestureUseViewportCenter && Number.isFinite(event.rotation)
+        ? event.rotation * Math.PI / 180
+        : 0;
+      setCameraTransformForWorldPoint(
+        gestureStartWorldPoint,
         center.clientX,
         center.clientY,
         gestureStartScale * scale,
-        gestureStartRotation
+        gestureStartRotation + rotationDelta
       );
     });
 
     viewport.addEventListener("gestureend", () => {
       nativeGestureActive = false;
       suppressMobilePointerPinchUntil = Date.now() + 250;
+      gestureStartWorldPoint = null;
+      gestureUseViewportCenter = false;
     });
 
     viewport.addEventListener("gesturecancel", () => {
       nativeGestureActive = false;
       suppressMobilePointerPinchUntil = Date.now() + 250;
+      gestureStartWorldPoint = null;
+      gestureUseViewportCenter = false;
     });
 
     viewport.addEventListener("dblclick", (event) => {
