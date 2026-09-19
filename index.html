@@ -1744,7 +1744,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 223; // Increment once for each commit.
+    const APP_VERSION = 224; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -5316,6 +5316,13 @@
     }
 
     function getNodeWorldSize(node) {
+      if (isDrawingNode(node)) {
+        const drawingScale = getNodeBaseFontSize(node) / BASE_TEXT_PX;
+        return {
+          width: clamp(Number(node.dataset.drawingWidth) || 1, 1, 100000) * drawingScale,
+          height: clamp(Number(node.dataset.drawingHeight) || 1, 1, 100000) * drawingScale
+        };
+      }
       if (isHtmlViewNode(node)) {
         const baseFontSize = getNodeBaseFontSize(node);
         const htmlScale = baseFontSize / BASE_TEXT_PX;
@@ -10417,14 +10424,16 @@
       node.style.left = `${screenPoint.x}px`;
       node.style.top = `${screenPoint.y}px`;
       node.style.setProperty("--camera-scale", String(metrics.screenScale));
-      if (isCommandNode(node) || isDrawingNode(node)) {
+      if (isCommandNode(node)) {
         node.style.fontSize = `${metrics.layoutFontPx}px`;
         node.style.minWidth = "0px";
         node.style.transform = getNodeTransform(node, totalRotation, metrics.screenScale);
         node.style.transformOrigin = "top left";
-      } else if (isHtmlViewNode(node)) {
-        const frame = node.querySelector("iframe[data-html-view-token]");
-        if (frame) applyHtmlViewFrameSize(frame);
+      } else if (isDrawingNode(node) || isHtmlViewNode(node)) {
+        if (isHtmlViewNode(node)) {
+          const frame = node.querySelector("iframe[data-html-view-token]");
+          if (frame) applyHtmlViewFrameSize(frame);
+        }
         appliedScale = metrics.cameraScale * metrics.baseFontSize / BASE_TEXT_PX;
         node.style.fontSize = `${BASE_TEXT_PX}px`;
         node.style.minWidth = "0px";
