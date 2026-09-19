@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-09-19: Version 225: Fixed Apple Pencil drawing on rotated canvases by keeping new SVG strokes in world orientation while preserving normal node rotation afterward.
+
 - 2026-09-19: Version 224: Fixed Pencil drawing geometry so SVG nodes scale with canvas zoom and node resizing while retaining stable world-space bounds.
 
 - 2026-09-19: Version 223: Added Apple Pencil-only pressure-sensitive SVG drawing nodes with smooth Flash-style outlines, standard node transforms and clipboard behavior, palette recoloring, persistence, realtime creation, and Agent/Mark preservation.
