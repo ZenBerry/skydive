@@ -718,7 +718,7 @@ async function findCreatedToday(event, args, defaultTimeZone) {
       nodes.push({
         space: read.slug,
         nodeId: String(node.id || ""),
-        kind: node.kind === "command" ? "command" : "text",
+        kind: node.kind === "command" || node.kind === "drawing" ? node.kind : "text",
         createdAt,
         text: String(node.text || node.commandId || "").replace(/\s+/g, " ").trim().slice(0, 240)
       });
@@ -788,7 +788,7 @@ async function legacySearchNodes(event, args) {
       matches.push({
         space: read.slug,
         nodeId: String(node.id || ""),
-        kind: node.kind === "command" ? "command" : "text",
+        kind: node.kind === "command" || node.kind === "drawing" ? node.kind : "text",
         createdAt: Number(node.createdAt) || 0,
         updatedAt: Number(node.updatedAt) || Number(read.updatedAt) || Number(node.createdAt) || 0,
         spaceUpdatedAt: Number(read.updatedAt) || 0,
@@ -909,6 +909,7 @@ function listItemLabel(node, index) {
       .find((value) => typeof value === "string" && value.trim());
     return `/${commandId}${detail ? ` ${detail.trim()}` : ""}`.slice(0, 240);
   }
+  if (node && node.kind === "drawing") return `Drawing ${index + 1}`;
 
   const text = typeof node?.text === "string" ? node.text : "";
   const html = typeof node?.html === "string" ? node.html.replace(/<[^>]*>/g, " ") : "";
@@ -1152,7 +1153,9 @@ function formatSpaceSummary(space, read) {
   const sample = nodes.slice(0, 24).map((node) => {
     const label = node.kind === "command"
       ? `/${node.commandId || "command"}`
-      : String(node.text || "").replace(/\s+/g, " ").trim() || "(text node)";
+      : node.kind === "drawing"
+        ? "(drawing)"
+        : String(node.text || "").replace(/\s+/g, " ").trim() || "(text node)";
     return `• ${node.id}: ${label.slice(0, 180)}`;
   });
   return [

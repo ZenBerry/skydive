@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-09-19: Version 223: Added Apple Pencil-only pressure-sensitive SVG drawing nodes with smooth Flash-style outlines, standard node transforms and clipboard behavior, palette recoloring, persistence, realtime creation, and Agent/Mark preservation.
+
 - 2026-09-18: Version 222: Moved Level after Bird's eye view, smoothed Level with the shared camera easing, and made mobile rotate mode use a center-anchored two-finger rotation gesture.
 
 - 2026-09-18: Version 221: Added a mobile canvas rotate icon refresh, a Level canvas context-menu action, and center-anchored canvas rotation for desktop wheel rotation and mobile rotate mode.

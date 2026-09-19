@@ -280,6 +280,18 @@ function normalizeNode(entry, seenIds) {
     };
   }
 
+  if (entry.kind === "drawing") {
+    const color = boundedString(entry.color, 32, `node ${id}.color`, "").trim().toLowerCase();
+    return {
+      ...base,
+      kind: "drawing",
+      width: positiveNumber(entry.width, 1, `node ${id}.width`),
+      height: positiveNumber(entry.height, 1, `node ${id}.height`),
+      path: boundedString(entry.path, MAX_HTML_LENGTH, `node ${id}.path`, ""),
+      ...(color ? { color } : {})
+    };
+  }
+
   const html = boundedString(entry.html, MAX_HTML_LENGTH, `node ${id}.html`, "");
   const text = boundedString(
     entry.text,
@@ -773,6 +785,20 @@ function buildManifest(event) {
           commandId: "string",
           commandVersion: "optional string",
           commandState: "object"
+        },
+        {
+          kind: "drawing",
+          id: "string",
+          x: "number",
+          y: "number",
+          baseFontSize: "number",
+          createdAt: "optional number",
+          deletedAt: "optional number",
+          createdBy: "optional { id, nickname } assigned from the active Skydive session",
+          width: "number",
+          height: "number",
+          path: "SVG path string",
+          color: "optional color string"
         }
       ],
       lines: [
@@ -897,7 +923,7 @@ async function searchNodes(collection, query, options = {}) {
       matches.push({
         space: space.slug,
         nodeId: String(node.id || ""),
-        kind: node.kind === "command" ? "command" : "text",
+        kind: node.kind === "command" || node.kind === "drawing" ? node.kind : "text",
         createdAt: Number(node.createdAt) || 0,
         updatedAt: Number(node.updatedAt) || Number(space.updatedAt) || Number(node.createdAt) || 0,
         spaceUpdatedAt: Number(space.updatedAt) || 0,

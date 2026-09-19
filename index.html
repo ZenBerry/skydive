@@ -400,6 +400,22 @@
       outline-offset: calc(2px / var(--camera-scale, 1));
     }
 
+    .text-node.drawing-node {
+      min-height: 0;
+      line-height: 0;
+      color: var(--drawing-color, var(--skydive-text));
+    }
+
+    .drawing-node svg {
+      display: block;
+      overflow: visible;
+      pointer-events: none;
+    }
+
+    .drawing-node path {
+      fill: currentColor;
+    }
+
     .text-node[data-creator-initial]::before {
       content: attr(data-creator-initial);
       position: absolute;
@@ -1728,7 +1744,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 222; // Increment once for each commit.
+    const APP_VERSION = 223; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -1747,7 +1763,11 @@
     const AUDIO_WIDGET_COMMAND_ID = "rec";
     const WIDGET_COLOR_STATE_KEY = "_widgetColor";
     const DEFAULT_WIDGET_COLOR = "#ffffff";
+    const DEFAULT_DRAWING_COLOR = "#111111";
     const WIDGET_COLORS = new Set(["#ffffff", "#ffd4b570", "#fff8ed", "#ecfce8", "#d2f7ff70", "#f6e0ff9e", "#e0e0e066"]);
+    const PENCIL_MIN_RADIUS_SCREEN_PX = 1.25;
+    const PENCIL_MAX_RADIUS_SCREEN_PX = 6.5;
+    const PENCIL_POINT_SPACING_SCREEN_PX = 0.45;
     const WIDGET_FLOAT_SHADOW_COLORS = new Map([
       ["#ecfce8", "#ddf9b9"]
     ]);
@@ -1901,6 +1921,8 @@
     let lineDraft = null;
     let marqueeSession = null;
     let panSession = null;
+    let pencilSession = null;
+    let lastPencilEnd = null;
     let physicalWheelZoomAnimation = null;
     let physicalWheelZoomAnimationFrame = null;
     let hasPhysicalWheelInput = false;
@@ -4372,13 +4394,13 @@
       contextMenuNode = node;
       contextMenuWidget = eventTargetExternalLinkCard(eventTarget, node);
       contextMenuSizeTargets = getContextMenuSizeTargets(node);
-      contextMenuSelectionRange = isCommandNode(node) || isHtmlViewNode(node) || contextMenuWidget
+      contextMenuSelectionRange = isCommandNode(node) || isDrawingNode(node) || isHtmlViewNode(node) || contextMenuWidget
         ? null
         : getSelectionRangeWithinNode(node);
       copySizeBtn.disabled = contextMenuSizeTargets.length !== 1;
       pasteSizeBtn.disabled = !canPasteSizeToTargets(contextMenuSizeTargets);
       linkSelectionBtn.disabled = !contextMenuSelectionRange;
-      const canToggleMarkdown = !isCommandNode(node) && !isCalcVariableNode(node) && !contextMenuWidget;
+      const canToggleMarkdown = !isCommandNode(node) && !isDrawingNode(node) && !isCalcVariableNode(node) && !contextMenuWidget;
       viewMarkdownBtn.hidden = !canToggleMarkdown || isMarkdownViewNode(node) || isHtmlViewNode(node);
       viewHtmlBtn.hidden = !canToggleMarkdown || isHtmlViewNode(node);
       viewPlainTextBtn.hidden = !canToggleMarkdown || (!isMarkdownViewNode(node) && !isHtmlViewNode(node));
@@ -7790,12 +7812,16 @@
       return node instanceof HTMLElement && node.dataset.kind === "command";
     }
 
+    function isDrawingNode(node) {
+      return node instanceof HTMLElement && node.dataset.kind === "drawing";
+    }
+
     function isExternalLinkCard(element) {
       return element instanceof HTMLElement && element.classList.contains("external-link-card");
     }
 
     function isWidgetColorable(element) {
-      return isCommandNode(element) || isExternalLinkCard(element);
+      return isCommandNode(element) || isExternalLinkCard(element) || isDrawingNode(element);
     }
 
     function eventTargetExternalLinkCard(target, node) {
@@ -7951,6 +7977,9 @@
       if (isCommandNode(node)) {
         return normalizeWidgetColor(readCommandState(node)[WIDGET_COLOR_STATE_KEY]) || DEFAULT_WIDGET_COLOR;
       }
+      if (isDrawingNode(node)) {
+        return normalizeWidgetColor(node.dataset.widgetColor || "") || DEFAULT_DRAWING_COLOR;
+      }
       if (isExternalLinkCard(node)) {
         return normalizeWidgetColor(node.dataset.widgetColor || "") || DEFAULT_WIDGET_COLOR;
       }
@@ -7960,6 +7989,16 @@
     function applyWidgetColor(node) {
       if (!isWidgetColorable(node)) return;
       const color = getWidgetColor(node);
+      if (isDrawingNode(node)) {
+        if (color === DEFAULT_DRAWING_COLOR) {
+          delete node.dataset.widgetColor;
+          node.style.removeProperty("--drawing-color");
+        } else {
+          node.dataset.widgetColor = color;
+          node.style.setProperty("--drawing-color", color);
+        }
+        return;
+      }
       if (color === DEFAULT_WIDGET_COLOR) {
         delete node.dataset.widgetColor;
         [
@@ -8016,6 +8055,8 @@
         if (color !== DEFAULT_WIDGET_COLOR) state[WIDGET_COLOR_STATE_KEY] = color;
         else delete state[WIDGET_COLOR_STATE_KEY];
         writeCommandState(node, state);
+      } else if (isDrawingNode(node)) {
+        node.dataset.widgetColor = color;
       } else if (color !== DEFAULT_WIDGET_COLOR) {
         node.dataset.widgetColor = color;
       } else {
@@ -8136,6 +8177,7 @@
         .filter((node) =>
           node instanceof HTMLElement &&
           !isCommandNode(node) &&
+          !isDrawingNode(node) &&
           !isNodeDeleted(node)
         )
         .map((node) => node.textContent || "")
@@ -8404,6 +8446,17 @@
           commandId: node.dataset.commandId || "",
           ...(node.dataset.commandVersion ? { commandVersion: node.dataset.commandVersion } : {}),
           commandState: readCommandState(node)
+        };
+      }
+
+      if (isDrawingNode(node)) {
+        return {
+          ...base,
+          kind: "drawing",
+          width: Number(node.dataset.drawingWidth),
+          height: Number(node.dataset.drawingHeight),
+          path: node.dataset.drawingPath || "",
+          color: getWidgetColor(node)
         };
       }
 
@@ -8751,8 +8804,9 @@
           viewMode,
           floating: entry.floating === true
         };
-        const node = entry.kind === "command"
-          ? createCommandNode(
+        let node = null;
+        if (entry.kind === "command") {
+          node = createCommandNode(
             x,
             y,
             String(entry.commandId || ""),
@@ -8761,8 +8815,18 @@
             "",
             String(entry.commandVersion || ""),
             options
-          )
-          : createTextNode(
+          );
+        } else if (entry.kind === "drawing") {
+          node = createDrawingNode(x, y, {
+            width: entry.width,
+            height: entry.height,
+            path: typeof entry.path === "string" ? entry.path : ""
+          }, nodeBaseFontSize, "", {
+            ...options,
+            color: entry.color
+          });
+        } else {
+          node = createTextNode(
             x,
             y,
             typeof entry.text === "string" ? entry.text : "",
@@ -8771,6 +8835,7 @@
             typeof entry.html === "string" ? entry.html : null,
             options
           );
+        }
         if (node) {
           idMap.set(String(entry.id || ""), node.dataset.nodeId || "");
           createdNodes.push(node);
@@ -9216,6 +9281,216 @@
       selectedNodes.clear();
       applySelectionNodeClasses();
       refreshSelectionBounds();
+    }
+
+    function getPencilSamplePressure(event) {
+      const pressure = Number(event && event.pressure);
+      return Number.isFinite(pressure) && pressure > 0 ? clamp(pressure, 0, 1) : 0.35;
+    }
+
+    function addPencilEventSamples(session, event, force = false) {
+      const events = typeof event.getCoalescedEvents === "function"
+        ? event.getCoalescedEvents()
+        : [event];
+      const inputEvents = events.length > 0 ? events : [event];
+      for (const input of inputEvents) {
+        const point = screenToWorld(input.clientX, input.clientY);
+        const last = session.samples[session.samples.length - 1];
+        const minDistance = PENCIL_POINT_SPACING_SCREEN_PX / session.scale;
+        if (!force && last && Math.hypot(point.x - last.x, point.y - last.y) < minDistance) continue;
+        session.samples.push({
+          x: point.x,
+          y: point.y,
+          pressure: getPencilSamplePressure(input)
+        });
+      }
+    }
+
+    function getSmoothedPencilSamples(samples) {
+      if (samples.length < 3) return samples.map((sample) => ({ ...sample }));
+      return samples.map((sample, index) => {
+        if (index === 0 || index === samples.length - 1) return { ...sample };
+        const previous = samples[index - 1];
+        const next = samples[index + 1];
+        return {
+          x: (previous.x + sample.x * 2 + next.x) / 4,
+          y: (previous.y + sample.y * 2 + next.y) / 4,
+          pressure: (previous.pressure + sample.pressure * 2 + next.pressure) / 4
+        };
+      });
+    }
+
+    function getPencilRadiusWorld(pressure, scale) {
+      const easedPressure = Math.pow(clamp(pressure, 0, 1), 0.72);
+      return (PENCIL_MIN_RADIUS_SCREEN_PX +
+        (PENCIL_MAX_RADIUS_SCREEN_PX - PENCIL_MIN_RADIUS_SCREEN_PX) * easedPressure) / scale;
+    }
+
+    function getSmoothClosedPath(points) {
+      if (points.length === 0) return "";
+      if (points.length === 1) return `M ${formatLineNumber(points[0].x)} ${formatLineNumber(points[0].y)} Z`;
+      const first = points[0];
+      const second = points[1];
+      const start = { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
+      const parts = ["M", formatLineNumber(start.x), formatLineNumber(start.y)];
+      for (let index = 1; index <= points.length; index += 1) {
+        const control = points[index % points.length];
+        const next = points[(index + 1) % points.length];
+        parts.push(
+          "Q",
+          formatLineNumber(control.x),
+          formatLineNumber(control.y),
+          formatLineNumber((control.x + next.x) / 2),
+          formatLineNumber((control.y + next.y) / 2)
+        );
+      }
+      parts.push("Z");
+      return parts.join(" ");
+    }
+
+    function getPencilDrawingGeometry(samples, scale) {
+      const points = getSmoothedPencilSamples(samples);
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      points.forEach((point) => {
+        const radius = getPencilRadiusWorld(point.pressure, scale);
+        minX = Math.min(minX, point.x - radius);
+        minY = Math.min(minY, point.y - radius);
+        maxX = Math.max(maxX, point.x + radius);
+        maxY = Math.max(maxY, point.y + radius);
+      });
+      const width = Math.max(1, (maxX - minX) * scale);
+      const height = Math.max(1, (maxY - minY) * scale);
+      const local = points.map((point) => ({
+        x: (point.x - minX) * scale,
+        y: (point.y - minY) * scale,
+        radius: getPencilRadiusWorld(point.pressure, scale) * scale
+      }));
+
+      if (local.length === 1) {
+        const point = local[0];
+        const radius = point.radius;
+        const kappa = radius * 0.5522848;
+        return {
+          x: minX,
+          y: minY,
+          width,
+          height,
+          path: [
+            "M", formatLineNumber(point.x + radius), formatLineNumber(point.y),
+            "C", formatLineNumber(point.x + radius), formatLineNumber(point.y + kappa),
+            formatLineNumber(point.x + kappa), formatLineNumber(point.y + radius),
+            formatLineNumber(point.x), formatLineNumber(point.y + radius),
+            "C", formatLineNumber(point.x - kappa), formatLineNumber(point.y + radius),
+            formatLineNumber(point.x - radius), formatLineNumber(point.y + kappa),
+            formatLineNumber(point.x - radius), formatLineNumber(point.y),
+            "C", formatLineNumber(point.x - radius), formatLineNumber(point.y - kappa),
+            formatLineNumber(point.x - kappa), formatLineNumber(point.y - radius),
+            formatLineNumber(point.x), formatLineNumber(point.y - radius),
+            "C", formatLineNumber(point.x + kappa), formatLineNumber(point.y - radius),
+            formatLineNumber(point.x + radius), formatLineNumber(point.y - kappa),
+            formatLineNumber(point.x + radius), formatLineNumber(point.y), "Z"
+          ].join(" ")
+        };
+      }
+
+      const left = [];
+      const right = [];
+      local.forEach((point, index) => {
+        const previous = local[Math.max(0, index - 1)];
+        const next = local[Math.min(local.length - 1, index + 1)];
+        const dx = next.x - previous.x;
+        const dy = next.y - previous.y;
+        const length = Math.hypot(dx, dy) || 1;
+        const normalX = -dy / length;
+        const normalY = dx / length;
+        left.push({ x: point.x + normalX * point.radius, y: point.y + normalY * point.radius });
+        right.push({ x: point.x - normalX * point.radius, y: point.y - normalY * point.radius });
+      });
+      return {
+        x: minX,
+        y: minY,
+        width,
+        height,
+        path: getSmoothClosedPath(left.concat(right.reverse()))
+      };
+    }
+
+    function renderPencilSession() {
+      if (!pencilSession || pencilSession.samples.length === 0) return;
+      const geometry = getPencilDrawingGeometry(pencilSession.samples, pencilSession.scale);
+      applyDrawingData(pencilSession.node, geometry);
+      setNodePosition(pencilSession.node, geometry.x, geometry.y, { suppressRealtime: true });
+    }
+
+    function beginPencilDrawing(event) {
+      if (event.pointerType !== "pen" || event.button !== 0 || pencilSession) return;
+      if (!(event.target instanceof Node) || !viewport.contains(event.target)) return;
+      closeNodeContextMenu();
+      closeLineContextMenu();
+      closeCanvasContextMenu();
+      closeSlashCommandMenu();
+      cancelLineDraft();
+      cancelCameraAnimation();
+      cancelNodeLayoutAnimation();
+      const scale = getCameraScale();
+      pencilSession = {
+        pointerId: event.pointerId,
+        scale,
+        samples: [],
+        node: null
+      };
+      addPencilEventSamples(pencilSession, event, true);
+      const geometry = getPencilDrawingGeometry(pencilSession.samples, scale);
+      pencilSession.node = createDrawingNode(
+        geometry.x,
+        geometry.y,
+        geometry,
+        BASE_TEXT_PX / scale,
+        "",
+        { autosave: false, suppressRealtime: true }
+      );
+      renderNode(pencilSession.node);
+      viewport.setPointerCapture(event.pointerId);
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+
+    function updatePencilDrawing(event) {
+      if (!pencilSession || event.pointerId !== pencilSession.pointerId) return;
+      addPencilEventSamples(pencilSession, event);
+      renderPencilSession();
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+
+    function endPencilDrawing(event) {
+      if (!pencilSession || event.pointerId !== pencilSession.pointerId) return;
+      const session = pencilSession;
+      addPencilEventSamples(session, event);
+      renderPencilSession();
+      if (viewport.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId);
+      pencilSession = null;
+      lastPencilEnd = {
+        x: event.clientX,
+        y: event.clientY,
+        until: Date.now() + 700
+      };
+      publishSharedRealtimeNodeCreate(session.node);
+      scheduleAutosave();
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+
+    function suppressPencilCompatibilityEvent(event) {
+      const nearLastPencilEnd = lastPencilEnd &&
+        Date.now() <= lastPencilEnd.until &&
+        Math.hypot(event.clientX - lastPencilEnd.x, event.clientY - lastPencilEnd.y) <= 18;
+      if (!pencilSession && event.pointerType !== "pen" && !nearLastPencilEnd) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
     }
 
     function beginMarqueeSelection(event) {
@@ -10142,7 +10417,7 @@
       node.style.left = `${screenPoint.x}px`;
       node.style.top = `${screenPoint.y}px`;
       node.style.setProperty("--camera-scale", String(metrics.screenScale));
-      if (isCommandNode(node)) {
+      if (isCommandNode(node) || isDrawingNode(node)) {
         node.style.fontSize = `${metrics.layoutFontPx}px`;
         node.style.minWidth = "0px";
         node.style.transform = getNodeTransform(node, totalRotation, metrics.screenScale);
@@ -10265,6 +10540,7 @@
 
     function startEditing(node, selectAll = false, caretOffset = null) {
       if (isCommandNode(node)) return;
+      if (isDrawingNode(node)) return;
       if (isCalcVariableNode(node)) return;
       if (isHtmlViewNode(node)) return;
       unwrapTagLinks(node);
@@ -10797,6 +11073,21 @@
           createdAt: entry.createdAt,
           deletedAt: entry.deletedAt,
           createdBy: entry.createdBy,
+          floating: entry.floating === true,
+          rotation,
+          preserveTimestamps: true,
+          ...options
+        });
+      } else if (entry.kind === "drawing") {
+        createDrawingNode(x, y, {
+          width: entry.width,
+          height: entry.height,
+          path: typeof entry.path === "string" ? entry.path : ""
+        }, baseFontSize, id, {
+          createdAt: entry.createdAt,
+          deletedAt: entry.deletedAt,
+          createdBy: entry.createdBy,
+          color: entry.color,
           floating: entry.floating === true,
           rotation,
           preserveTimestamps: true,
@@ -11472,6 +11763,7 @@
       node.addEventListener("dblclick", (event) => {
         event.stopPropagation();
         if (isCommandNode(node)) return;
+        if (isDrawingNode(node)) return;
         if (isCalcVariableNode(node)) return;
         clearSelection();
         if (switchMarkdownNodeToPlainTextAtPoint(node, event.clientX, event.clientY)) return;
@@ -11636,6 +11928,67 @@
           node.blur();
         }
       });
+    }
+
+    function applyDrawingData(node, drawing) {
+      const width = clamp(Number(drawing && drawing.width) || 1, 1, 100000);
+      const height = clamp(Number(drawing && drawing.height) || 1, 1, 100000);
+      const pathData = typeof (drawing && drawing.path) === "string" ? drawing.path : "";
+      node.dataset.drawingWidth = String(width);
+      node.dataset.drawingHeight = String(height);
+      node.dataset.drawingPath = pathData;
+      const svg = node.querySelector("svg");
+      const path = svg && svg.querySelector("path");
+      if (!svg || !path) return;
+      svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+      svg.setAttribute("width", String(width));
+      svg.setAttribute("height", String(height));
+      path.setAttribute("d", pathData);
+    }
+
+    function createDrawingNode(
+      worldX,
+      worldY,
+      drawing,
+      baseFontSize = BASE_TEXT_PX / camera.scale,
+      preferredId = "",
+      options = {}
+    ) {
+      const node = document.createElement("div");
+      node.className = "text-node drawing-node";
+      node.dataset.kind = "drawing";
+      node.dataset.nodeId = resolveNodeId(preferredId);
+      node.contentEditable = "false";
+      node.setAttribute("role", "img");
+      node.setAttribute("aria-label", "Pencil drawing");
+      node.dataset.baseFontSize = String(baseFontSize);
+      const rotation = Object.prototype.hasOwnProperty.call(options, "rotation")
+        ? Number(options.rotation)
+        : getNewNodeRotation();
+      const normalizedRotation = normalizeRotation(rotation);
+      if (Math.abs(normalizedRotation) >= 0.000001) node.dataset.rotation = String(normalizedRotation);
+      if (options.floating === true) node.dataset.floating = "true";
+      const svg = document.createElementNS(SVG_NS, "svg");
+      svg.setAttribute("aria-hidden", "true");
+      const path = document.createElementNS(SVG_NS, "path");
+      svg.appendChild(path);
+      node.appendChild(svg);
+      applyDrawingData(node, drawing);
+      const color = normalizeWidgetColor(options.color || "");
+      if (color) node.dataset.widgetColor = color;
+      applyWidgetColor(node);
+      setNodeTimestamps(node, options);
+      setNodeCreator(node, options.createdBy || (!options.preserveTimestamps ? currentUser : null));
+      setNodePosition(node, worldX, worldY, { suppressRealtime: true });
+      attachNodeHandlers(node);
+      world.appendChild(node);
+      registerNode(node);
+      if (!isNodeDeleted(node)) observeNodeForLines(node);
+      if (options.autosave !== false) scheduleAutosave();
+      if (!options.suppressRealtime && !applyingSharedRealtimeNodeStructure) {
+        publishSharedRealtimeNodeCreate(node);
+      }
+      return node;
     }
 
     function createTextNode(
@@ -12034,6 +12387,13 @@
     }
 
     window.addEventListener("pointerdown", blockSharedEditUntilValidated, { capture: true });
+    window.addEventListener("pointerdown", beginPencilDrawing, { capture: true });
+    window.addEventListener("pointermove", updatePencilDrawing, { capture: true });
+    window.addEventListener("pointerup", endPencilDrawing, { capture: true });
+    window.addEventListener("pointercancel", endPencilDrawing, { capture: true });
+    window.addEventListener("click", suppressPencilCompatibilityEvent, { capture: true });
+    window.addEventListener("dblclick", suppressPencilCompatibilityEvent, { capture: true });
+    window.addEventListener("contextmenu", suppressPencilCompatibilityEvent, { capture: true });
     window.addEventListener("click", blockSharedEditUntilValidated, { capture: true });
     window.addEventListener("dblclick", blockSharedEditUntilValidated, { capture: true });
     window.addEventListener("contextmenu", blockSharedEditUntilValidated, { capture: true });
