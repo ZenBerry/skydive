@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-10-08: Version 226: Kept the loading overlay visible until the first canvas state is fully restored and rendered, avoided cached-space white starts, and made background shared-space validation swap state without a painted empty-world flicker.
+
 - 2026-09-19: Version 225: Fixed Apple Pencil drawing on rotated canvases by keeping new SVG strokes in world orientation while preserving normal node rotation afterward.
 
 - 2026-09-19: Version 224: Fixed Pencil drawing geometry so SVG nodes scale with canvas zoom and node resizing while retaining stable world-space bounds.

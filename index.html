@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <title>Skydive</title>
   <script src="/assets/disable-native-zoom.js"></script>
-  <script src="https://unpkg.com/@zenberry/quico@latest/dist/quico.js"></script>
+  <script src="https://unpkg.com/@zenberry/quico@latest/dist/quico.js" defer></script>
   <style>
     @import url("https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap");
 
@@ -293,7 +293,7 @@
       color: var(--skydive-text);
       font: 400 16px/1.4 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
       letter-spacing: 0;
-      opacity: 0;
+      opacity: 1;
       transition: opacity 760ms cubic-bezier(0.9, 0, 0.1, 1);
       will-change: opacity;
     }
@@ -1744,7 +1744,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 225; // Increment once for each commit.
+    const APP_VERSION = 226; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -13471,7 +13471,7 @@
       try {
         do {
           sharedRealtimeRefreshQueued = false;
-          const changed = await requestSharedSpace({ cache: "no-store" }).then((data) => applySharedState(data, { incremental: true }));
+          await requestSharedSpace({ cache: "no-store" }).then((data) => applySharedState(data));
           unlockSharedCacheEditing();
         } while (sharedRealtimeRefreshQueued && !hasActiveSharedLocalEdits());
       } catch (error) {
@@ -13867,17 +13867,11 @@
     }
 
     async function boot() {
-      const canSkipLoadingScreen = Boolean(SHARED_SPACE_SLUG && readSharedSpaceCache());
-      let loadingScreenShown = false;
       sharedSpaceLoadedFromCache = false;
       sharedCacheValidationPending = false;
-      if (canSkipLoadingScreen && loadingScreen) {
-        loadingScreen.hidden = true;
-        loadingScreen.classList.remove("loading-visible", "loading-complete");
-      } else {
-        showLoadingScreen();
-        loadingScreenShown = true;
-      }
+      let loadingScreenShown = false;
+      showLoadingScreen();
+      loadingScreenShown = Boolean(loadingScreen);
       updateDocumentTitle();
       startTitleHookRefresh();
       if (loadingScreenShown) setLoadingProgress(10);
@@ -13902,15 +13896,7 @@
             };
             const loaded = USER_SPACES_INFO.active
               ? await loadFromSharedSpace(loadOptions)
-              : await loadFromSharedSpaceWithCache({
-                ...loadOptions,
-                onCacheFallback: () => {
-                  if (loadingScreenShown) return;
-                  showLoadingScreen();
-                  loadingScreenShown = true;
-                  setLoadingProgress(20);
-                }
-              });
+              : await loadFromSharedSpaceWithCache(loadOptions);
             if (!loaded) {
               if (loadingScreenShown) setLoadingProgress(90);
               render();
