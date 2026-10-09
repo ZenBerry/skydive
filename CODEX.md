@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-10-09: Version 229: Made persisted line and arrow SVG geometry camera-stable by sampling tapered paths in world space and preserving higher-precision coordinates through zoom and rotation.
+
 - 2026-10-09: Version 228: Added Tab-only canvas status badges under the version badge for current zoom, canvas rotation, and live item count in the active space.
 
 - 2026-10-08: Version 227: Added a faint live arithmetic result suggestion for unfinished text calculations ending in `=`, accepted with Tab and dismissed by any other key.
