@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-10-09: Version 228: Added Tab-only canvas status badges under the version badge for current zoom, canvas rotation, and live item count in the active space.
+
 - 2026-10-08: Version 227: Added a faint live arithmetic result suggestion for unfinished text calculations ending in `=`, accepted with Tab and dismissed by any other key.
 
 - 2026-10-08: Version 226: Kept the loading overlay visible until the first canvas state is fully restored and rendered, avoided cached-space white starts, and made background shared-space validation swap state without a painted empty-world flicker.

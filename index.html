@@ -701,11 +701,27 @@
       }
     }
 
-    #version-counter {
+    #version-badge-stack {
       position: fixed;
       top: calc(10px + env(safe-area-inset-top, 0px));
       left: calc(10px + env(safe-area-inset-left, 0px));
       z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 6px;
+      pointer-events: none;
+    }
+
+    #canvas-status-badges {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 6px;
+    }
+
+    #version-counter,
+    .canvas-status-badge {
       padding: 4px 7px;
       border: 1px solid rgba(17, 24, 39, 0.12);
       border-radius: 6px;
@@ -713,10 +729,10 @@
       box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
       color: #6b7280;
       font: 500 12px/1 "Roboto", "Helvetica Neue", Arial, sans-serif;
-      pointer-events: none;
     }
 
-    #version-counter[hidden] {
+    #version-counter[hidden],
+    #canvas-status-badges[hidden] {
       display: none;
     }
 
@@ -1530,7 +1546,14 @@
 <body>
   <quico hidden>S</quico>
   <div id="loading-screen" role="status" aria-live="polite">Loading... 0% done</div>
-  <div id="version-counter" aria-label="Application version" hidden></div>
+  <div id="version-badge-stack" aria-hidden="true">
+    <div id="version-counter" aria-label="Application version" hidden></div>
+    <div id="canvas-status-badges" hidden>
+      <div id="zoom-level-badge" class="canvas-status-badge"></div>
+      <div id="rotation-level-badge" class="canvas-status-badge"></div>
+      <div id="items-count-badge" class="canvas-status-badge"></div>
+    </div>
+  </div>
   <div id="viewport">
     <svg id="line-layer" aria-hidden="true"></svg>
     <div id="world"></div>
@@ -1659,6 +1682,10 @@
     const spacingGuideLayer = document.getElementById("spacing-guide-layer");
     const loadingScreen = document.getElementById("loading-screen");
     const versionCounter = document.getElementById("version-counter");
+    const canvasStatusBadges = document.getElementById("canvas-status-badges");
+    const zoomLevelBadge = document.getElementById("zoom-level-badge");
+    const rotationLevelBadge = document.getElementById("rotation-level-badge");
+    const itemsCountBadge = document.getElementById("items-count-badge");
     const marqueeSelection = document.getElementById("marquee-selection");
     const groupSelectionBox = document.getElementById("group-selection-box");
     const groupSelectionHandles = Array.from(groupSelectionBox.querySelectorAll(".group-selection-handle"));
@@ -1752,7 +1779,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 227; // Increment once for each commit.
+    const APP_VERSION = 228; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -2129,6 +2156,27 @@
     };
 
     versionCounter.textContent = `v${APP_VERSION}`;
+
+    function formatCanvasBadgeNumber(value, digits = 0) {
+      if (!Number.isFinite(value)) return "0";
+      const rounded = value.toFixed(digits);
+      return rounded.replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
+    }
+
+    function getCurrentSpaceItemCount() {
+      let count = 0;
+      for (const node of world.children) {
+        if (node instanceof HTMLElement && !isNodeDeleted(node)) count += 1;
+      }
+      return count;
+    }
+
+    function updateCanvasStatusBadges() {
+      if (!canvasStatusBadges || canvasStatusBadges.hidden) return;
+      zoomLevelBadge.textContent = `Zoom ${formatCanvasBadgeNumber(getCameraScale() * 100)}%`;
+      rotationLevelBadge.textContent = `Rotation ${formatCanvasBadgeNumber(getCameraRotation() * 180 / Math.PI)}deg`;
+      itemsCountBadge.textContent = `Items ${getCurrentSpaceItemCount()}`;
+    }
 
     function isPlaygroundPath() {
       const parts = window.location.pathname.split("/").filter(Boolean).map((part) => decodePathPart(part).toLowerCase());
@@ -10509,6 +10557,7 @@
       renderGroupSelectionBox();
       renderNavigationFitMarkers();
       renderRemotePointers();
+      updateCanvasStatusBadges();
     }
 
     function screenToWorld(clientX, clientY) {
@@ -13153,7 +13202,10 @@
         !isEditableTarget(event.target);
       if (isVersionToggle) {
         event.preventDefault();
-        versionCounter.hidden = !versionCounter.hidden;
+        const hidden = !versionCounter.hidden;
+        versionCounter.hidden = hidden;
+        canvasStatusBadges.hidden = hidden;
+        updateCanvasStatusBadges();
         return;
       }
 
