@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-10-13: Version 230: Restored `/chord` to the frontend command list by loading its existing static command module again.
+
 - 2026-10-09: Version 229: Made persisted line and arrow SVG geometry camera-stable by sampling tapered paths in world space and preserving higher-precision coordinates through zoom and rotation.
 
 - 2026-10-09: Version 228: Added Tab-only canvas status badges under the version badge for current zoom, canvas rotation, and live item count in the active space.
