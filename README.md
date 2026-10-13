@@ -120,7 +120,7 @@ Keep changes small and dependency-light. This project favors direct browser APIs
 
 When changing app behavior for a commit, update `APP_VERSION` in `index.html`. When changing a command widget, also check whether its entry in `commands/registry.json` needs a version bump.
 
-For quick validation, use the smallest check that exercises the touched path: syntax-check edited JavaScript, parse edited JSON, run `git diff --check`, and use Netlify Dev when function behavior matters.
+For quick validation, use the smallest check that exercises the touched path: syntax-check edited JavaScript, parse edited JSON, run `git diff --check`, and use Netlify Dev when function behavior matters. After changing bundled command metadata or loading, run `node tests/commands-registry.cjs`; it checks only `source: "static"` commands, leaving future marketplace, private, and uploaded command sources free to use their own runtime loaders.
 
 ## Deployment
 

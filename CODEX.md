@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-10-13: Version 231: Added a dependency-free bundled-command registry check that catches missing, duplicate, mismatched, and orphaned static command loaders while leaving future marketplace, private, and uploaded command sources independent.
+
 - 2026-10-13: Version 230: Restored `/chord` to the frontend command list by loading its existing static command module again.
 
 - 2026-10-09: Version 229: Made persisted line and arrow SVG geometry camera-stable by sampling tapered paths in world space and preserving higher-precision coordinates through zoom and rotation.
