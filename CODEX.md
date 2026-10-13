@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-10-13: Version 232: Added a lazy `/playback` controller for simultaneously starting, stopping, pausing, and independently looping arrow-connected audio, voice-recording, and chord widgets while ignoring ordinary lines and keyboard synths.
+
 - 2026-10-13: Version 231: Added a dependency-free bundled-command registry check that catches missing, duplicate, mismatched, and orphaned static command loaders while leaving future marketplace, private, and uploaded command sources independent.
 
 - 2026-10-13: Version 230: Restored `/chord` to the frontend command list by loading its existing static command module again.

@@ -24,6 +24,7 @@
     b: 11
   };
   const runtimes = new WeakMap();
+  const playbackControllers = new WeakMap();
 
   function normalizeFret(value) {
     const raw = String(value || "").trim().toLowerCase();
@@ -93,11 +94,59 @@
   function clearRuntime(container) {
     const runtime = runtimes.get(container);
     if (!runtime) return;
-    runtime.timers.forEach((timer) => clearTimeout(timer));
+    runtime.timers.forEach((timer) => clearTimeout(timer.id));
     runtime.timers = [];
     runtime.stops.forEach((stop) => stop());
     runtime.stops = [];
+    if (runtime.audioContext && runtime.audioContext.state !== "closed") {
+      void runtime.audioContext.close().catch(() => {});
+    }
+    for (const item of container.querySelectorAll(".chord-string")) item.dataset.active = "false";
     runtimes.delete(container);
+  }
+
+  function startRuntimeTimer(runtime, timer) {
+    timer.startedAt = performance.now();
+    timer.id = setTimeout(() => {
+      runtime.timers = runtime.timers.filter((entry) => entry !== timer);
+      timer.callback();
+    }, timer.remaining);
+  }
+
+  function scheduleRuntimeTimer(runtime, callback, delayMs) {
+    const timer = {
+      id: null,
+      callback,
+      remaining: Math.max(0, delayMs),
+      startedAt: 0
+    };
+    runtime.timers.push(timer);
+    startRuntimeTimer(runtime, timer);
+  }
+
+  function pauseRuntime(container) {
+    const runtime = runtimes.get(container);
+    if (!runtime || runtime.paused) return false;
+    runtime.paused = true;
+    for (const timer of runtime.timers) {
+      clearTimeout(timer.id);
+      timer.remaining = Math.max(0, timer.remaining - (performance.now() - timer.startedAt));
+    }
+    if (runtime.audioContext && runtime.audioContext.state === "running") {
+      void runtime.audioContext.suspend().catch(() => {});
+    }
+    return true;
+  }
+
+  function resumeRuntime(container) {
+    const runtime = runtimes.get(container);
+    if (!runtime || !runtime.paused) return false;
+    runtime.paused = false;
+    if (runtime.audioContext && runtime.audioContext.state === "suspended") {
+      void runtime.audioContext.resume().catch(() => {});
+    }
+    runtime.timers.forEach((timer) => startRuntimeTimer(runtime, timer));
+    return true;
   }
 
   function getAudioContext() {
@@ -176,14 +225,27 @@
 
     destroy(container) {
       clearRuntime(container);
+      playbackControllers.delete(container);
     },
 
     getTitle(state) {
       return parseFrets((state && state.frets) || "").join(" ");
     },
 
+    playbackAction(container, action, value) {
+      const controller = playbackControllers.get(container);
+      if (!controller) return false;
+      if (action === "start") controller.start();
+      else if (action === "pause") controller.pause();
+      else if (action === "stop") controller.stop();
+      else if (action === "loop") controller.setLoop(Boolean(value));
+      else return false;
+      return true;
+    },
+
     render(container, state, updateState, context = {}) {
       clearRuntime(container);
+      playbackControllers.delete(container);
 
       const frets = parseFrets((state && state.frets) || DEFAULT_FRETS.join(" "));
       const tuning = normalizeTuning(state && state.tuning);
@@ -446,7 +508,8 @@
         saveInputs(!editing);
       });
 
-      card.querySelector('[data-action="play"]').addEventListener("click", () => {
+      let loop = false;
+      const play = () => {
         const next = {
           ...state,
           ...readInputs(),
@@ -454,39 +517,51 @@
         };
         const playable = getPlayableStrings(next);
         clearRuntime(container);
-        const nextRuntime = { timers: [], stops: [] };
+        const nextRuntime = { timers: [], stops: [], audioContext: null, paused: false };
         runtimes.set(container, nextRuntime);
         if (playable.length === 0) return;
 
         const audioContext = getAudioContext();
         if (!audioContext) return;
-        const closeTimer = setTimeout(() => {
-          void audioContext.close().catch(() => {});
-        }, 2600);
-        nextRuntime.timers.push(closeTimer);
-        if (typeof context.startOutgoingArrowTargets === "function") {
-          const chainTimer = setTimeout(() => {
-            if (container.isConnected) context.startOutgoingArrowTargets();
-          }, Math.max(1500, playable.length * 135 + 1450));
-          nextRuntime.timers.push(chainTimer);
-        }
+        nextRuntime.audioContext = audioContext;
+
+        scheduleRuntimeTimer(nextRuntime, () => {
+          if (!container.isConnected || runtimes.get(container) !== nextRuntime) return;
+          clearRuntime(container);
+          if (loop) play();
+          else if (typeof context.startOutgoingArrowTargets === "function") context.startOutgoingArrowTargets();
+        }, Math.max(1500, playable.length * 135 + 1450));
 
         playable.forEach((string, order) => {
           const delaySeconds = order * 0.135;
           nextRuntime.stops.push(playString(audioContext, string.frequency, delaySeconds));
-          const onTimer = setTimeout(() => {
+          scheduleRuntimeTimer(nextRuntime, () => {
             if (!container.isConnected) return;
             for (const item of card.querySelectorAll(".chord-string")) item.dataset.active = "false";
             const active = card.querySelector(`.chord-string[data-index="${string.index}"]`);
             if (active) active.dataset.active = "true";
           }, delaySeconds * 1000);
-          const offTimer = setTimeout(() => {
+          scheduleRuntimeTimer(nextRuntime, () => {
             const active = card.querySelector(`.chord-string[data-index="${string.index}"]`);
             if (active) active.dataset.active = "false";
           }, delaySeconds * 1000 + 170);
-          nextRuntime.timers.push(onTimer, offTimer);
         });
+      };
+
+      const stop = () => clearRuntime(container);
+      playbackControllers.set(container, {
+        start() {
+          if (!resumeRuntime(container)) play();
+        },
+        pause() {
+          pauseRuntime(container);
+        },
+        stop,
+        setLoop(value) {
+          loop = Boolean(value);
+        }
       });
+      card.querySelector('[data-action="play"]').addEventListener("click", play);
     }
   });
 })();

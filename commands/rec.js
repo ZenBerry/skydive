@@ -548,6 +548,30 @@
       return label;
     },
 
+    playbackAction(container, action, value) {
+      const runtime = runtimes.get(container);
+      if (!runtime || runtime.discard) return false;
+      const loopButton = container.querySelector('[data-action="loop"]');
+      if (action === "loop" && loopButton instanceof HTMLElement) {
+        setLoop(runtime, { loop: loopButton }, Boolean(value));
+        return true;
+      }
+
+      const player = getPlayer(runtime);
+      if (!player) return false;
+      if (action === "start") {
+        const playPromise = player.play();
+        if (playPromise && typeof playPromise.catch === "function") void playPromise.catch(() => {});
+      } else if (action === "pause") {
+        player.pause();
+      } else if (action === "stop") {
+        player.stop();
+      } else {
+        return false;
+      }
+      return true;
+    },
+
     render(container, state, onState, context = {}) {
       const status = typeof state.status === "string" ? state.status : "empty";
       const audioUrl = normalizeHref(state.url);

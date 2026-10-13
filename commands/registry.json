@@ -135,7 +135,7 @@
     },
     {
       "id": "rec",
-      "version": "1.0.11",
+      "version": "1.0.12",
       "title": "Recorder",
       "description": "Record a voice note and play its waveform.",
       "aliases": ["record", "audio", "voice", "voice-note"],
@@ -196,7 +196,7 @@
     },
     {
       "id": "chord",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "title": "Chord",
       "description": "Play a small guitar-tab chord.",
       "aliases": ["guitar", "tab"],
@@ -212,6 +212,20 @@
             "items": { "type": "string" }
           },
           "editing": { "type": "boolean" }
+        }
+      }
+    },
+    {
+      "id": "playback",
+      "version": "1.0.0",
+      "title": "Playback",
+      "description": "Control audio and chord widgets connected by outgoing arrows.",
+      "source": "static",
+      "dynamicExecutable": false,
+      "stateSchema": {
+        "type": "object",
+        "properties": {
+          "loop": { "type": "boolean" }
         }
       }
     },

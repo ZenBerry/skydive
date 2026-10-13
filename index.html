@@ -1782,7 +1782,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 231; // Increment once for each commit.
+    const APP_VERSION = 232; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -2029,6 +2029,17 @@
         source: "static",
         dynamicExecutable: false,
         script: "/commands/broadcast.js"
+      }],
+      ["playback", {
+        id: "playback",
+        title: "Playback",
+        description: "Control audio and chord widgets connected by outgoing arrows.",
+        source: "static",
+        dynamicExecutable: false,
+        script: "/commands/playback.js",
+        createState() {
+          return { loop: false };
+        }
       }],
       ["tuwer", {
         id: "tuwer",
@@ -8370,6 +8381,7 @@
         getSpaceText: getSpaceTextSnapshot,
         getSpaceTextVersion: () => spaceTextVersion,
         startOutgoingArrowTargets: () => startOutgoingArrowTargets(node),
+        controlOutgoingPlaybackTargets: (action, value) => controlOutgoingPlaybackTargets(node, action, value),
         canCreateChildSpace: isCurrentUserSpacePath(),
         openSpace(slug) {
           window.location.assign(getSpacePathFromSlug(slug));
@@ -8489,6 +8501,23 @@
         started = startCommandNode(targetNode, visitedNodeIds) || started;
       }
       return started;
+    }
+
+    function controlOutgoingPlaybackTargets(sourceNode, action, value) {
+      if (!(sourceNode instanceof HTMLElement)) return false;
+      const sourceId = sourceNode.dataset.nodeId || "";
+      if (!sourceId) return false;
+      let controlled = false;
+
+      for (const line of lineConnections) {
+        if (line.deletedAt || !isArrowLine(line) || line.from !== sourceId) continue;
+        const targetNode = getNodeById(line.to);
+        if (!targetNode || !isCommandNode(targetNode) || isFloatingNode(targetNode)) continue;
+        const command = getLoadedStaticCommand(targetNode.dataset.commandId || "");
+        if (!command || typeof command.playbackAction !== "function") continue;
+        controlled = command.playbackAction(targetNode, action, value) || controlled;
+      }
+      return controlled;
     }
 
     function serializeNode(node) {
