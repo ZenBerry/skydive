@@ -1782,7 +1782,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 232; // Increment once for each commit.
+    const APP_VERSION = 233; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -1797,6 +1797,7 @@
     const DEFAULT_TEMPLATE_DESCRIPTION = "A pre-saved template";
     const CLOUDINARY_SIGNATURE_URL = "/.netlify/functions/cloudinary-signature";
     const FILE_WIDGET_COMMAND_ID = "file";
+    const SWF_WIDGET_COMMAND_ID = "swf";
     const THEME_WIDGET_COMMAND_ID = "theme";
     const AUDIO_WIDGET_COMMAND_ID = "rec";
     const COUNTING_SUGGESTION_CLASS = "counting-suggestion";
@@ -2040,6 +2041,14 @@
         createState() {
           return { loop: false };
         }
+      }],
+      ["swf", {
+        id: "swf",
+        title: "Flash Player",
+        description: "Play an uploaded SWF with Ruffle.",
+        source: "static",
+        dynamicExecutable: false,
+        script: "/commands/swf.js"
       }],
       ["tuwer", {
         id: "tuwer",
@@ -11782,6 +11791,21 @@
       );
     }
 
+    function isSwfFile(file) {
+      const mimeType = file && typeof file.type === "string" ? file.type.toLowerCase() : "";
+      return mimeType === "application/x-shockwave-flash" || getFileExtension(file && file.name) === "swf";
+    }
+
+    function createSwfUploadNode(file, worldX, worldY) {
+      return createCommandNode(
+        worldX,
+        worldY,
+        SWF_WIDGET_COMMAND_ID,
+        createUploadingFileState(file),
+        BASE_TEXT_PX / camera.scale
+      );
+    }
+
     async function uploadFileForNode(file, node) {
       try {
         const upload = await uploadFileToCloudinary(file, (progress) => {
@@ -11879,6 +11903,12 @@
         } catch (error) {
           // Ordinary JSON drops should keep the existing file-upload behavior.
         }
+      }
+
+      if (isSwfFile(file)) {
+        const node = createSwfUploadNode(file, x, y);
+        void uploadFileForNode(file, node);
+        return;
       }
 
       if (isAudioFile(file)) {

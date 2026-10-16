@@ -103,6 +103,33 @@
       }
     },
     {
+      "id": "swf",
+      "version": "1.0.0",
+      "title": "Flash Player",
+      "description": "Play an uploaded SWF with Ruffle.",
+      "source": "static",
+      "dynamicExecutable": false,
+      "stateSchema": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string" },
+          "progress": { "type": "number" },
+          "fileName": { "type": "string" },
+          "extension": { "type": "string" },
+          "mimeType": { "type": "string" },
+          "bytes": { "type": "number" },
+          "url": { "type": "string" },
+          "downloadUrl": { "type": "string" },
+          "resourceType": { "type": "string" },
+          "publicId": { "type": "string" },
+          "startedAt": { "type": "number" },
+          "uploadedAt": { "type": "number" },
+          "failedAt": { "type": "number" },
+          "error": { "type": "string" }
+        }
+      }
+    },
+    {
       "id": "theme",
       "version": "1.0.0",
       "title": "Theme",

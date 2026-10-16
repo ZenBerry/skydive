@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-10-16: Version 233: Added lazy-loaded, interactive Ruffle widgets for dropped SWF files with Ruffle splash, overlay, menu, download UI, and branding disabled.
+
 - 2026-10-13: Version 232: Added a lazy `/playback` controller for simultaneously starting, stopping, pausing, and independently looping arrow-connected audio, voice-recording, and chord widgets while ignoring ordinary lines and keyboard synths.
 
 - 2026-10-13: Version 231: Added a dependency-free bundled-command registry check that catches missing, duplicate, mismatched, and orphaned static command loaders while leaving future marketplace, private, and uploaded command sources independent.
