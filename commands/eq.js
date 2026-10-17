@@ -62,12 +62,43 @@
           height: 3.8em;
         }
         .eq-band input {
+          -webkit-appearance: none;
+          appearance: none;
           width: 100%;
           height: 100%;
           margin: 0;
-          accent-color: #40342b;
+          background: transparent;
+          font: inherit;
           writing-mode: vertical-lr;
           direction: rtl;
+        }
+        .eq-band input::-webkit-slider-runnable-track {
+          width: 0.12em;
+          height: 100%;
+          border-radius: 999px;
+          background: #d6d6d6;
+        }
+        .eq-band input::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          width: 0.5em;
+          height: 0.5em;
+          margin-left: -0.19em;
+          border: 0;
+          border-radius: 50%;
+          background: #40342b;
+        }
+        .eq-band input::-moz-range-track {
+          width: 0.12em;
+          height: 100%;
+          border-radius: 999px;
+          background: #d6d6d6;
+        }
+        .eq-band input::-moz-range-thumb {
+          width: 0.5em;
+          height: 0.5em;
+          border: 0;
+          border-radius: 50%;
+          background: #40342b;
         }
         .eq-band-label {
           color: #7b6a58;

@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-10-17: Version 240: Made `/eq` slider tracks and handles inherit the widget font and use explicit em-sized native-control parts, keeping their proportions intact at the smallest canvas zooms.
+
 - 2026-10-17: Version 239: Made `/eq` sliders fill their vertical tracks proportionally at every canvas zoom, restored readable standard-black toggle text, and made new equalizers start bypassed with a "Turn on" action.
 
 - 2026-10-17: Version 238: Added a lazy `/eq` 10-band equalizer that applies live, bypassable filtering to arrow-connected recordings, chords, synths, streams, broadcasts, and timer audio through a shared dependency-free output router.
