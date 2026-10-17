@@ -16,7 +16,7 @@
     description: "Shape audio from widgets connected by incoming arrows.",
 
     createState() {
-      return { enabled: true, gains: BANDS.map(() => 0) };
+      return { enabled: false, gains: BANDS.map(() => 0) };
     },
 
     render(container, state, updateState, context = {}) {
@@ -62,14 +62,12 @@
           height: 3.8em;
         }
         .eq-band input {
-          position: absolute;
-          top: 1.58em;
-          left: -1.6em;
-          width: 3.82em;
-          height: 0.62em;
+          width: 100%;
+          height: 100%;
           margin: 0;
           accent-color: #40342b;
-          transform: rotate(-90deg);
+          writing-mode: vertical-lr;
+          direction: rtl;
         }
         .eq-band-label {
           color: #7b6a58;
@@ -81,11 +79,11 @@
           border-radius: 0.38em;
           background: var(--widget-button-color, #e7dac9);
           padding: 0.34em 0.48em;
-          color: inherit;
+          color: var(--skydive-text, #111);
           font: 500 0.39em/1 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
         }
         .eq-toggle:hover { background: var(--widget-button-hover-color, #ddcbb5); }
-        .eq-toggle[aria-pressed="true"] { background: #40342b; color: #fffaf1; }
+        .eq-toggle[aria-pressed="true"] { color: var(--skydive-text, #111); }
       `;
       container.appendChild(style);
 

@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-10-17: Version 239: Made `/eq` sliders fill their vertical tracks proportionally at every canvas zoom, restored readable standard-black toggle text, and made new equalizers start bypassed with a "Turn on" action.
+
 - 2026-10-17: Version 238: Added a lazy `/eq` 10-band equalizer that applies live, bypassable filtering to arrow-connected recordings, chords, synths, streams, broadcasts, and timer audio through a shared dependency-free output router.
 
 - 2026-10-17: Version 237: Unified both SWF flip faces with the shared widget squircle and shell radius while isolating status typography from surface geometry.
