@@ -159,9 +159,12 @@
           place-items: center;
           background: #000;
           color: #bbb;
-          font: 400 0.48em/1.25 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
           pointer-events: auto;
           text-align: center;
+        }
+
+        .swf-message {
+          font: 400 0.48em/1.25 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
         }
 
         .swf-back {
@@ -219,6 +222,12 @@
           height: 100%;
         }
 
+        @supports (corner-shape: squircle) {
+          .swf-face {
+            corner-shape: var(--widget-corner-shape, squircle);
+          }
+        }
+
         @media (prefers-reduced-motion: reduce) {
           .swf-card {
             transition: none;
@@ -230,6 +239,12 @@
       const card = container.querySelector(".swf-card");
       const front = container.querySelector(".swf-front");
       const info = container.querySelector(".swf-info");
+      const showFrontMessage = (message) => {
+        const label = document.createElement("span");
+        label.className = "swf-message";
+        label.textContent = message;
+        front.replaceChildren(label);
+      };
       const status = getStatus(state || {});
       const fileName = getFileName(state || {});
       const fileUrl = normalizeHref(state && state.url);
@@ -258,17 +273,17 @@
       download.addEventListener("click", () => downloadUrl(attachmentUrl, fileName));
 
       if (status === "uploading") {
-        front.textContent = `Uploading... ${getProgress(state || {})}%`;
+        showFrontMessage(`Uploading... ${getProgress(state || {})}%`);
         return;
       }
       if (status === "error") {
-        front.textContent = typeof state.error === "string" && state.error.trim()
+        showFrontMessage(typeof state.error === "string" && state.error.trim()
           ? state.error.trim()
-          : "Upload failed";
+          : "Upload failed");
         return;
       }
       if (!fileUrl) {
-        front.textContent = "Drop an SWF file";
+        showFrontMessage("Drop an SWF file");
         return;
       }
 
@@ -293,7 +308,7 @@
       }).catch((error) => {
         if (!container.isConnected || !front.isConnected) return;
         console.error("Could not play SWF:", error);
-        front.textContent = "Could not play this SWF";
+        showFrontMessage("Could not play this SWF");
       });
     },
 

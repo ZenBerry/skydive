@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-10-17: Version 237: Unified both SWF flip faces with the shared widget squircle and shell radius while isolating status typography from surface geometry.
+
 - 2026-10-17: Version 236: Restored the SWF widget's Version 233-style rounded surface mask without a header while preserving the full-card info flip and creator bullet.
 
 - 2026-10-17: Version 235: Restored the SWF widget's clean rounded clipping, moved its info animation to the entire bordered card, and fixed Back/Download hit testing by activating only the visible face.
