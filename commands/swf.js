@@ -129,9 +129,8 @@
           box-sizing: border-box;
           width: 16em;
           aspect-ratio: 4 / 3;
-          border: 0.04em solid #d8d8d8;
-          border-radius: 0.55em;
-          background: #111;
+          border: 0 !important;
+          background: transparent !important;
           color: #f5f5f5;
           transform-style: preserve-3d;
           transition: transform 800ms cubic-bezier(0.9, 0, 0.1, 1);
@@ -147,11 +146,12 @@
 
         .swf-face {
           position: absolute;
-          inset: 0.04em;
+          inset: 0;
           display: grid;
           box-sizing: border-box;
           overflow: hidden;
-          border-radius: 0.47em;
+          border: 0.04em solid var(--widget-border-color, #d8d8d8);
+          border-radius: var(--widget-shell-radius, 0.55em);
           backface-visibility: hidden;
         }
 
