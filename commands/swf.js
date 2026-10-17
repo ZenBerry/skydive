@@ -30,6 +30,40 @@
     return Number.isFinite(progress) ? Math.max(0, Math.min(100, Math.round(progress))) : 0;
   }
 
+  function formatBytes(bytes) {
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let value = Number(bytes);
+    if (!Number.isFinite(value) || value < 0) return "Unknown";
+    let unitIndex = 0;
+    while (value >= 1024 && unitIndex < units.length - 1) {
+      value /= 1024;
+      unitIndex += 1;
+    }
+    return `${value.toFixed(unitIndex === 0 || value >= 10 ? 0 : 1)} ${units[unitIndex]}`;
+  }
+
+  function formatDate(value) {
+    const timestamp = Number(value);
+    if (!Number.isFinite(timestamp) || timestamp <= 0) return "Unknown";
+    return new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short"
+    }).format(new Date(timestamp));
+  }
+
+  function downloadUrl(url, fileName) {
+    const href = normalizeHref(url);
+    if (!href) return;
+    const link = document.createElement("a");
+    link.href = href;
+    link.download = fileName;
+    link.rel = "noopener noreferrer";
+    link.style.display = "none";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }
+
   function loadRuffle() {
     if (window.RufflePlayer && typeof window.RufflePlayer.newest === "function") {
       return Promise.resolve(window.RufflePlayer);
@@ -76,9 +110,17 @@
 
     render(container, state) {
       container.innerHTML = `
-        <div class="swf-card">
-          <div class="swf-title"></div>
-          <div class="swf-stage" data-command-interactive></div>
+        <div class="swf-card" data-flipped="false">
+          <div class="swf-stage">
+            <div class="swf-face swf-front" data-command-interactive></div>
+            <div class="swf-face swf-back" data-command-interactive>
+              <dl class="swf-info"></dl>
+              <div class="swf-actions">
+                <button type="button" data-command-interactive data-action="back">Back</button>
+                <button type="button" data-command-interactive data-action="download">Download</button>
+              </div>
+            </div>
+          </div>
         </div>
       `;
 
@@ -87,67 +129,145 @@
         .swf-card {
           box-sizing: border-box;
           width: 16em;
-          overflow: hidden;
+          padding: 0.12em;
           border: 0.04em solid #d8d8d8;
           border-radius: 0.55em;
           background: #111;
           color: #f5f5f5;
-        }
-
-        .swf-title {
-          overflow: hidden;
-          padding: 0.28em 0.46em 0.25em;
-          background: #1b1b1b;
-          color: #e8e8e8;
-          font: 400 0.46em/1.2 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
-          text-overflow: ellipsis;
-          white-space: nowrap;
+          perspective: 42em;
         }
 
         .swf-stage {
-          display: grid;
+          position: relative;
           width: 100%;
           aspect-ratio: 4 / 3;
-          place-items: center;
+          transform-style: preserve-3d;
+          transition: transform 800ms cubic-bezier(0.9, 0, 0.1, 1);
+        }
+
+        .swf-card[data-flipped="true"] .swf-stage {
+          transform: rotate3d(0.02, 1, 0.02, 180deg);
+        }
+
+        .swf-face {
+          position: absolute;
+          inset: 0;
+          display: grid;
+          box-sizing: border-box;
           overflow: hidden;
+          border-radius: 0.42em;
+          backface-visibility: hidden;
+        }
+
+        .swf-front {
+          place-items: center;
           background: #000;
           color: #bbb;
           font: 400 0.48em/1.25 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
           text-align: center;
         }
 
-        .swf-stage ruffle-player {
+        .swf-back {
+          align-content: space-between;
+          gap: 0.55em;
+          padding: 0.72em;
+          background: var(--widget-field-color, #fff);
+          color: #3f3328;
+          transform: rotate3d(0.02, 1, 0.02, 180deg);
+        }
+
+        .swf-info {
+          display: grid;
+          grid-template-columns: auto minmax(0, 1fr);
+          gap: 0.28em 0.52em;
+          margin: 0;
+          font: 400 0.46em/1.2 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
+        }
+
+        .swf-info dt {
+          color: #7b6650;
+        }
+
+        .swf-info dd {
+          overflow: hidden;
+          margin: 0;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .swf-actions {
+          display: flex;
+          gap: 0.3em;
+        }
+
+        .swf-actions button {
+          border: 0;
+          padding: 0.28em 0.5em;
+          color: #4b3b2d;
+          font: 500 0.45em/1 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
+        }
+
+        .swf-front ruffle-player {
           display: block;
           width: 100%;
           height: 100%;
         }
+
+        @media (prefers-reduced-motion: reduce) {
+          .swf-stage {
+            transition: none;
+          }
+        }
       `;
       container.appendChild(style);
 
-      const title = container.querySelector(".swf-title");
-      const stage = container.querySelector(".swf-stage");
+      const card = container.querySelector(".swf-card");
+      const front = container.querySelector(".swf-front");
+      const info = container.querySelector(".swf-info");
       const status = getStatus(state || {});
       const fileName = getFileName(state || {});
       const fileUrl = normalizeHref(state && state.url);
-      title.textContent = fileName;
+      const attachmentUrl = normalizeHref(state && state.downloadUrl) || fileUrl;
+      const fields = [
+        ["Filename", fileName],
+        ["Size", formatBytes(state && state.bytes)],
+        ["Created", formatDate(state && (state.createdAt || state.uploadedAt))],
+        ["Modified", formatDate(state && state.modifiedAt)],
+        ["Uploaded to Skydive", formatDate(state && state.uploadedAt)]
+      ];
+      for (const [label, value] of fields) {
+        const term = document.createElement("dt");
+        const detail = document.createElement("dd");
+        term.textContent = label;
+        detail.textContent = value;
+        detail.title = value;
+        info.append(term, detail);
+      }
+
+      container.querySelector('[data-action="back"]').addEventListener("click", () => {
+        if (card) card.dataset.flipped = "false";
+      });
+      const download = container.querySelector('[data-action="download"]');
+      download.disabled = !attachmentUrl;
+      download.addEventListener("click", () => downloadUrl(attachmentUrl, fileName));
 
       if (status === "uploading") {
-        stage.textContent = `Uploading... ${getProgress(state || {})}%`;
+        front.textContent = `Uploading... ${getProgress(state || {})}%`;
         return;
       }
       if (status === "error") {
-        stage.textContent = typeof state.error === "string" && state.error.trim()
+        front.textContent = typeof state.error === "string" && state.error.trim()
           ? state.error.trim()
           : "Upload failed";
         return;
       }
       if (!fileUrl) {
-        stage.textContent = "Drop an SWF file";
+        front.textContent = "Drop an SWF file";
         return;
       }
 
       loadRuffle().then((RufflePlayer) => {
-        if (!container.isConnected || !stage.isConnected) return;
+        if (!container.isConnected || !front.isConnected) return;
         const player = RufflePlayer.newest().createPlayer();
         player.setAttribute("aria-label", fileName);
         player.setAttribute("data-command-interactive", "");
@@ -162,13 +282,18 @@
           allowFullscreen: false,
           logLevel: "error"
         };
-        stage.replaceChildren(player);
+        front.replaceChildren(player);
         return player.ruffle().load({ url: fileUrl });
       }).catch((error) => {
-        if (!container.isConnected || !stage.isConnected) return;
+        if (!container.isConnected || !front.isConnected) return;
         console.error("Could not play SWF:", error);
-        stage.textContent = "Could not play this SWF";
+        front.textContent = "Could not play this SWF";
       });
+    },
+
+    showInfo(container) {
+      const card = container.querySelector(".swf-card");
+      if (card) card.dataset.flipped = "true";
     },
 
     destroy(container) {

@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-10-17: Version 234: Replaced SWF filenames with an uninterrupted player face and added a context-menu info flip showing file metadata plus Back and Download controls without restarting playback.
+
 - 2026-10-16: Version 233: Added lazy-loaded, interactive Ruffle widgets for dropped SWF files with Ruffle splash, overlay, menu, download UI, and branding disabled.
 
 - 2026-10-13: Version 232: Added a lazy `/playback` controller for simultaneously starting, stopping, pausing, and independently looping arrow-connected audio, voice-recording, and chord widgets while ignoring ordinary lines and keyboard synths.

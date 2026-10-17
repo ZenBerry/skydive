@@ -1603,6 +1603,7 @@
   <div id="fit-target-right" class="fit-marker target" aria-hidden="true" hidden></div>
   <div id="node-context-menu" hidden>
     <button id="copy-node-id-btn" type="button">Copy node ID</button>
+    <button id="get-widget-info-btn" type="button" hidden>Get info</button>
     <button id="copy-size-btn" type="button">Copy size</button>
     <button id="paste-size-btn" type="button">Paste size</button>
     <button id="view-markdown-btn" type="button">View as markdown</button>
@@ -1693,6 +1694,7 @@
     const openFileInput = document.getElementById("open-file-input");
     const nodeContextMenu = document.getElementById("node-context-menu");
     const copyNodeIdBtn = document.getElementById("copy-node-id-btn");
+    const getWidgetInfoBtn = document.getElementById("get-widget-info-btn");
     const copySizeBtn = document.getElementById("copy-size-btn");
     const pasteSizeBtn = document.getElementById("paste-size-btn");
     const viewMarkdownBtn = document.getElementById("view-markdown-btn");
@@ -1782,7 +1784,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 233; // Increment once for each commit.
+    const APP_VERSION = 234; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -4227,6 +4229,7 @@
       viewMarkdownBtn.hidden = false;
       viewHtmlBtn.hidden = false;
       viewPlainTextBtn.hidden = false;
+      getWidgetInfoBtn.hidden = true;
       widgetColorPicker.hidden = true;
       nodeContextMenu.hidden = true;
     }
@@ -4487,6 +4490,8 @@
       viewMarkdownBtn.hidden = !canToggleMarkdown || isMarkdownViewNode(node) || isHtmlViewNode(node);
       viewHtmlBtn.hidden = !canToggleMarkdown || isHtmlViewNode(node);
       viewPlainTextBtn.hidden = !canToggleMarkdown || (!isMarkdownViewNode(node) && !isHtmlViewNode(node));
+      const command = isCommandNode(node) ? getLoadedStaticCommand(node.dataset.commandId || "") : null;
+      getWidgetInfoBtn.hidden = !command || typeof command.showInfo !== "function";
       floatNodeBtn.textContent = isFloatingNode(node) ? "Settle" : "Float";
       drawLineBtn.disabled = isFloatingNode(node);
       drawArrowBtn.disabled = isFloatingNode(node);
@@ -11801,9 +11806,23 @@
         worldX,
         worldY,
         SWF_WIDGET_COMMAND_ID,
-        createUploadingFileState(file),
+        {
+          ...createUploadingFileState(file),
+          createdAt: Date.now(),
+          modifiedAt: file && Number.isFinite(Number(file.lastModified)) ? Number(file.lastModified) : null
+        },
         BASE_TEXT_PX / camera.scale
       );
+    }
+
+    function preserveSwfFileMetadata(node, nextState) {
+      if (!isCommandNode(node) || node.dataset.commandId !== SWF_WIDGET_COMMAND_ID) return nextState;
+      const previousState = readCommandState(node);
+      return {
+        ...nextState,
+        createdAt: normalizeTimestamp(previousState.createdAt),
+        modifiedAt: normalizeTimestamp(previousState.modifiedAt)
+      };
     }
 
     async function uploadFileForNode(file, node) {
@@ -11817,10 +11836,10 @@
           });
         });
 
-        updateCommandNodeState(node, createUploadedFileState(file, upload));
+        updateCommandNodeState(node, preserveSwfFileMetadata(node, createUploadedFileState(file, upload)));
       } catch (error) {
         console.error("File upload failed:", error);
-        updateCommandNodeState(node, createFailedFileState(file, error));
+        updateCommandNodeState(node, preserveSwfFileMetadata(node, createFailedFileState(file, error)));
       }
     }
 
@@ -12722,6 +12741,15 @@
         console.error("Copy failed:", error);
         alert("Could not copy node ID.");
       }
+    });
+
+    getWidgetInfoBtn.addEventListener("click", () => {
+      const node = contextMenuNode;
+      const command = node && isCommandNode(node)
+        ? getLoadedStaticCommand(node.dataset.commandId || "")
+        : null;
+      closeNodeContextMenu();
+      if (command && typeof command.showInfo === "function") command.showInfo(node);
     });
 
     copySizeBtn.addEventListener("click", () => {

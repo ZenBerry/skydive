@@ -104,7 +104,7 @@
     },
     {
       "id": "swf",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "title": "Flash Player",
       "description": "Play an uploaded SWF with Ruffle.",
       "source": "static",
@@ -122,6 +122,8 @@
           "downloadUrl": { "type": "string" },
           "resourceType": { "type": "string" },
           "publicId": { "type": "string" },
+          "createdAt": { "type": ["number", "null"] },
+          "modifiedAt": { "type": ["number", "null"] },
           "startedAt": { "type": "number" },
           "uploadedAt": { "type": "number" },
           "failedAt": { "type": "number" },
