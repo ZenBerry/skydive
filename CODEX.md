@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-10-17: Version 235: Restored the SWF widget's clean rounded clipping, moved its info animation to the entire bordered card, and fixed Back/Download hit testing by activating only the visible face.
+
 - 2026-10-17: Version 234: Replaced SWF filenames with an uninterrupted player face and added a context-menu info flip showing file metadata plus Back and Download controls without restarting playback.
 
 - 2026-10-16: Version 233: Added lazy-loaded, interactive Ruffle widgets for dropped SWF files with Ruffle splash, overlay, menu, download UI, and branding disabled.

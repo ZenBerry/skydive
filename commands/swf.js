@@ -111,14 +111,12 @@
     render(container, state) {
       container.innerHTML = `
         <div class="swf-card" data-flipped="false">
-          <div class="swf-stage">
-            <div class="swf-face swf-front" data-command-interactive></div>
-            <div class="swf-face swf-back" data-command-interactive>
-              <dl class="swf-info"></dl>
-              <div class="swf-actions">
-                <button type="button" data-command-interactive data-action="back">Back</button>
-                <button type="button" data-command-interactive data-action="download">Download</button>
-              </div>
+          <div class="swf-face swf-front" data-command-interactive></div>
+          <div class="swf-face swf-back" data-command-interactive>
+            <dl class="swf-info"></dl>
+            <div class="swf-actions">
+              <button type="button" data-command-interactive data-action="back">Back</button>
+              <button type="button" data-command-interactive data-action="download">Download</button>
             </div>
           </div>
         </div>
@@ -127,35 +125,33 @@
       const style = document.createElement("style");
       style.textContent = `
         .swf-card {
+          position: relative;
           box-sizing: border-box;
           width: 16em;
-          padding: 0.12em;
+          aspect-ratio: 4 / 3;
           border: 0.04em solid #d8d8d8;
           border-radius: 0.55em;
           background: #111;
           color: #f5f5f5;
-          perspective: 42em;
-        }
-
-        .swf-stage {
-          position: relative;
-          width: 100%;
-          aspect-ratio: 4 / 3;
           transform-style: preserve-3d;
           transition: transform 800ms cubic-bezier(0.9, 0, 0.1, 1);
         }
 
-        .swf-card[data-flipped="true"] .swf-stage {
-          transform: rotate3d(0.02, 1, 0.02, 180deg);
+        .swf-card[data-flipped="false"] {
+          transform: perspective(42em) rotateY(0deg);
+        }
+
+        .swf-card[data-flipped="true"] {
+          transform: perspective(42em) rotateY(180deg);
         }
 
         .swf-face {
           position: absolute;
-          inset: 0;
+          inset: 0.04em;
           display: grid;
           box-sizing: border-box;
           overflow: hidden;
-          border-radius: 0.42em;
+          border-radius: 0.47em;
           backface-visibility: hidden;
         }
 
@@ -164,6 +160,7 @@
           background: #000;
           color: #bbb;
           font: 400 0.48em/1.25 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
+          pointer-events: auto;
           text-align: center;
         }
 
@@ -173,7 +170,16 @@
           padding: 0.72em;
           background: var(--widget-field-color, #fff);
           color: #3f3328;
-          transform: rotate3d(0.02, 1, 0.02, 180deg);
+          pointer-events: none;
+          transform: rotateY(180deg);
+        }
+
+        .swf-card[data-flipped="true"] .swf-front {
+          pointer-events: none;
+        }
+
+        .swf-card[data-flipped="true"] .swf-back {
+          pointer-events: auto;
         }
 
         .swf-info {
@@ -214,7 +220,7 @@
         }
 
         @media (prefers-reduced-motion: reduce) {
-          .swf-stage {
+          .swf-card {
             transition: none;
           }
         }
