@@ -371,6 +371,10 @@
       return false;
     }
     runtime.wavesurfer = wavesurfer;
+    if (typeof context.connectAudioElement === "function" && typeof wavesurfer.getMediaElement === "function") {
+      const media = wavesurfer.getMediaElement();
+      if (media) context.connectAudioElement(media);
+    }
     runtime.waveLoadTimer = setTimeout(() => {
       runtime.waveLoadTimer = null;
       if (runtime.discard || !container.isConnected || runtime.waveReady) return;
@@ -425,6 +429,7 @@
     audio.preload = "metadata";
     audio.hidden = true;
     elements.card.appendChild(audio);
+    if (typeof context.connectAudioElement === "function") context.connectAudioElement(audio);
     elements.wave.dataset.fallback = "true";
     runtime.audio = audio;
 

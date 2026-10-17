@@ -125,9 +125,10 @@
     return parts.join(" ");
   }
 
-  function playBell() {
+  function playBell(context = {}) {
     const audio = new Audio(BELL_URL);
     audio.preload = "auto";
+    if (typeof context.connectAudioElement === "function") context.connectAudioElement(audio);
     const playPromise = audio.play();
     if (playPromise && typeof playPromise.catch === "function") {
       playPromise.catch(() => {});
@@ -262,7 +263,6 @@
       const durationMs = getDurationMs(state);
 
       function completeTimer() {
-        playBell();
         updateState({
           ...state,
           running: false,
@@ -272,6 +272,7 @@
           completedAt: Date.now(),
           alarmed: true
         });
+        setTimeout(() => playBell(context), 0);
         if (typeof context.startOutgoingArrowTargets === "function") {
           setTimeout(() => context.startOutgoingArrowTargets(), 0);
         }

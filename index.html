@@ -1784,7 +1784,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 237; // Increment once for each commit.
+    const APP_VERSION = 238; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -2014,6 +2014,10 @@
     let slashCommandSession = null;
     let slashCommandSelectedIndex = 0;
     const lazyCommandLoads = new Map();
+    const commandAudioOutputs = new Map();
+    const commandAudioElements = new WeakMap();
+    const audioEqualizerPreviews = new Map();
+    const AUDIO_EQUALIZER_FREQUENCIES = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
     const LAZY_STATIC_COMMANDS = new Map([
       ["cam", {
         id: "cam",
@@ -2042,6 +2046,18 @@
         script: "/commands/playback.js",
         createState() {
           return { loop: false };
+        }
+      }],
+      ["eq", {
+        id: "eq",
+        title: "Equalizer",
+        description: "Shape audio from widgets connected by incoming arrows.",
+        aliases: ["equalizer", "equaliser"],
+        source: "static",
+        dynamicExecutable: false,
+        script: "/commands/eq.js",
+        createState() {
+          return { enabled: true, gains: AUDIO_EQUALIZER_FREQUENCIES.map(() => 0) };
         }
       }],
       ["swf", {
@@ -6012,6 +6028,7 @@
         createdAt: Date.now()
       });
       renderLineConnections();
+      refreshCommandAudioOutputs();
       scheduleAutosave();
       return true;
     }
@@ -6023,6 +6040,7 @@
       if (!line) return false;
       line.deletedAt = Date.now();
       renderLineConnections();
+      refreshCommandAudioOutputs();
       updateCalcVariables();
       scheduleAutosave();
       return true;
@@ -6052,6 +6070,7 @@
 
       if (!Array.isArray(entries)) {
         renderLineConnections();
+        refreshCommandAudioOutputs();
         if (reportProgress) reportProgress(1);
         return;
       }
@@ -6099,6 +6118,7 @@
       });
 
       renderLineConnections();
+      refreshCommandAudioOutputs();
       updateCalcVariables();
       if (reportProgress) reportProgress(1);
     }
@@ -6120,6 +6140,7 @@
       });
       if (!changed) return false;
       renderLineConnections();
+      refreshCommandAudioOutputs();
       updateCalcVariables();
       return true;
     }
@@ -8166,6 +8187,7 @@
       if (command && typeof command.destroy === "function") {
         command.destroy(node);
       }
+      clearCommandAudioOutputs(node);
     }
 
     function getSourceTimelineSlug() {
@@ -8375,6 +8397,182 @@
       };
     }
 
+    function normalizeAudioEqualizerState(value) {
+      const state = value && typeof value === "object" ? value : {};
+      const gains = Array.isArray(state.gains) ? state.gains : [];
+      return {
+        enabled: state.enabled !== false,
+        gains: AUDIO_EQUALIZER_FREQUENCIES.map((frequency, index) => (
+          Math.max(-12, Math.min(12, Number(gains[index]) || 0))
+        ))
+      };
+    }
+
+    function getAudioEqualizersForSource(sourceNodeId) {
+      const equalizers = [];
+      for (const line of lineConnections) {
+        if (line.deletedAt || !isArrowLine(line) || line.from !== sourceNodeId) continue;
+        const targetNode = getNodeById(line.to);
+        if (
+          !targetNode ||
+          !isCommandNode(targetNode) ||
+          isFloatingNode(targetNode) ||
+          targetNode.dataset.commandId !== "eq"
+        ) continue;
+        const targetId = targetNode.dataset.nodeId || "";
+        const state = audioEqualizerPreviews.has(targetId)
+          ? audioEqualizerPreviews.get(targetId)
+          : readCommandState(targetNode);
+        const normalized = normalizeAudioEqualizerState(state);
+        if (normalized.enabled) equalizers.push({ id: targetId, ...normalized });
+      }
+      return equalizers;
+    }
+
+    function setAudioParamValue(parameter, value, audioContext) {
+      if (!parameter) return;
+      const now = audioContext && Number.isFinite(audioContext.currentTime) ? audioContext.currentTime : 0;
+      if (typeof parameter.setTargetAtTime === "function") {
+        parameter.setTargetAtTime(value, now, 0.012);
+      } else {
+        parameter.value = value;
+      }
+    }
+
+    function createAudioEqualizerFilters(audioContext, gains) {
+      return AUDIO_EQUALIZER_FREQUENCIES.map((frequency, index) => {
+        const filter = audioContext.createBiquadFilter();
+        filter.type = index === 0 ? "lowshelf" : index === AUDIO_EQUALIZER_FREQUENCIES.length - 1 ? "highshelf" : "peaking";
+        filter.frequency.value = frequency;
+        if (filter.Q) filter.Q.value = 1.4;
+        filter.gain.value = gains[index];
+        return filter;
+      });
+    }
+
+    function routeCommandAudioOutput(registration) {
+      const { audioContext, source } = registration;
+      if (!audioContext || audioContext.state === "closed" || !source) return;
+      const equalizers = getAudioEqualizersForSource(registration.nodeId);
+      const effectIds = equalizers.map((equalizer) => equalizer.id);
+      const routeUnchanged = registration.connected && effectIds.length === registration.effectIds.length &&
+        effectIds.every((id, index) => id === registration.effectIds[index]);
+
+      if (routeUnchanged) {
+        equalizers.forEach((equalizer) => {
+          const filters = registration.filters.get(equalizer.id) || [];
+          filters.forEach((filter, index) => setAudioParamValue(filter.gain, equalizer.gains[index], audioContext));
+        });
+        return;
+      }
+
+      try { source.disconnect(); } catch (error) { /* The source may already be disconnected. */ }
+      registration.connected = false;
+      registration.filters.forEach((filters) => {
+        filters.forEach((filter) => {
+          try { filter.disconnect(); } catch (error) { /* The filter may already be disconnected. */ }
+        });
+      });
+      registration.filters.clear();
+      registration.effectIds = effectIds;
+
+      let output = source;
+      equalizers.forEach((equalizer) => {
+        const filters = createAudioEqualizerFilters(audioContext, equalizer.gains);
+        filters.forEach((filter) => {
+          output.connect(filter);
+          output = filter;
+        });
+        registration.filters.set(equalizer.id, filters);
+      });
+      output.connect(audioContext.destination);
+      registration.connected = true;
+    }
+
+    function refreshCommandAudioOutputs() {
+      commandAudioOutputs.forEach((registrations) => {
+        registrations.forEach(routeCommandAudioOutput);
+      });
+    }
+
+    function registerCommandAudioOutput(node, audioContext, source, options = {}) {
+      if (!(node instanceof HTMLElement) || !audioContext || !source || typeof source.connect !== "function") return false;
+      const nodeId = node.dataset.nodeId || "";
+      if (!nodeId) return false;
+      let registrations = commandAudioOutputs.get(nodeId);
+      if (!registrations) {
+        registrations = new Set();
+        commandAudioOutputs.set(nodeId, registrations);
+      }
+      registrations.forEach((registration) => {
+        if (registration.audioContext && registration.audioContext.state === "closed") registrations.delete(registration);
+      });
+      const registration = {
+        audioContext,
+        source,
+        ownsContext: options.ownsContext === true,
+        nodeId,
+        connected: false,
+        effectIds: [],
+        filters: new Map()
+      };
+      registrations.add(registration);
+      routeCommandAudioOutput(registration);
+      return true;
+    }
+
+    function registerCommandAudioElement(node, mediaElement) {
+      if (!(mediaElement instanceof HTMLMediaElement)) return false;
+      if (commandAudioElements.has(mediaElement)) return true;
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) return false;
+      let audioContext;
+      let source;
+      try {
+        audioContext = new AudioContextClass();
+        source = audioContext.createMediaElementSource(mediaElement);
+      } catch (error) {
+        if (audioContext && audioContext.state !== "closed") void audioContext.close().catch(() => {});
+        return false;
+      }
+      if (!registerCommandAudioOutput(node, audioContext, source, { ownsContext: true })) {
+        void audioContext.close().catch(() => {});
+        return false;
+      }
+      const resume = () => {
+        if (audioContext.state === "suspended") void audioContext.resume().catch(() => {});
+      };
+      mediaElement.addEventListener("play", resume);
+      commandAudioElements.set(mediaElement, { audioContext, resume });
+      return true;
+    }
+
+    function clearCommandAudioOutputs(node) {
+      if (!(node instanceof HTMLElement)) return;
+      const nodeId = node.dataset.nodeId || "";
+      audioEqualizerPreviews.delete(nodeId);
+      const registrations = commandAudioOutputs.get(nodeId);
+      if (!registrations) return;
+      registrations.forEach((registration) => {
+        try { registration.source.disconnect(); } catch (error) { /* The source may already be disconnected. */ }
+        registration.filters.forEach((filters) => filters.forEach((filter) => {
+          try { filter.disconnect(); } catch (error) { /* The filter may already be disconnected. */ }
+        }));
+        if (registration.ownsContext && registration.audioContext.state !== "closed") {
+          void registration.audioContext.close().catch(() => {});
+        }
+      });
+      commandAudioOutputs.delete(nodeId);
+    }
+
+    function previewAudioEqualizer(node, state) {
+      if (!(node instanceof HTMLElement)) return;
+      const nodeId = node.dataset.nodeId || "";
+      if (!nodeId) return;
+      audioEqualizerPreviews.set(nodeId, normalizeAudioEqualizerState(state));
+      refreshCommandAudioOutputs();
+    }
+
     function getCommandRenderContext(node) {
       return {
         nodeId: node && node.dataset ? node.dataset.nodeId || "" : "",
@@ -8396,6 +8594,9 @@
         getSpaceTextVersion: () => spaceTextVersion,
         startOutgoingArrowTargets: () => startOutgoingArrowTargets(node),
         controlOutgoingPlaybackTargets: (action, value) => controlOutgoingPlaybackTargets(node, action, value),
+        connectAudioOutput: (audioContext, source) => registerCommandAudioOutput(node, audioContext, source),
+        connectAudioElement: (mediaElement) => registerCommandAudioElement(node, mediaElement),
+        previewAudioEqualizer: (state) => previewAudioEqualizer(node, state),
         canCreateChildSpace: isCurrentUserSpacePath(),
         openSpace(slug) {
           window.location.assign(getSpacePathFromSlug(slug));
@@ -8460,6 +8661,7 @@
       command.render(node, state, (nextState) => {
         writeCommandState(node, preserveWidgetColor(node, nextState));
         renderCommandNodeContent(node);
+        refreshCommandAudioOutputs();
         updateCalcVariables();
         refreshSelectionBounds();
         updateDocumentTitle();
@@ -9100,6 +9302,7 @@
       });
 
       renderLineConnections();
+      refreshCommandAudioOutputs();
       updateCalcVariables();
       return createdNodes;
     }

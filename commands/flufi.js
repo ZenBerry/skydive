@@ -494,6 +494,13 @@
     if (runtime.audioContext && runtime.audioContext.state !== "closed") return runtime.audioContext;
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     runtime.audioContext = AudioContextClass ? new AudioContextClass() : null;
+    if (runtime.audioContext) {
+      runtime.output = runtime.audioContext.createGain();
+      runtime.output.gain.value = 1;
+      if (typeof runtime.connectAudioOutput !== "function" || !runtime.connectAudioOutput(runtime.audioContext, runtime.output)) {
+        runtime.output.connect(runtime.audioContext.destination);
+      }
+    }
     return runtime.audioContext;
   }
 
@@ -540,7 +547,7 @@
     source.playbackRate.setValueAtTime(runtime.speed, audioContext.currentTime);
     gain.gain.setValueAtTime(0.0001, audioContext.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.24, audioContext.currentTime + ATTACK_SECONDS);
-    source.connect(gain).connect(audioContext.destination);
+    source.connect(gain).connect(runtime.output || audioContext.destination);
     source.start();
     source.addEventListener("ended", () => {
       source.disconnect();
@@ -625,7 +632,7 @@
       return formula ? `Flufi ${formula}` : "Flufi";
     },
 
-    render(container, state, updateState) {
+    render(container, state, updateState, context = {}) {
       clearRuntime(container);
       const formula = cleanFormula(state && state.formula);
       const speed = normalizeSpeed(state && state.speed);
@@ -790,6 +797,8 @@
       const runtime = {
         active: false,
         audioContext: null,
+        connectAudioOutput: context.connectAudioOutput,
+        output: null,
         animationFrame: null,
         button,
         canvas,

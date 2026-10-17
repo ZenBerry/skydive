@@ -154,7 +154,7 @@
     return AudioContextClass ? new AudioContextClass() : null;
   }
 
-  function playString(audioContext, frequency, delaySeconds) {
+  function playString(audioContext, destination, frequency, delaySeconds) {
     const startAt = audioContext.currentTime + delaySeconds;
     const stopAt = startAt + 1.45;
     const output = audioContext.createGain();
@@ -182,7 +182,7 @@
 
     body.connect(bodyGain).connect(filter);
     warmth.connect(warmthGain).connect(filter);
-    filter.connect(output).connect(audioContext.destination);
+    filter.connect(output).connect(destination);
     body.start(startAt);
     warmth.start(startAt);
     body.stop(stopAt + 0.04);
@@ -524,6 +524,11 @@
         const audioContext = getAudioContext();
         if (!audioContext) return;
         nextRuntime.audioContext = audioContext;
+        const output = audioContext.createGain();
+        output.gain.value = 1;
+        if (typeof context.connectAudioOutput !== "function" || !context.connectAudioOutput(audioContext, output)) {
+          output.connect(audioContext.destination);
+        }
 
         scheduleRuntimeTimer(nextRuntime, () => {
           if (!container.isConnected || runtimes.get(container) !== nextRuntime) return;
@@ -534,7 +539,7 @@
 
         playable.forEach((string, order) => {
           const delaySeconds = order * 0.135;
-          nextRuntime.stops.push(playString(audioContext, string.frequency, delaySeconds));
+          nextRuntime.stops.push(playString(audioContext, output, string.frequency, delaySeconds));
           scheduleRuntimeTimer(nextRuntime, () => {
             if (!container.isConnected) return;
             for (const item of card.querySelectorAll(".chord-string")) item.dataset.active = "false";

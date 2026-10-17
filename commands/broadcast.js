@@ -532,6 +532,7 @@
         video: container.querySelector(".broadcast-video"),
         status: container.querySelector(".broadcast-status")
       };
+      if (typeof context.connectAudioElement === "function") context.connectAudioElement(elements.video);
       runtime.container = container;
       runtime.elements = elements;
 

@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-10-17: Version 238: Added a lazy `/eq` 10-band equalizer that applies live, bypassable filtering to arrow-connected recordings, chords, synths, streams, broadcasts, and timer audio through a shared dependency-free output router.
+
 - 2026-10-17: Version 237: Unified both SWF flip faces with the shared widget squircle and shell radius while isolating status typography from surface geometry.
 
 - 2026-10-17: Version 236: Restored the SWF widget's Version 233-style rounded surface mask without a header while preserving the full-card info flip and creator bullet.

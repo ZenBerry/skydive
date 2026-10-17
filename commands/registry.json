@@ -53,7 +53,7 @@
     },
     {
       "id": "timer",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "title": "Timer",
       "description": "A tiny persistent countdown timer.",
       "aliases": ["countdown", "alarm"],
@@ -164,7 +164,7 @@
     },
     {
       "id": "rec",
-      "version": "1.0.12",
+      "version": "1.0.13",
       "title": "Recorder",
       "description": "Record a voice note and play its waveform.",
       "aliases": ["record", "audio", "voice", "voice-note"],
@@ -209,7 +209,7 @@
     },
     {
       "id": "broadcast",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "title": "Broadcast",
       "description": "Share a camera bubble with viewers in this space.",
       "aliases": ["cast", "live"],
@@ -225,7 +225,7 @@
     },
     {
       "id": "chord",
-      "version": "1.0.3",
+      "version": "1.0.4",
       "title": "Chord",
       "description": "Play a small guitar-tab chord.",
       "aliases": ["guitar", "tab"],
@@ -259,8 +259,29 @@
       }
     },
     {
+      "id": "eq",
+      "version": "1.0.0",
+      "title": "Equalizer",
+      "description": "Shape audio from widgets connected by incoming arrows.",
+      "aliases": ["equalizer", "equaliser"],
+      "source": "static",
+      "dynamicExecutable": false,
+      "stateSchema": {
+        "type": "object",
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "gains": {
+            "type": "array",
+            "items": { "type": "number" },
+            "minItems": 10,
+            "maxItems": 10
+          }
+        }
+      }
+    },
+    {
       "id": "tuwer",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "title": "Tuwer",
       "description": "Play a graphed-function instrument from the keyboard.",
       "aliases": ["graph-synth", "function-synth"],
@@ -277,7 +298,7 @@
     },
     {
       "id": "iriver",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "title": "iRiver",
       "description": "Stream endless prompt-based instrumental music.",
       "aliases": ["river", "endless-radio"],
@@ -293,7 +314,7 @@
     },
     {
       "id": "flufi",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "title": "Flufi",
       "description": "Play explicit and implicit equation graphs from the keyboard.",
       "aliases": ["graph-equation", "equation-synth"],
@@ -310,7 +331,7 @@
     },
     {
       "id": "twimla",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "title": "Twimla",
       "description": "Play traced equation paths from the keyboard.",
       "aliases": ["graph-trace", "path-synth"],

@@ -104,7 +104,9 @@
     if (!runtime.outputGain) {
       runtime.outputGain = audioContext.createGain();
       runtime.outputGain.gain.setValueAtTime(0.0001, audioContext.currentTime);
-      runtime.outputGain.connect(audioContext.destination);
+      if (typeof runtime.connectAudioOutput !== "function" || !runtime.connectAudioOutput(audioContext, runtime.outputGain)) {
+        runtime.outputGain.connect(audioContext.destination);
+      }
     }
 
     const audioBuffer = pcmToAudioBuffer(audioContext, bytes);
@@ -352,7 +354,7 @@
       return prompt ? `iRiver ${prompt}` : "iRiver";
     },
 
-    render(container, state, updateState) {
+    render(container, state, updateState, context = {}) {
       clearRuntime(container);
       const prompt = cleanPrompt(state && state.prompt);
       container.innerHTML = `
@@ -494,6 +496,7 @@
         button,
         card,
         carry: new Uint8Array(0),
+        connectAudioOutput: context.connectAudioOutput,
         input,
         nextStartTime: 0,
         outputGain: null,
