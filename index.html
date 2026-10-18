@@ -1784,7 +1784,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 240; // Increment once for each commit.
+    const APP_VERSION = 241; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -2017,7 +2017,9 @@
     const commandAudioOutputs = new Map();
     const commandAudioElements = new WeakMap();
     const audioEqualizerPreviews = new Map();
+    const audioVolumePreviews = new Map();
     const AUDIO_EQUALIZER_FREQUENCIES = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+    const AUDIO_EQUALIZER_MUTED_GAIN = -96;
     const LAZY_STATIC_COMMANDS = new Map([
       ["cam", {
         id: "cam",
@@ -2058,6 +2060,18 @@
         script: "/commands/eq.js",
         createState() {
           return { enabled: false, gains: AUDIO_EQUALIZER_FREQUENCIES.map(() => 0) };
+        }
+      }],
+      ["vol", {
+        id: "vol",
+        title: "Volume & Pan",
+        description: "Control volume and pan for audio widgets connected by incoming arrows.",
+        aliases: ["volume", "pan"],
+        source: "static",
+        dynamicExecutable: false,
+        script: "/commands/vol.js",
+        createState() {
+          return { volume: 1, pan: 0 };
         }
       }],
       ["swf", {
@@ -8445,23 +8459,65 @@
         filter.type = index === 0 ? "lowshelf" : index === AUDIO_EQUALIZER_FREQUENCIES.length - 1 ? "highshelf" : "peaking";
         filter.frequency.value = frequency;
         if (filter.Q) filter.Q.value = 1.4;
-        filter.gain.value = gains[index];
+        filter.gain.value = gains[index] <= -12 ? AUDIO_EQUALIZER_MUTED_GAIN : gains[index];
         return filter;
       });
+    }
+
+    function normalizeAudioVolumeState(value) {
+      const state = value && typeof value === "object" ? value : {};
+      const volume = Number(state.volume);
+      const pan = Number(state.pan);
+      return {
+        volume: Number.isFinite(volume) ? Math.max(0, Math.min(1, volume)) : 1,
+        pan: Number.isFinite(pan) ? Math.max(-1, Math.min(1, pan)) : 0
+      };
+    }
+
+    function getAudioVolumesForSource(sourceNodeId) {
+      const volumes = [];
+      for (const line of lineConnections) {
+        if (line.deletedAt || !isArrowLine(line) || line.from !== sourceNodeId) continue;
+        const targetNode = getNodeById(line.to);
+        if (
+          !targetNode ||
+          !isCommandNode(targetNode) ||
+          isFloatingNode(targetNode) ||
+          targetNode.dataset.commandId !== "vol"
+        ) continue;
+        const targetId = targetNode.dataset.nodeId || "";
+        const state = audioVolumePreviews.has(targetId)
+          ? audioVolumePreviews.get(targetId)
+          : readCommandState(targetNode);
+        volumes.push({ id: targetId, ...normalizeAudioVolumeState(state) });
+      }
+      return volumes;
     }
 
     function routeCommandAudioOutput(registration) {
       const { audioContext, source } = registration;
       if (!audioContext || audioContext.state === "closed" || !source) return;
       const equalizers = getAudioEqualizersForSource(registration.nodeId);
-      const effectIds = equalizers.map((equalizer) => equalizer.id);
+      const volumes = getAudioVolumesForSource(registration.nodeId);
+      const effectIds = equalizers.map((equalizer) => `eq:${equalizer.id}`)
+        .concat(volumes.map((volume) => `vol:${volume.id}`));
       const routeUnchanged = registration.connected && effectIds.length === registration.effectIds.length &&
         effectIds.every((id, index) => id === registration.effectIds[index]);
 
       if (routeUnchanged) {
         equalizers.forEach((equalizer) => {
           const filters = registration.filters.get(equalizer.id) || [];
-          filters.forEach((filter, index) => setAudioParamValue(filter.gain, equalizer.gains[index], audioContext));
+          filters.forEach((filter, index) => setAudioParamValue(
+            filter.gain,
+            equalizer.gains[index] <= -12 ? AUDIO_EQUALIZER_MUTED_GAIN : equalizer.gains[index],
+            audioContext
+          ));
+        });
+        volumes.forEach((volume) => {
+          const controls = registration.volumeControls.get(volume.id);
+          if (!controls) return;
+          setAudioParamValue(controls.gain.gain, volume.volume, audioContext);
+          if (controls.panner) setAudioParamValue(controls.panner.pan, volume.pan, audioContext);
         });
         return;
       }
@@ -8474,6 +8530,10 @@
         });
       });
       registration.filters.clear();
+      registration.volumeControls.forEach((controls) => controls.nodes.forEach((control) => {
+        try { control.disconnect(); } catch (error) { /* The control may already be disconnected. */ }
+      }));
+      registration.volumeControls.clear();
       registration.effectIds = effectIds;
 
       let output = source;
@@ -8484,6 +8544,21 @@
           output = filter;
         });
         registration.filters.set(equalizer.id, filters);
+      });
+      volumes.forEach((volume) => {
+        const gain = audioContext.createGain();
+        const panner = typeof audioContext.createStereoPanner === "function" ? audioContext.createStereoPanner() : null;
+        gain.gain.value = volume.volume;
+        output.connect(gain);
+        output = gain;
+        const nodes = [gain];
+        if (panner) {
+          panner.pan.value = volume.pan;
+          output.connect(panner);
+          output = panner;
+          nodes.push(panner);
+        }
+        registration.volumeControls.set(volume.id, { gain, panner, nodes });
       });
       output.connect(audioContext.destination);
       registration.connected = true;
@@ -8514,7 +8589,8 @@
         nodeId,
         connected: false,
         effectIds: [],
-        filters: new Map()
+        filters: new Map(),
+        volumeControls: new Map()
       };
       registrations.add(registration);
       routeCommandAudioOutput(registration);
@@ -8551,12 +8627,16 @@
       if (!(node instanceof HTMLElement)) return;
       const nodeId = node.dataset.nodeId || "";
       audioEqualizerPreviews.delete(nodeId);
+      audioVolumePreviews.delete(nodeId);
       const registrations = commandAudioOutputs.get(nodeId);
       if (!registrations) return;
       registrations.forEach((registration) => {
         try { registration.source.disconnect(); } catch (error) { /* The source may already be disconnected. */ }
         registration.filters.forEach((filters) => filters.forEach((filter) => {
           try { filter.disconnect(); } catch (error) { /* The filter may already be disconnected. */ }
+        }));
+        registration.volumeControls.forEach((controls) => controls.nodes.forEach((control) => {
+          try { control.disconnect(); } catch (error) { /* The control may already be disconnected. */ }
         }));
         if (registration.ownsContext && registration.audioContext.state !== "closed") {
           void registration.audioContext.close().catch(() => {});
@@ -8570,6 +8650,14 @@
       const nodeId = node.dataset.nodeId || "";
       if (!nodeId) return;
       audioEqualizerPreviews.set(nodeId, normalizeAudioEqualizerState(state));
+      refreshCommandAudioOutputs();
+    }
+
+    function previewAudioVolume(node, state) {
+      if (!(node instanceof HTMLElement)) return;
+      const nodeId = node.dataset.nodeId || "";
+      if (!nodeId) return;
+      audioVolumePreviews.set(nodeId, normalizeAudioVolumeState(state));
       refreshCommandAudioOutputs();
     }
 
@@ -8597,6 +8685,7 @@
         connectAudioOutput: (audioContext, source) => registerCommandAudioOutput(node, audioContext, source),
         connectAudioElement: (mediaElement) => registerCommandAudioElement(node, mediaElement),
         previewAudioEqualizer: (state) => previewAudioEqualizer(node, state),
+        previewAudioVolume: (state) => previewAudioVolume(node, state),
         canCreateChildSpace: isCurrentUserSpacePath(),
         openSpace(slug) {
           window.location.assign(getSpacePathFromSlug(slug));

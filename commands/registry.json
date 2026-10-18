@@ -260,7 +260,7 @@
     },
     {
       "id": "eq",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "title": "Equalizer",
       "description": "Shape audio from widgets connected by incoming arrows.",
       "aliases": ["equalizer", "equaliser"],
@@ -276,6 +276,22 @@
             "minItems": 10,
             "maxItems": 10
           }
+        }
+      }
+    },
+    {
+      "id": "vol",
+      "version": "1.0.0",
+      "title": "Volume & Pan",
+      "description": "Control volume and pan for audio widgets connected by incoming arrows.",
+      "aliases": ["volume", "pan"],
+      "source": "static",
+      "dynamicExecutable": false,
+      "stateSchema": {
+        "type": "object",
+        "properties": {
+          "volume": { "type": "number", "minimum": 0, "maximum": 1 },
+          "pan": { "type": "number", "minimum": -1, "maximum": 1 }
         }
       }
     },
