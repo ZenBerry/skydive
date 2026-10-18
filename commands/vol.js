@@ -1,9 +1,32 @@
 (function () {
   window.SkydiveCommands = window.SkydiveCommands || [];
 
+  const MIN_VOLUME_DB = -60;
+  const FIRST_AUDIBLE_SLIDER_STEP = 0.01;
+
   function clamp(value, minimum, maximum, fallback) {
     const number = Number(value);
     return Number.isFinite(number) ? Math.max(minimum, Math.min(maximum, number)) : fallback;
+  }
+
+  function volumeToSliderPosition(value) {
+    const volume = clamp(value, 0, 1, 1);
+    if (volume === 0) return 0;
+    const decibels = 20 * Math.log10(volume);
+    const normalized = clamp((decibels - MIN_VOLUME_DB) / -MIN_VOLUME_DB, 0, 1, 1);
+    return FIRST_AUDIBLE_SLIDER_STEP + normalized * (1 - FIRST_AUDIBLE_SLIDER_STEP);
+  }
+
+  function sliderPositionToVolume(value) {
+    const position = clamp(value, 0, 1, 1);
+    if (position === 0) return 0;
+    const normalized = clamp(
+      (position - FIRST_AUDIBLE_SLIDER_STEP) / (1 - FIRST_AUDIBLE_SLIDER_STEP),
+      0,
+      1,
+      1
+    );
+    return Math.pow(10, (MIN_VOLUME_DB + normalized * -MIN_VOLUME_DB) / 20);
   }
 
   window.SkydiveCommands.push({
@@ -19,12 +42,13 @@
     render(container, state, updateState, context = {}) {
       let volume = clamp(state && state.volume, 0, 1, 1);
       let pan = clamp(state && state.pan, -1, 1, 0);
+      const volumePosition = volumeToSliderPosition(volume);
       container.innerHTML = `
         <div class="vol-card">
           <label class="vol-control">
             <span>Vol</span>
-            <input type="range" min="0" max="1" step="0.01" value="${volume}" data-command-interactive aria-label="Volume">
-            <output>${Math.round(volume * 100)}%</output>
+            <input type="range" min="0" max="1" step="0.01" value="${volumePosition}" data-command-interactive aria-label="Volume">
+            <output>${Math.round(volumePosition * 100)}%</output>
           </label>
           <label class="vol-control">
             <span>Pan</span>
@@ -108,8 +132,9 @@
       };
 
       inputs[0].addEventListener("input", () => {
-        volume = Number(inputs[0].value);
-        outputs[0].textContent = `${Math.round(volume * 100)}%`;
+        const position = Number(inputs[0].value);
+        volume = sliderPositionToVolume(position);
+        outputs[0].textContent = `${Math.round(position * 100)}%`;
         preview();
       });
       inputs[1].addEventListener("input", () => {

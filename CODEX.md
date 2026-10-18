@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-10-18: Version 244: Gave `/vol` a perceptual −60–0 dB volume taper with a true mute endpoint while preserving the exact output gain of existing saved widgets.
+
 - 2026-10-18: Version 243: Shortened `/vol`'s visible volume label to “Vol” and made its native slider tracks and handles scale proportionally with canvas zoom like `/eq`.
 
 - 2026-10-18: Version 242: Made `/eq` cuts transition smoothly into isolated per-band notches, so fully muting one band no longer suppresses nearly the entire signal.
