@@ -1784,7 +1784,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 241; // Increment once for each commit.
+    const APP_VERSION = 242; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -2019,7 +2019,6 @@
     const audioEqualizerPreviews = new Map();
     const audioVolumePreviews = new Map();
     const AUDIO_EQUALIZER_FREQUENCIES = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
-    const AUDIO_EQUALIZER_MUTED_GAIN = -96;
     const LAZY_STATIC_COMMANDS = new Map([
       ["cam", {
         id: "cam",
@@ -8453,14 +8452,42 @@
       }
     }
 
-    function createAudioEqualizerFilters(audioContext, gains) {
+    function setAudioEqualizerBandValue(band, value, audioContext, immediate = false) {
+      const gain = Math.max(-12, Math.min(12, Number(value) || 0));
+      const muteMix = gain < 0 ? -gain / 12 : 0;
+      const setValue = (parameter, nextValue) => {
+        if (immediate) parameter.value = nextValue;
+        else setAudioParamValue(parameter, nextValue, audioContext);
+      };
+      setValue(band.boost.gain, Math.max(0, gain));
+      setValue(band.dry.gain, 1 - muteMix);
+      setValue(band.notchMix.gain, muteMix);
+    }
+
+    function createAudioEqualizerBands(audioContext, gains) {
       return AUDIO_EQUALIZER_FREQUENCIES.map((frequency, index) => {
-        const filter = audioContext.createBiquadFilter();
-        filter.type = index === 0 ? "lowshelf" : index === AUDIO_EQUALIZER_FREQUENCIES.length - 1 ? "highshelf" : "peaking";
-        filter.frequency.value = frequency;
-        if (filter.Q) filter.Q.value = 1.4;
-        filter.gain.value = gains[index] <= -12 ? AUDIO_EQUALIZER_MUTED_GAIN : gains[index];
-        return filter;
+        const boost = audioContext.createBiquadFilter();
+        boost.type = index === 0 ? "lowshelf" : index === AUDIO_EQUALIZER_FREQUENCIES.length - 1 ? "highshelf" : "peaking";
+        boost.frequency.value = frequency;
+        if (boost.Q) boost.Q.value = 1.4;
+
+        const notch = audioContext.createBiquadFilter();
+        notch.type = "notch";
+        notch.frequency.value = frequency;
+        if (notch.Q) notch.Q.value = 1.4;
+
+        const dry = audioContext.createGain();
+        const notchMix = audioContext.createGain();
+        const output = audioContext.createGain();
+        boost.connect(dry);
+        boost.connect(notch);
+        dry.connect(output);
+        notch.connect(notchMix);
+        notchMix.connect(output);
+
+        const band = { input: boost, output, boost, dry, notchMix, nodes: [boost, notch, dry, notchMix, output] };
+        setAudioEqualizerBandValue(band, gains[index], audioContext, true);
+        return band;
       });
     }
 
@@ -8506,10 +8533,10 @@
 
       if (routeUnchanged) {
         equalizers.forEach((equalizer) => {
-          const filters = registration.filters.get(equalizer.id) || [];
-          filters.forEach((filter, index) => setAudioParamValue(
-            filter.gain,
-            equalizer.gains[index] <= -12 ? AUDIO_EQUALIZER_MUTED_GAIN : equalizer.gains[index],
+          const bands = registration.equalizerBands.get(equalizer.id) || [];
+          bands.forEach((band, index) => setAudioEqualizerBandValue(
+            band,
+            equalizer.gains[index],
             audioContext
           ));
         });
@@ -8524,12 +8551,12 @@
 
       try { source.disconnect(); } catch (error) { /* The source may already be disconnected. */ }
       registration.connected = false;
-      registration.filters.forEach((filters) => {
-        filters.forEach((filter) => {
-          try { filter.disconnect(); } catch (error) { /* The filter may already be disconnected. */ }
-        });
+      registration.equalizerBands.forEach((bands) => {
+        bands.forEach((band) => band.nodes.forEach((audioNode) => {
+          try { audioNode.disconnect(); } catch (error) { /* The node may already be disconnected. */ }
+        }));
       });
-      registration.filters.clear();
+      registration.equalizerBands.clear();
       registration.volumeControls.forEach((controls) => controls.nodes.forEach((control) => {
         try { control.disconnect(); } catch (error) { /* The control may already be disconnected. */ }
       }));
@@ -8538,12 +8565,12 @@
 
       let output = source;
       equalizers.forEach((equalizer) => {
-        const filters = createAudioEqualizerFilters(audioContext, equalizer.gains);
-        filters.forEach((filter) => {
-          output.connect(filter);
-          output = filter;
+        const bands = createAudioEqualizerBands(audioContext, equalizer.gains);
+        bands.forEach((band) => {
+          output.connect(band.input);
+          output = band.output;
         });
-        registration.filters.set(equalizer.id, filters);
+        registration.equalizerBands.set(equalizer.id, bands);
       });
       volumes.forEach((volume) => {
         const gain = audioContext.createGain();
@@ -8589,7 +8616,7 @@
         nodeId,
         connected: false,
         effectIds: [],
-        filters: new Map(),
+        equalizerBands: new Map(),
         volumeControls: new Map()
       };
       registrations.add(registration);
@@ -8632,9 +8659,9 @@
       if (!registrations) return;
       registrations.forEach((registration) => {
         try { registration.source.disconnect(); } catch (error) { /* The source may already be disconnected. */ }
-        registration.filters.forEach((filters) => filters.forEach((filter) => {
-          try { filter.disconnect(); } catch (error) { /* The filter may already be disconnected. */ }
-        }));
+        registration.equalizerBands.forEach((bands) => bands.forEach((band) => band.nodes.forEach((audioNode) => {
+          try { audioNode.disconnect(); } catch (error) { /* The node may already be disconnected. */ }
+        })));
         registration.volumeControls.forEach((controls) => controls.nodes.forEach((control) => {
           try { control.disconnect(); } catch (error) { /* The control may already be disconnected. */ }
         }));

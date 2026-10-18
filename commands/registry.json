@@ -260,7 +260,7 @@
     },
     {
       "id": "eq",
-      "version": "1.0.3",
+      "version": "1.0.4",
       "title": "Equalizer",
       "description": "Shape audio from widgets connected by incoming arrows.",
       "aliases": ["equalizer", "equaliser"],
