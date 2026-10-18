@@ -281,7 +281,7 @@
     },
     {
       "id": "vol",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "title": "Volume & Pan",
       "description": "Control volume and pan for audio widgets connected by incoming arrows.",
       "aliases": ["volume", "pan"],

@@ -22,7 +22,7 @@
       container.innerHTML = `
         <div class="vol-card">
           <label class="vol-control">
-            <span>Volume</span>
+            <span>Vol</span>
             <input type="range" min="0" max="1" step="0.01" value="${volume}" data-command-interactive aria-label="Volume">
             <output>${Math.round(volume * 100)}%</output>
           </label>
@@ -49,15 +49,47 @@
         }
         .vol-control {
           display: grid;
-          grid-template-columns: 2.5em minmax(4.5em, 1fr) 1.8em;
+          grid-template-columns: 1.5em minmax(4.5em, 1fr) 1.8em;
           align-items: center;
           gap: 0.34em;
           font: 500 0.39em/1 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
         }
         .vol-control input {
+          -webkit-appearance: none;
+          appearance: none;
           width: 100%;
+          height: 0.62em;
           margin: 0;
-          accent-color: #40342b;
+          background: transparent;
+          font: inherit;
+        }
+        .vol-control input::-webkit-slider-runnable-track {
+          width: 100%;
+          height: 0.12em;
+          border-radius: 999px;
+          background: #d6d6d6;
+        }
+        .vol-control input::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          width: 0.5em;
+          height: 0.5em;
+          margin-top: -0.19em;
+          border: 0;
+          border-radius: 50%;
+          background: #40342b;
+        }
+        .vol-control input::-moz-range-track {
+          width: 100%;
+          height: 0.12em;
+          border-radius: 999px;
+          background: #d6d6d6;
+        }
+        .vol-control input::-moz-range-thumb {
+          width: 0.5em;
+          height: 0.5em;
+          border: 0;
+          border-radius: 50%;
+          background: #40342b;
         }
         .vol-control output {
           color: #7b6a58;

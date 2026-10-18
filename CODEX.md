@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-10-18: Version 243: Shortened `/vol`'s visible volume label to “Vol” and made its native slider tracks and handles scale proportionally with canvas zoom like `/eq`.
+
 - 2026-10-18: Version 242: Made `/eq` cuts transition smoothly into isolated per-band notches, so fully muting one band no longer suppresses nearly the entire signal.
 
 - 2026-10-18: Version 241: Added a lazy `/vol` widget with live volume and stereo-pan control for arrow-connected audio, and made the bottom position of each `/eq` band an effective mute point.
