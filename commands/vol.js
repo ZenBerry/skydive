@@ -63,7 +63,7 @@
         .vol-card {
           display: grid;
           gap: 0.48em;
-          min-width: 8.8em;
+          width: 8.8em;
           padding: 0.62em;
           border: 0.04em solid var(--widget-border-color, #ded2c2);
           border-radius: 0.58em;
@@ -73,9 +73,12 @@
         }
         .vol-control {
           display: grid;
-          grid-template-columns: 1.5em minmax(4.5em, 1fr) 1.8em;
+          grid-template-columns: 0.585em minmax(0, 1fr) 0.702em;
           align-items: center;
-          gap: 0.34em;
+          gap: 0.133em;
+        }
+        .vol-control > span,
+        .vol-control output {
           font: 500 0.39em/1 "Myriad Pro", "Roboto", "Helvetica Neue", Arial, sans-serif;
         }
         .vol-control input {
@@ -83,6 +86,7 @@
           appearance: none;
           width: 100%;
           height: 0.62em;
+          min-width: 0;
           margin: 0;
           background: transparent;
           font: inherit;
