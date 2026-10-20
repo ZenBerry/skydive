@@ -710,8 +710,13 @@
           white-space: nowrap;
         }
         .rec-card button:hover:not(:disabled) { background: #ddcbb5; }
-        .rec-card button[data-active="true"] { background: #40342b; color: #111; }
-        .rec-card button[data-active="true"]:hover:not(:disabled) { background: #332a23; }
+        .rec-card button[data-active="true"] {
+          background: color-mix(in srgb, var(--widget-button-color), #000 10%) !important;
+          color: #111;
+        }
+        .rec-card button[data-active="true"]:hover:not(:disabled) {
+          background: color-mix(in srgb, var(--widget-button-color), #000 13%) !important;
+        }
         .rec-card button:disabled { cursor: default; opacity: 0.38; }
         .rec-card [data-action="record"] { background: #e36e54; color: white; }
         .rec-card [data-action="record"]:hover:not(:disabled) { background: #d85e45; }

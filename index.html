@@ -1785,7 +1785,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 246; // Increment once for each commit.
+    const APP_VERSION = 247; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -6371,7 +6371,7 @@
 
     function getNodeAnchorPaddingWorld(node) {
       if (isLineWidgetNode(node)) {
-        return lineReferenceScreenToWorldLength(clamp(getWidgetLineReferenceScreenPx(node) * 0.055, 18, 52));
+        return lineReferenceScreenToWorldLength(clamp(getWidgetLineReferenceScreenPx(node) * 0.055, 20, 52));
       }
 
       const fontSize = getNodeBaseFontSize(node) * LINE_GEOMETRY_REFERENCE_SCALE;
@@ -6387,7 +6387,7 @@
 
     function getLineEndpointGapWorld(node) {
       if (isLineWidgetNode(node)) {
-        return lineReferenceScreenToWorldLength(clamp(getWidgetLineReferenceScreenPx(node) * 0.038, 12, 24));
+        return lineReferenceScreenToWorldLength(clamp(getWidgetLineReferenceScreenPx(node) * 0.038, 14, 24));
       }
 
       const fontSize = getNodeBaseFontSize(node) * LINE_GEOMETRY_REFERENCE_SCALE;
@@ -8727,6 +8727,13 @@
       };
     }
 
+    function refreshCommandNodeLayout(node) {
+      if (!world.contains(node)) return;
+      const metrics = getNodeRenderMetrics(node);
+      cacheNodeRenderCullSize(node, metrics.screenScale);
+      requestLineRender();
+    }
+
     function renderCommandNodeContent(node) {
       const commandId = node.dataset.commandId || "";
       const command = getLoadedStaticCommand(commandId) || getCommand(commandId);
@@ -8744,6 +8751,7 @@
           loading.style.color = "#7b6a58";
           node.appendChild(loading);
           applyWidgetColor(node);
+          refreshCommandNodeLayout(node);
           loadLazyCommand(commandId)
             .then((loadedCommand) => {
               if (!loadedCommand || !world.contains(node) || isNodeDeleted(node)) return;
@@ -8764,6 +8772,7 @@
               failed.style.color = "#7b6a58";
               node.appendChild(failed);
               applyWidgetColor(node);
+              refreshCommandNodeLayout(node);
             });
           return;
         }
@@ -8777,6 +8786,7 @@
         missing.style.color = "#7b6a58";
         node.appendChild(missing);
         applyWidgetColor(node);
+        refreshCommandNodeLayout(node);
         return;
       }
 
@@ -8791,6 +8801,7 @@
         scheduleAutosave();
       }, getCommandRenderContext(node));
       applyWidgetColor(node);
+      refreshCommandNodeLayout(node);
     }
 
     function updateCommandNodeState(node, nextState, options = {}) {
@@ -10866,6 +10877,7 @@
 
     function getCachedNodeRenderWorldSize(node) {
       if (!(node instanceof HTMLElement)) return null;
+      if (node.dataset.renderLayoutCacheKey !== getNodeRenderLayoutCacheKey(node)) return null;
       const width = Number(node.dataset.renderCullWorldWidth);
       const height = Number(node.dataset.renderCullWorldHeight);
       if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;

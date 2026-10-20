@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-10-20: Version 247: Removed the first-zoom connection jump by refreshing lazy widget bounds immediately, slightly increased connection clearance, and darkened the active recorder Loop button while keeping its text black.
+
 - 2026-10-20: Version 246: Froze line and arrow geometry to the preferred 138% canvas appearance, and made recorder Loop toggles preserve the waveform while keeping active text readable.
 
 - 2026-10-20: Version 245: Locked `/vol` to a stable horizontal size and matched its slider handles to `/eq` across canvas zoom levels.
