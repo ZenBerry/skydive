@@ -164,7 +164,7 @@
     },
     {
       "id": "rec",
-      "version": "1.0.13",
+      "version": "1.0.14",
       "title": "Recorder",
       "description": "Record a voice note and play its waveform.",
       "aliases": ["record", "audio", "voice", "voice-note"],

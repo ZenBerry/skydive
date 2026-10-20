@@ -482,13 +482,6 @@
       const media = runtime.wavesurfer.getMediaElement();
       if (media) media.loop = loop;
     }
-    if (typeof runtime.wavesurfer.setOptions === "function") {
-      try {
-        runtime.wavesurfer.setOptions({ loop });
-      } catch (error) {
-        // WaveSurfer versions differ here; finish handling above is the fallback.
-      }
-    }
   }
 
   function getPlayer(runtime) {
@@ -717,7 +710,7 @@
           white-space: nowrap;
         }
         .rec-card button:hover:not(:disabled) { background: #ddcbb5; }
-        .rec-card button[data-active="true"] { background: #40342b; color: #fffaf1; }
+        .rec-card button[data-active="true"] { background: #40342b; color: #111; }
         .rec-card button[data-active="true"]:hover:not(:disabled) { background: #332a23; }
         .rec-card button:disabled { cursor: default; opacity: 0.38; }
         .rec-card [data-action="record"] { background: #e36e54; color: white; }

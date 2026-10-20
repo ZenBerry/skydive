@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-10-20: Version 246: Froze line and arrow geometry to the preferred 138% canvas appearance, and made recorder Loop toggles preserve the waveform while keeping active text readable.
+
 - 2026-10-20: Version 245: Locked `/vol` to a stable horizontal size and matched its slider handles to `/eq` across canvas zoom levels.
 
 - 2026-10-18: Version 244: Gave `/vol` a perceptual −60–0 dB volume taper with a true mute endpoint while preserving the exact output gain of existing saved widgets.

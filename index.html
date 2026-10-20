@@ -1772,6 +1772,7 @@
     const LINE_DRAFT_GAP_LENGTH_SCREEN_PX = 7;
     const LINE_DRAFT_SPRING = 0.24;
     const LINE_DRAFT_DAMPING = 0.66;
+    const LINE_GEOMETRY_REFERENCE_SCALE = 1.38;
     const LINE_GEOMETRY_SAMPLE_WORLD_PX = 28;
     const LINE_GEOMETRY_PRECISION = 6;
     const TEXT_NODE_MIN_HIT_WIDTH_SCREEN_PX = 12;
@@ -1784,7 +1785,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 245; // Increment once for each commit.
+    const APP_VERSION = 246; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -6235,6 +6236,10 @@
       return value / getCameraScale();
     }
 
+    function lineReferenceScreenToWorldLength(value) {
+      return value / LINE_GEOMETRY_REFERENCE_SCALE;
+    }
+
     function getNodeRenderMetrics(node) {
       const baseFontSize = getNodeBaseFontSize(node);
       const cameraScale = getCameraScale();
@@ -6322,8 +6327,10 @@
     }
 
     function getNodeLineBoxWorldSize(node) {
-      const size = getNodeWorldSize(node);
+      const cachedSize = getCachedNodeRenderWorldSize(node);
+      const size = cachedSize || getNodeWorldSize(node);
       if (!isLineWidgetNode(node)) return size;
+      if (cachedSize) return cachedSize;
 
       const bodySize = getWidgetBodyWorldSize(node);
       if (!bodySize) return size;
@@ -6359,15 +6366,15 @@
 
     function getWidgetLineReferenceScreenPx(node) {
       const size = getNodeLineBoxWorldSize(node);
-      return Math.max(1, Math.min(size.width, size.height) * getCameraScale());
+      return Math.max(1, Math.min(size.width, size.height) * LINE_GEOMETRY_REFERENCE_SCALE);
     }
 
     function getNodeAnchorPaddingWorld(node) {
       if (isLineWidgetNode(node)) {
-        return screenToWorldLength(clamp(getWidgetLineReferenceScreenPx(node) * 0.055, 18, 52));
+        return lineReferenceScreenToWorldLength(clamp(getWidgetLineReferenceScreenPx(node) * 0.055, 18, 52));
       }
 
-      const fontSize = getNodeRenderedFontSize(node);
+      const fontSize = getNodeBaseFontSize(node) * LINE_GEOMETRY_REFERENCE_SCALE;
       const affordanceScale = getScreenAffordanceScale(fontSize);
       const naturalPadding = fontSize * LINE_ANCHOR_ELLIPSE_PADDING_FONT_RATIO;
       const padding = clamp(
@@ -6375,34 +6382,34 @@
         0,
         Math.max(naturalPadding, MAX_LINE_ANCHOR_ELLIPSE_PADDING_SCREEN_PX * affordanceScale)
       );
-      return screenToWorldLength(padding);
+      return lineReferenceScreenToWorldLength(padding);
     }
 
     function getLineEndpointGapWorld(node) {
       if (isLineWidgetNode(node)) {
-        return screenToWorldLength(clamp(getWidgetLineReferenceScreenPx(node) * 0.038, 12, 24));
+        return lineReferenceScreenToWorldLength(clamp(getWidgetLineReferenceScreenPx(node) * 0.038, 12, 24));
       }
 
-      const fontSize = getNodeRenderedFontSize(node);
+      const fontSize = getNodeBaseFontSize(node) * LINE_GEOMETRY_REFERENCE_SCALE;
       const gap = Math.max(
         fontSize * 0.06,
         LINE_ENDPOINT_GAP_SCREEN_PX * getScreenAffordanceScale(fontSize)
       );
-      return screenToWorldLength(gap);
+      return lineReferenceScreenToWorldLength(gap);
     }
 
     function getLineWidthWorldFromScreen(widthPx) {
-      return screenToWorldLength(widthPx);
+      return lineReferenceScreenToWorldLength(widthPx);
     }
 
     function getLineShadowExtraWidthWorld(startWidth, endWidth) {
-      const maxLineWidthPx = Math.max(startWidth, endWidth) * getCameraScale();
+      const maxLineWidthPx = Math.max(startWidth, endWidth) * LINE_GEOMETRY_REFERENCE_SCALE;
       const equivalentFontSize = maxLineWidthPx / LINE_WIDTH_FONT_RATIO;
       const extraWidthPx = Math.min(
         LINE_SHADOW_EXTRA_WIDTH_SCREEN_PX * getScreenAffordanceScale(equivalentFontSize),
         maxLineWidthPx * 1.4
       );
-      return screenToWorldLength(extraWidthPx);
+      return lineReferenceScreenToWorldLength(extraWidthPx);
     }
 
     function getDraftDashLengthWorld() {
@@ -6468,16 +6475,16 @@
     function getNodeLineWidth(node) {
       if (isLineWidgetNode(node)) {
         const reference = getWidgetLineReferenceScreenPx(node);
-        return screenToWorldLength(clamp(reference * LINE_WIDTH_FONT_RATIO, MIN_LINE_WIDTH_SCREEN_PX, MAX_LINE_WIDTH_SCREEN_PX));
+        return lineReferenceScreenToWorldLength(clamp(reference * LINE_WIDTH_FONT_RATIO, MIN_LINE_WIDTH_SCREEN_PX, MAX_LINE_WIDTH_SCREEN_PX));
       }
 
-      const fontSize = getNodeRenderedFontSize(node);
+      const fontSize = getNodeBaseFontSize(node) * LINE_GEOMETRY_REFERENCE_SCALE;
       const naturalWidth = fontSize * LINE_WIDTH_FONT_RATIO;
       const width = Math.min(
         Math.max(naturalWidth, MIN_LINE_WIDTH_SCREEN_PX * getScreenAffordanceScale(fontSize)),
         MAX_LINE_WIDTH_SCREEN_PX
       );
-      return screenToWorldLength(width);
+      return lineReferenceScreenToWorldLength(width);
     }
 
     function getStableLineSeed(value) {
@@ -6554,11 +6561,11 @@
       marker.setAttribute("transform", `translate(${formatLineNumber(point.x)} ${formatLineNumber(point.y)})`);
 
       const circle = document.createElementNS(SVG_NS, "circle");
-      circle.setAttribute("r", formatLineNumber(screenToWorldLength(10)));
+      circle.setAttribute("r", formatLineNumber(lineReferenceScreenToWorldLength(10)));
 
       const label = document.createElementNS(SVG_NS, "text");
-      label.setAttribute("y", formatLineNumber(screenToWorldLength(0.2)));
-      label.style.fontSize = `${formatLineNumber(screenToWorldLength(13))}px`;
+      label.setAttribute("y", formatLineNumber(lineReferenceScreenToWorldLength(0.2)));
+      label.style.fontSize = `${formatLineNumber(lineReferenceScreenToWorldLength(13))}px`;
       label.textContent = normalized;
 
       marker.append(circle, label);
