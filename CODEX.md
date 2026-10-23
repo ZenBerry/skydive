@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-10-23: Version 253: Made recorder loops use a longer true overlap where the incoming iteration starts before the outgoing one ends and continues as the active player, and lengthened the subtle transport fades.
+
 - 2026-10-23: Version 252: Added subtle recorder start/pause/stop fades and a short automatic overlap around loop boundaries, preventing encoded audio seams without changing playback controls or routing.
 
 - 2026-10-23: Version 251: Added server-issued Cloudflare TURN credentials and automatic refresh to `/walkie`, with UDP, TCP, and TLS relay paths for cross-device voice across restrictive, public, and mobile networks.

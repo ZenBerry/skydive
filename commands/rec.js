@@ -3,8 +3,8 @@
 
   const runtimes = new WeakMap();
   const PLAYBACK_SPEEDS = [1, 1.5, 2];
-  const PLAYBACK_FADE_MS = 24;
-  const LOOP_CROSSFADE_MS = 48;
+  const PLAYBACK_FADE_MS = 60;
+  const LOOP_CROSSFADE_MS = 120;
   const LOOP_POLL_MS = 12;
   const WAVESURFER_RETRY_DELAYS_MS = [600, 1800];
   const WAVESURFER_LOAD_WATCHDOG_MS = 20000;
@@ -355,10 +355,8 @@
   function stopLoopBridge(runtime) {
     clearInterval(runtime.loopTimer);
     clearTimeout(runtime.loopSwapTimer);
-    clearTimeout(runtime.loopCleanupTimer);
     runtime.loopTimer = null;
     runtime.loopSwapTimer = null;
-    runtime.loopCleanupTimer = null;
     runtime.loopBridgeActive = false;
     if (runtime.loopBridge) {
       runtime.loopBridge.pause();
@@ -379,6 +377,22 @@
     runtime.loopBridgeEnvelope = null;
   }
 
+  function registerPlaybackMedia(media, runtime, context) {
+    const envelope = typeof context.connectAudioElement === "function"
+      ? context.connectAudioElement(media)
+      : null;
+    media.addEventListener("play", () => {
+      if (runtime.playbackMedia === media) startLoopMonitor(runtime, context);
+    });
+    media.addEventListener("pause", () => {
+      if (runtime.playbackMedia === media && !runtime.playbackDelayTimer) stopLoopBridge(runtime);
+    });
+    media.addEventListener("ended", () => {
+      if (runtime.playbackMedia === media && runtime.loop && !runtime.loopBridgeActive) restartLoop(runtime);
+    });
+    return envelope;
+  }
+
   function ensureLoopBridge(runtime, context) {
     if (runtime.loopBridge || !runtime.playbackMedia) return;
     const source = runtime.playbackMedia.currentSrc || runtime.playbackMedia.src;
@@ -391,9 +405,7 @@
     const mediaRoot = runtime.playbackMedia.parentElement || runtime.playbackMedia.getRootNode();
     if (mediaRoot && typeof mediaRoot.appendChild === "function") mediaRoot.appendChild(bridge);
     runtime.loopBridge = bridge;
-    runtime.loopBridgeEnvelope = typeof context.connectAudioElement === "function"
-      ? context.connectAudioElement(bridge)
-      : null;
+    runtime.loopBridgeEnvelope = registerPlaybackMedia(bridge, runtime, context);
     if (runtime.loopBridgeEnvelope) runtime.loopBridgeEnvelope.setGain(0);
   }
 
@@ -415,21 +427,32 @@
     if (playPromise && typeof playPromise.catch === "function") {
       void playPromise.catch(() => stopLoopBridge(runtime));
     }
-    runtime.playbackEnvelope.setGain(0, remainingMs);
-    runtime.loopBridgeEnvelope.setGain(1, remainingMs);
+    const outgoing = media;
+    const outgoingEnvelope = runtime.playbackEnvelope;
+    const incoming = bridge;
+    const incomingEnvelope = runtime.loopBridgeEnvelope;
+    outgoingEnvelope.setGain(0, remainingMs);
+    incomingEnvelope.setGain(1, remainingMs);
     runtime.loopSwapTimer = setTimeout(() => {
       runtime.loopSwapTimer = null;
       if (!runtime.loopBridgeActive) return;
-      runtime.playbackEnvelope.setGain(1, LOOP_CROSSFADE_MS);
-      runtime.loopBridgeEnvelope.setGain(0, LOOP_CROSSFADE_MS);
-      runtime.loopCleanupTimer = setTimeout(() => {
-        runtime.loopCleanupTimer = null;
-        if (runtime.loopBridge) {
-          runtime.loopBridge.pause();
-          runtime.loopBridge.currentTime = 0;
+      runtime.playbackMedia = incoming;
+      runtime.playbackEnvelope = incomingEnvelope;
+      runtime.loopBridge = outgoing;
+      runtime.loopBridgeEnvelope = outgoingEnvelope;
+      if (runtime.wavesurfer && typeof runtime.wavesurfer.setMediaElement === "function") {
+        if (runtime.wavesurfer.timer && typeof runtime.wavesurfer.timer.stop === "function") {
+          runtime.wavesurfer.timer.stop();
         }
-        runtime.loopBridgeActive = false;
-      }, LOOP_CROSSFADE_MS);
+        runtime.wavesurfer.setMediaElement(incoming);
+      } else if (runtime.audio) {
+        runtime.audio = incoming;
+      }
+      outgoing.pause();
+      outgoing.currentTime = 0;
+      outgoingEnvelope.setGain(0);
+      incomingEnvelope.setGain(1);
+      runtime.loopBridgeActive = false;
     }, remainingMs);
   }
 
@@ -445,13 +468,7 @@
   function connectPlaybackMedia(media, runtime, context) {
     if (runtime.playbackMedia && runtime.playbackMedia !== media) removeLoopBridge(runtime);
     runtime.playbackMedia = media;
-    runtime.playbackEnvelope = typeof context.connectAudioElement === "function"
-      ? context.connectAudioElement(media)
-      : null;
-    media.addEventListener("play", () => startLoopMonitor(runtime, context));
-    media.addEventListener("pause", () => {
-      if (!runtime.playbackDelayTimer) stopLoopBridge(runtime);
-    });
+    runtime.playbackEnvelope = registerPlaybackMedia(media, runtime, context);
   }
 
   function playWithFade(runtime, play, context) {
@@ -533,10 +550,7 @@
     });
     wavesurfer.on("finish", () => {
       if (!container.isConnected) return;
-      if (runtime.loop) {
-        restartLoop(runtime);
-        return;
-      }
+      if (runtime.loop) return;
       elements.time.textContent = `0:00 / ${formatTime(wavesurfer.getDuration())}`;
       if (typeof context.startOutgoingArrowTargets === "function") {
         context.startOutgoingArrowTargets();
@@ -579,10 +593,7 @@
       elements.time.textContent = `${formatTime(audio.currentTime)} / ${formatTime(getDuration())}`;
     });
     audio.addEventListener("ended", () => {
-      if (runtime.loop) {
-        restartLoop(runtime);
-        return;
-      }
+      if (runtime.loop) return;
       if (typeof context.startOutgoingArrowTargets === "function") {
         context.startOutgoingArrowTargets();
       }
@@ -607,14 +618,15 @@
     elements.loop.setAttribute("aria-pressed", loop ? "true" : "false");
     elements.loop.dataset.active = loop ? "true" : "false";
 
-    if (runtime.audio) runtime.audio.loop = loop;
+    if (runtime.playbackMedia) runtime.playbackMedia.loop = false;
+    if (runtime.loopBridge) runtime.loopBridge.loop = false;
     if (loop) startLoopMonitor(runtime, runtime.context);
     else stopLoopBridge(runtime);
     if (!runtime.wavesurfer) return;
 
     if (typeof runtime.wavesurfer.getMediaElement === "function") {
       const media = runtime.wavesurfer.getMediaElement();
-      if (media) media.loop = loop;
+      if (media) media.loop = false;
     }
   }
 
@@ -629,14 +641,14 @@
     }
     if (!runtime.audio) return null;
     return {
-      play: () => playWithFade(runtime, () => runtime.audio.play(), runtime.context),
-      pause: () => stopWithFade(runtime, () => runtime.audio.pause()),
+      play: () => playWithFade(runtime, () => runtime.playbackMedia.play(), runtime.context),
+      pause: () => stopWithFade(runtime, () => runtime.playbackMedia.pause()),
       stop: () => stopWithFade(runtime, () => {
-        runtime.audio.pause();
-        runtime.audio.currentTime = 0;
+        runtime.playbackMedia.pause();
+        runtime.playbackMedia.currentTime = 0;
       }),
       setPlaybackRate: (rate) => {
-        runtime.audio.playbackRate = rate;
+        runtime.playbackMedia.playbackRate = rate;
       }
     };
   }
@@ -899,7 +911,6 @@
         loopBridgeActive: false,
         loopTimer: null,
         loopSwapTimer: null,
-        loopCleanupTimer: null,
         liveFrame: null,
         resizeFrame: null,
         waveRetryTimer: null,
