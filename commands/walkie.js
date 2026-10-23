@@ -139,7 +139,7 @@
   function ensureIncomingPeer(runtime, peerId) {
     if (runtime.incomingPeers.has(peerId)) return runtime.incomingPeers.get(peerId);
     const connection = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-    const peer = { connection, stream: null, audio: null };
+    const peer = { connection, stream: null, audio: null, pendingIceCandidates: [] };
     runtime.incomingPeers.set(peerId, peer);
 
     connection.addEventListener("icecandidate", (event) => {
@@ -167,7 +167,7 @@
     if (runtime.outgoingPeers.has(peerId)) return runtime.outgoingPeers.get(peerId);
     const connection = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     const transceiver = connection.addTransceiver("audio", { direction: "sendonly" });
-    const peer = { connection, sender: transceiver.sender, offerSent: false };
+    const peer = { connection, sender: transceiver.sender, offerSent: false, pendingIceCandidates: [] };
     runtime.outgoingPeers.set(peerId, peer);
 
     connection.addEventListener("icecandidate", (event) => {
@@ -211,6 +211,24 @@
     }
   }
 
+  async function addOrQueueIceCandidate(peer, payload) {
+    if (!peer || !payload || !payload.candidate) return;
+    const candidate = new RTCIceCandidate(payload);
+    if (!peer.connection.remoteDescription) {
+      peer.pendingIceCandidates.push(candidate);
+      return;
+    }
+    await peer.connection.addIceCandidate(candidate);
+  }
+
+  async function setRemoteDescription(peer, payload) {
+    await peer.connection.setRemoteDescription(new RTCSessionDescription(payload));
+    const candidates = peer.pendingIceCandidates.splice(0);
+    for (const candidate of candidates) {
+      await peer.connection.addIceCandidate(candidate);
+    }
+  }
+
   async function handleListenerSignal(runtime, message) {
     const messageId = message && message.id;
     if (messageId && runtime.listenerSignalIds.has(messageId)) return;
@@ -227,17 +245,15 @@
     }
     if (type === "offer") {
       const peer = ensureIncomingPeer(runtime, from);
-      await peer.connection.setRemoteDescription(new RTCSessionDescription(payload));
+      await setRemoteDescription(peer, payload);
       const answer = await peer.connection.createAnswer();
       await peer.connection.setLocalDescription(answer);
       await sendSignal(runtime, "answer", from, answer);
       return;
     }
     if (type === "ice") {
-      const peer = runtime.incomingPeers.get(from);
-      if (peer && payload && payload.candidate) {
-        await peer.connection.addIceCandidate(new RTCIceCandidate(payload));
-      }
+      const peer = ensureIncomingPeer(runtime, from);
+      await addOrQueueIceCandidate(peer, payload);
     }
   }
 
@@ -253,15 +269,13 @@
     if (type === "answer") {
       const peer = runtime.outgoingPeers.get(from);
       if (peer && peer.connection.signalingState !== "stable") {
-        await peer.connection.setRemoteDescription(new RTCSessionDescription(payload));
+        await setRemoteDescription(peer, payload);
       }
       return;
     }
     if (type === "ice") {
       const peer = runtime.outgoingPeers.get(from);
-      if (peer && payload && payload.candidate) {
-        await peer.connection.addIceCandidate(new RTCIceCandidate(payload));
-      }
+      await addOrQueueIceCandidate(peer, payload);
     }
   }
 

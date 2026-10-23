@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-10-23: Version 250: Made `/walkie` queue ICE candidates that arrive before the matching remote SDP, so signaling message reordering no longer prevents voice transmission.
+
 - 2026-10-23: Version 249: Fixed `/walkie` voice delivery by pre-negotiating persistent simplex WebRTC channels and inserting the microphone track only while Talk is held, removing the polling-and-teardown race while retaining receiver-only squelch.
 
 - 2026-10-23: Version 248: Added lazy-loaded `/walkie` simplex voice widgets with hold-to-talk button and Right Shift control, shared-space WebRTC audio, receiver-only end-transmission squelch, and no runtime dependencies.

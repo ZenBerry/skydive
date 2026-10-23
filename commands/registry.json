@@ -225,7 +225,7 @@
     },
     {
       "id": "walkie",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "title": "Walkie Talkie",
       "description": "Hold to talk with everyone viewing this space.",
       "source": "static",
