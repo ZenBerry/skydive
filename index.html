@@ -1785,7 +1785,7 @@
     const STORAGE_KEY = "mindmap.v1";
     const SHARED_SPACE_CACHE_KEY = "skydive.sharedSpaceCache.v1";
     const VIEWPORT_STORAGE_KEY = "skydive.viewport.v1";
-    const APP_VERSION = 251; // Increment once for each commit.
+    const APP_VERSION = 252; // Increment once for each commit.
     const TEMPLATES_URL = "/.netlify/functions/templates";
     const REALTIME_CONFIG_URL = "/.netlify/functions/realtime-config";
     const SUPABASE_JS_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -8641,19 +8641,22 @@
 
     function registerCommandAudioElement(node, mediaElement) {
       if (!(mediaElement instanceof HTMLMediaElement)) return false;
-      if (commandAudioElements.has(mediaElement)) return true;
+      if (commandAudioElements.has(mediaElement)) return commandAudioElements.get(mediaElement);
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       if (!AudioContextClass) return false;
       let audioContext;
       let source;
+      let envelope;
       try {
         audioContext = new AudioContextClass();
         source = audioContext.createMediaElementSource(mediaElement);
+        envelope = audioContext.createGain();
+        source.connect(envelope);
       } catch (error) {
         if (audioContext && audioContext.state !== "closed") void audioContext.close().catch(() => {});
         return false;
       }
-      if (!registerCommandAudioOutput(node, audioContext, source, { ownsContext: true })) {
+      if (!registerCommandAudioOutput(node, audioContext, envelope, { ownsContext: true })) {
         void audioContext.close().catch(() => {});
         return false;
       }
@@ -8661,8 +8664,25 @@
         if (audioContext.state === "suspended") void audioContext.resume().catch(() => {});
       };
       mediaElement.addEventListener("play", resume);
-      commandAudioElements.set(mediaElement, { audioContext, resume });
-      return true;
+      const controller = {
+        audioContext,
+        resume,
+        setGain(value, durationMs = 0) {
+          const gain = Math.max(0, Math.min(1, Number(value) || 0));
+          const now = audioContext.currentTime;
+          if (typeof envelope.gain.cancelAndHoldAtTime === "function") {
+            envelope.gain.cancelAndHoldAtTime(now);
+          } else {
+            const current = envelope.gain.value;
+            envelope.gain.cancelScheduledValues(now);
+            envelope.gain.setValueAtTime(current, now);
+          }
+          if (durationMs > 0) envelope.gain.linearRampToValueAtTime(gain, now + durationMs / 1000);
+          else envelope.gain.setValueAtTime(gain, now);
+        }
+      };
+      commandAudioElements.set(mediaElement, controller);
+      return controller;
     }
 
     function clearCommandAudioOutputs(node) {

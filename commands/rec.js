@@ -3,6 +3,9 @@
 
   const runtimes = new WeakMap();
   const PLAYBACK_SPEEDS = [1, 1.5, 2];
+  const PLAYBACK_FADE_MS = 24;
+  const LOOP_CROSSFADE_MS = 48;
+  const LOOP_POLL_MS = 12;
   const WAVESURFER_RETRY_DELAYS_MS = [600, 1800];
   const WAVESURFER_LOAD_WATCHDOG_MS = 20000;
   const MIME_TYPES = [
@@ -349,6 +352,135 @@
     };
   }
 
+  function stopLoopBridge(runtime) {
+    clearInterval(runtime.loopTimer);
+    clearTimeout(runtime.loopSwapTimer);
+    clearTimeout(runtime.loopCleanupTimer);
+    runtime.loopTimer = null;
+    runtime.loopSwapTimer = null;
+    runtime.loopCleanupTimer = null;
+    runtime.loopBridgeActive = false;
+    if (runtime.loopBridge) {
+      runtime.loopBridge.pause();
+      runtime.loopBridge.currentTime = 0;
+    }
+    if (runtime.loopBridgeEnvelope) runtime.loopBridgeEnvelope.setGain(0);
+    if (runtime.playbackEnvelope) runtime.playbackEnvelope.setGain(1);
+  }
+
+  function removeLoopBridge(runtime) {
+    stopLoopBridge(runtime);
+    if (runtime.loopBridge) {
+      runtime.loopBridge.removeAttribute("src");
+      runtime.loopBridge.load();
+      runtime.loopBridge.remove();
+    }
+    runtime.loopBridge = null;
+    runtime.loopBridgeEnvelope = null;
+  }
+
+  function ensureLoopBridge(runtime, context) {
+    if (runtime.loopBridge || !runtime.playbackMedia) return;
+    const source = runtime.playbackMedia.currentSrc || runtime.playbackMedia.src;
+    if (!source) return;
+    const bridge = document.createElement("audio");
+    bridge.src = source;
+    bridge.preload = "auto";
+    bridge.hidden = true;
+    if (runtime.playbackMedia.crossOrigin) bridge.crossOrigin = runtime.playbackMedia.crossOrigin;
+    const mediaRoot = runtime.playbackMedia.parentElement || runtime.playbackMedia.getRootNode();
+    if (mediaRoot && typeof mediaRoot.appendChild === "function") mediaRoot.appendChild(bridge);
+    runtime.loopBridge = bridge;
+    runtime.loopBridgeEnvelope = typeof context.connectAudioElement === "function"
+      ? context.connectAudioElement(bridge)
+      : null;
+    if (runtime.loopBridgeEnvelope) runtime.loopBridgeEnvelope.setGain(0);
+  }
+
+  function startLoopCrossfade(runtime) {
+    const media = runtime.playbackMedia;
+    const bridge = runtime.loopBridge;
+    if (!media || !bridge || !runtime.playbackEnvelope || !runtime.loopBridgeEnvelope) return;
+    if (runtime.loopBridgeActive || media.paused || !runtime.loop) return;
+    const duration = Number(media.duration);
+    if (!Number.isFinite(duration) || duration <= 0) return;
+    const remainingMs = ((duration - media.currentTime) / Math.max(0.01, media.playbackRate)) * 1000;
+    if (remainingMs <= 0 || remainingMs > LOOP_CROSSFADE_MS) return;
+
+    runtime.loopBridgeActive = true;
+    bridge.playbackRate = media.playbackRate;
+    bridge.currentTime = 0;
+    runtime.loopBridgeEnvelope.setGain(0);
+    const playPromise = bridge.play();
+    if (playPromise && typeof playPromise.catch === "function") {
+      void playPromise.catch(() => stopLoopBridge(runtime));
+    }
+    runtime.playbackEnvelope.setGain(0, remainingMs);
+    runtime.loopBridgeEnvelope.setGain(1, remainingMs);
+    runtime.loopSwapTimer = setTimeout(() => {
+      runtime.loopSwapTimer = null;
+      if (!runtime.loopBridgeActive) return;
+      runtime.playbackEnvelope.setGain(1, LOOP_CROSSFADE_MS);
+      runtime.loopBridgeEnvelope.setGain(0, LOOP_CROSSFADE_MS);
+      runtime.loopCleanupTimer = setTimeout(() => {
+        runtime.loopCleanupTimer = null;
+        if (runtime.loopBridge) {
+          runtime.loopBridge.pause();
+          runtime.loopBridge.currentTime = 0;
+        }
+        runtime.loopBridgeActive = false;
+      }, LOOP_CROSSFADE_MS);
+    }, remainingMs);
+  }
+
+  function startLoopMonitor(runtime, context) {
+    clearInterval(runtime.loopTimer);
+    runtime.loopTimer = null;
+    if (!runtime.loop) return;
+    ensureLoopBridge(runtime, context);
+    if (!runtime.loopBridgeEnvelope) return;
+    runtime.loopTimer = setInterval(() => startLoopCrossfade(runtime), LOOP_POLL_MS);
+  }
+
+  function connectPlaybackMedia(media, runtime, context) {
+    if (runtime.playbackMedia && runtime.playbackMedia !== media) removeLoopBridge(runtime);
+    runtime.playbackMedia = media;
+    runtime.playbackEnvelope = typeof context.connectAudioElement === "function"
+      ? context.connectAudioElement(media)
+      : null;
+    media.addEventListener("play", () => startLoopMonitor(runtime, context));
+    media.addEventListener("pause", () => {
+      if (!runtime.playbackDelayTimer) stopLoopBridge(runtime);
+    });
+  }
+
+  function playWithFade(runtime, play, context) {
+    clearTimeout(runtime.playbackDelayTimer);
+    runtime.playbackDelayTimer = null;
+    const wasPaused = !runtime.playbackMedia || runtime.playbackMedia.paused;
+    if (runtime.playbackEnvelope) {
+      if (wasPaused) runtime.playbackEnvelope.setGain(0);
+      runtime.playbackEnvelope.setGain(1, PLAYBACK_FADE_MS);
+    }
+    const playPromise = play();
+    startLoopMonitor(runtime, context);
+    return playPromise;
+  }
+
+  function stopWithFade(runtime, stop) {
+    clearTimeout(runtime.playbackDelayTimer);
+    stopLoopBridge(runtime);
+    if (!runtime.playbackEnvelope) {
+      stop();
+      return;
+    }
+    runtime.playbackEnvelope.setGain(0, PLAYBACK_FADE_MS);
+    runtime.playbackDelayTimer = setTimeout(() => {
+      runtime.playbackDelayTimer = null;
+      stop();
+    }, PLAYBACK_FADE_MS);
+  }
+
   function createWaveSurfer(container, url, elements, runtime, context = {}) {
     if (!window.WaveSurfer || typeof window.WaveSurfer.create !== "function") return false;
 
@@ -373,7 +505,7 @@
     runtime.wavesurfer = wavesurfer;
     if (typeof context.connectAudioElement === "function" && typeof wavesurfer.getMediaElement === "function") {
       const media = wavesurfer.getMediaElement();
-      if (media) context.connectAudioElement(media);
+      if (media) connectPlaybackMedia(media, runtime, context);
     }
     runtime.waveLoadTimer = setTimeout(() => {
       runtime.waveLoadTimer = null;
@@ -429,7 +561,7 @@
     audio.preload = "metadata";
     audio.hidden = true;
     elements.card.appendChild(audio);
-    if (typeof context.connectAudioElement === "function") context.connectAudioElement(audio);
+    connectPlaybackMedia(audio, runtime, context);
     elements.wave.dataset.fallback = "true";
     runtime.audio = audio;
 
@@ -463,7 +595,7 @@
   function restartLoop(runtime) {
     const player = getPlayer(runtime);
     if (!player) return;
-    player.stop();
+    if (runtime.playbackMedia) runtime.playbackMedia.currentTime = 0;
     const playPromise = player.play();
     if (playPromise && typeof playPromise.catch === "function") {
       void playPromise.catch(() => {});
@@ -476,6 +608,8 @@
     elements.loop.dataset.active = loop ? "true" : "false";
 
     if (runtime.audio) runtime.audio.loop = loop;
+    if (loop) startLoopMonitor(runtime, runtime.context);
+    else stopLoopBridge(runtime);
     if (!runtime.wavesurfer) return;
 
     if (typeof runtime.wavesurfer.getMediaElement === "function") {
@@ -487,20 +621,20 @@
   function getPlayer(runtime) {
     if (runtime.wavesurfer) {
       return {
-        play: () => runtime.wavesurfer.play(),
-        pause: () => runtime.wavesurfer.pause(),
-        stop: () => runtime.wavesurfer.stop(),
+        play: () => playWithFade(runtime, () => runtime.wavesurfer.play(), runtime.context),
+        pause: () => stopWithFade(runtime, () => runtime.wavesurfer.pause()),
+        stop: () => stopWithFade(runtime, () => runtime.wavesurfer.stop()),
         setPlaybackRate: (rate) => runtime.wavesurfer.setPlaybackRate(rate, true)
       };
     }
     if (!runtime.audio) return null;
     return {
-      play: () => runtime.audio.play(),
-      pause: () => runtime.audio.pause(),
-      stop: () => {
+      play: () => playWithFade(runtime, () => runtime.audio.play(), runtime.context),
+      pause: () => stopWithFade(runtime, () => runtime.audio.pause()),
+      stop: () => stopWithFade(runtime, () => {
         runtime.audio.pause();
         runtime.audio.currentTime = 0;
-      },
+      }),
       setPlaybackRate: (rate) => {
         runtime.audio.playbackRate = rate;
       }
@@ -755,7 +889,17 @@
         audioContext: null,
         analyser: null,
         mediaSource: null,
+        context,
+        playbackMedia: null,
+        playbackEnvelope: null,
+        playbackDelayTimer: null,
         loop: false,
+        loopBridge: null,
+        loopBridgeEnvelope: null,
+        loopBridgeActive: false,
+        loopTimer: null,
+        loopSwapTimer: null,
+        loopCleanupTimer: null,
         liveFrame: null,
         resizeFrame: null,
         waveRetryTimer: null,
@@ -1007,6 +1151,8 @@
       if (runtime.resizeFrame !== null) cancelAnimationFrame(runtime.resizeFrame);
       clearTimeout(runtime.waveRetryTimer);
       clearTimeout(runtime.waveLoadTimer);
+      clearTimeout(runtime.playbackDelayTimer);
+      removeLoopBridge(runtime);
       if (runtime.recorder && runtime.recorder.state !== "inactive") runtime.recorder.stop();
       stopStream(runtime.stream);
       stopLiveWaveform(null, runtime);

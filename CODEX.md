@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-10-23: Version 252: Added subtle recorder start/pause/stop fades and a short automatic overlap around loop boundaries, preventing encoded audio seams without changing playback controls or routing.
+
 - 2026-10-23: Version 251: Added server-issued Cloudflare TURN credentials and automatic refresh to `/walkie`, with UDP, TCP, and TLS relay paths for cross-device voice across restrictive, public, and mobile networks.
 
 - 2026-10-23: Version 250: Made `/walkie` queue ICE candidates that arrive before the matching remote SDP, so signaling message reordering no longer prevents voice transmission.
