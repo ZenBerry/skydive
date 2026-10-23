@@ -160,7 +160,7 @@ exports.handler = async (event) => {
 
       const type = typeof payload.type === "string" ? payload.type.trim() : "";
       const to = typeof payload.to === "string" && payload.to.trim() ? payload.to.trim() : "*";
-      if (!["offer", "answer", "ice"].includes(type) || (!(to === "*") && !isSafeToken(to, 140))) {
+      if (!["offer", "answer", "ice", "talk-end"].includes(type) || (!(to === "*") && !isSafeToken(to, 140))) {
         return json(400, { error: "A valid signal message is required." });
       }
 

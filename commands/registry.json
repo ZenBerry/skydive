@@ -224,6 +224,20 @@
       }
     },
     {
+      "id": "walkie",
+      "version": "1.0.0",
+      "title": "Walkie Talkie",
+      "description": "Hold to talk with everyone viewing this space.",
+      "source": "static",
+      "dynamicExecutable": false,
+      "stateSchema": {
+        "type": "object",
+        "properties": {
+          "createdAt": { "type": "number" }
+        }
+      }
+    },
+    {
       "id": "chord",
       "version": "1.0.4",
       "title": "Chord",
