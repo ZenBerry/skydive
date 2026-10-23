@@ -4,14 +4,18 @@
   const runtimes = new WeakMap();
   const activeRuntimes = new Map();
   const CALLS_URL = "/.netlify/functions/calls";
+  const TURN_CREDENTIALS_URL = "/.netlify/functions/turn-credentials";
   const SQUELCH_URL = "/assets/radio-sign-off-squelch.wav";
   const LISTENER_POLL_MS = 450;
   const TRANSMITTER_POLL_MS = 800;
   const ACTIVE_TRANSMITTER_POLL_MS = 300;
   const DETACH_GRACE_MS = 5000;
-  const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
+  const FALLBACK_ICE_SERVERS = [{ urls: ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"] }];
+  const TURN_REFRESH_MS = 12 * 60 * 60 * 1000;
   let lastInteractedRuntime = null;
   let keyboardRuntime = null;
+  let iceConfigCache = null;
+  let iceConfigPromise = null;
 
   function randomId() {
     if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID();
@@ -42,6 +46,46 @@
       after: String(transmitter ? runtime.transmitterSignalAt : runtime.listenerSignalAt)
     });
     return `${CALLS_URL}?${params.toString()}`;
+  }
+
+  function normalizeIceServers(value) {
+    if (!Array.isArray(value)) return [];
+    return value.filter((server) => (
+      server && typeof server === "object" && (
+        typeof server.urls === "string" || (Array.isArray(server.urls) && server.urls.length > 0)
+      )
+    ));
+  }
+
+  async function loadIceConfig(force = false) {
+    const now = Date.now();
+    if (!force && iceConfigCache && iceConfigCache.expiresAt > now + 5 * 60 * 1000) return iceConfigCache;
+    if (iceConfigPromise) return iceConfigPromise;
+    iceConfigPromise = (async () => {
+      try {
+        const response = await fetch(TURN_CREDENTIALS_URL, {
+          headers: { "Accept": "application/json" },
+          cache: "no-store"
+        });
+        if (!response.ok) throw new Error(`Walkie TURN configuration failed: ${response.status}`);
+        const data = await response.json();
+        const iceServers = normalizeIceServers(data && data.iceServers);
+        if (iceServers.length === 0) throw new Error("Walkie TURN configuration was empty.");
+        iceConfigCache = {
+          iceServers,
+          expiresAt: Math.max(now + 5 * 60 * 1000, Number(data.expiresAt) || 0)
+        };
+      } catch (error) {
+        console.warn(error);
+        iceConfigCache = { iceServers: FALLBACK_ICE_SERVERS, expiresAt: now + 60 * 1000 };
+      }
+      return iceConfigCache;
+    })();
+    try {
+      return await iceConfigPromise;
+    } finally {
+      iceConfigPromise = null;
+    }
   }
 
   async function sendSignal(runtime, type, to = "*", payload = {}, transmitter = false) {
@@ -138,7 +182,7 @@
 
   function ensureIncomingPeer(runtime, peerId) {
     if (runtime.incomingPeers.has(peerId)) return runtime.incomingPeers.get(peerId);
-    const connection = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    const connection = new RTCPeerConnection({ iceServers: runtime.iceServers });
     const peer = { connection, stream: null, audio: null, pendingIceCandidates: [] };
     runtime.incomingPeers.set(peerId, peer);
 
@@ -165,7 +209,7 @@
 
   function ensureOutgoingPeer(runtime, peerId) {
     if (runtime.outgoingPeers.has(peerId)) return runtime.outgoingPeers.get(peerId);
-    const connection = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    const connection = new RTCPeerConnection({ iceServers: runtime.iceServers });
     const transceiver = connection.addTransceiver("audio", { direction: "sendonly" });
     const peer = { connection, sender: transceiver.sender, offerSent: false, pendingIceCandidates: [] };
     runtime.outgoingPeers.set(peerId, peer);
@@ -289,6 +333,35 @@
     if (runtime.discard) return;
     if (runtime.transmitterPollTimer !== null) clearTimeout(runtime.transmitterPollTimer);
     runtime.transmitterPollTimer = setTimeout(() => pollTransmitter(runtime), delay);
+  }
+
+  function scheduleIceRefresh(runtime, expiresAt) {
+    if (runtime.discard) return;
+    if (runtime.iceRefreshTimer !== null) clearTimeout(runtime.iceRefreshTimer);
+    const untilRefresh = Math.max(60 * 1000, Number(expiresAt) - Date.now() - 5 * 60 * 1000);
+    runtime.iceRefreshTimer = setTimeout(async () => {
+      runtime.iceRefreshTimer = null;
+      const config = await loadIceConfig(true);
+      if (runtime.discard) return;
+      runtime.iceServers = config.iceServers;
+      for (const peer of [...runtime.incomingPeers.values(), ...runtime.outgoingPeers.values()]) {
+        try { peer.connection.setConfiguration({ iceServers: runtime.iceServers }); } catch (error) { console.error(error); }
+      }
+      scheduleIceRefresh(runtime, config.expiresAt);
+    }, Math.min(TURN_REFRESH_MS, untilRefresh));
+  }
+
+  async function startRuntime(runtime) {
+    if (runtime.startPromise) return runtime.startPromise;
+    runtime.startPromise = (async () => {
+      const config = await loadIceConfig();
+      if (runtime.discard) return;
+      runtime.iceServers = config.iceServers;
+      scheduleIceRefresh(runtime, config.expiresAt);
+      scheduleListenerPoll(runtime, 0);
+      scheduleTransmitterPoll(runtime, 0);
+    })();
+    return runtime.startPromise;
   }
 
   async function pollListener(runtime) {
@@ -423,6 +496,7 @@
     runtime.discard = true;
     if (runtime.listenerPollTimer !== null) clearTimeout(runtime.listenerPollTimer);
     if (runtime.transmitterPollTimer !== null) clearTimeout(runtime.transmitterPollTimer);
+    if (runtime.iceRefreshTimer !== null) clearTimeout(runtime.iceRefreshTimer);
     if (runtime.detachTimer !== null) clearTimeout(runtime.detachTimer);
     sendLeave(runtime, false);
     sendLeave(runtime, true);
@@ -527,6 +601,9 @@
           transmitterPollTimer: null,
           listenerPolling: false,
           transmitterPolling: false,
+          iceServers: FALLBACK_ICE_SERVERS,
+          iceRefreshTimer: null,
+          startPromise: null,
           detachTimer: null,
           container: null,
           elements: null,
@@ -621,8 +698,7 @@
       elements.button.addEventListener("lostpointercapture", (event) => endTalk(runtime, `pointer:${event.pointerId}`));
 
       if (room) {
-        if (runtime.listenerPollTimer === null && !runtime.listenerPolling) scheduleListenerPoll(runtime, 0);
-        if (runtime.transmitterPollTimer === null && !runtime.transmitterPolling) scheduleTransmitterPoll(runtime, 0);
+        void startRuntime(runtime).catch(console.error);
       }
     }
   });

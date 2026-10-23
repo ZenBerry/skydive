@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-10-23: Version 251: Added server-issued Cloudflare TURN credentials and automatic refresh to `/walkie`, with UDP, TCP, and TLS relay paths for cross-device voice across restrictive, public, and mobile networks.
+
 - 2026-10-23: Version 250: Made `/walkie` queue ICE candidates that arrive before the matching remote SDP, so signaling message reordering no longer prevents voice transmission.
 
 - 2026-10-23: Version 249: Fixed `/walkie` voice delivery by pre-negotiating persistent simplex WebRTC channels and inserting the microphone track only while Talk is held, removing the polling-and-teardown race while retaining receiver-only squelch.
