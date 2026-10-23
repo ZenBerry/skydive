@@ -5,9 +5,10 @@
   const activeRuntimes = new Map();
   const CALLS_URL = "/.netlify/functions/calls";
   const SQUELCH_URL = "/assets/radio-sign-off-squelch.wav";
-  const SIGNAL_POLL_MS = 450;
+  const LISTENER_POLL_MS = 450;
+  const TRANSMITTER_POLL_MS = 800;
+  const ACTIVE_TRANSMITTER_POLL_MS = 300;
   const DETACH_GRACE_MS = 5000;
-  const RECEIVED_PEER_TTL_MS = 60000;
   const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
   let lastInteractedRuntime = null;
   let keyboardRuntime = null;
@@ -32,18 +33,18 @@
     return room ? `${room.space}\n${room.room}` : "";
   }
 
-  function getCallUrl(runtime) {
+  function getCallUrl(runtime, transmitter) {
     const params = new URLSearchParams({
       space: runtime.room.space,
       room: runtime.room.room,
-      peer: runtime.peerId,
-      role: runtime.role,
-      after: String(runtime.lastSignalAt)
+      peer: transmitter ? runtime.transmitterId : runtime.listenerId,
+      role: transmitter ? "publisher" : "viewer",
+      after: String(transmitter ? runtime.transmitterSignalAt : runtime.listenerSignalAt)
     });
     return `${CALLS_URL}?${params.toString()}`;
   }
 
-  async function sendSignal(runtime, type, to = "*", payload = {}) {
+  async function sendSignal(runtime, type, to = "*", payload = {}, transmitter = false) {
     if (!runtime.room || runtime.discard) return;
     const response = await fetch(CALLS_URL, {
       method: "POST",
@@ -54,8 +55,8 @@
       body: JSON.stringify({
         space: runtime.room.space,
         room: runtime.room.room,
-        peer: runtime.peerId,
-        role: runtime.role,
+        peer: transmitter ? runtime.transmitterId : runtime.listenerId,
+        role: transmitter ? "publisher" : "viewer",
         type,
         to,
         payload
@@ -71,7 +72,7 @@
       button.dataset.talking = String(talking);
       button.setAttribute("aria-pressed", String(talking));
     }
-    for (const peer of runtime.peers.values()) {
+    for (const peer of runtime.incomingPeers.values()) {
       if (peer.audio) peer.audio.muted = talking;
     }
   }
@@ -97,6 +98,16 @@
     if (playPromise && typeof playPromise.catch === "function") playPromise.catch(() => {});
   }
 
+  function resumeRemoteAudio() {
+    for (const runtime of activeRuntimes.values()) {
+      for (const peer of runtime.incomingPeers.values()) {
+        if (!peer.audio || !peer.audio.paused) continue;
+        const playPromise = peer.audio.play();
+        if (playPromise && typeof playPromise.catch === "function") playPromise.catch(() => {});
+      }
+    }
+  }
+
   function playSquelch(runtime) {
     if (runtime.talking || !runtime.elements || !runtime.elements.squelch) return;
     const audio = runtime.elements.squelch;
@@ -105,138 +116,229 @@
     if (playPromise && typeof playPromise.catch === "function") playPromise.catch(() => {});
   }
 
-  function closePeer(runtime, peerId) {
-    const peer = runtime.peers.get(peerId);
+  function closeIncomingPeer(runtime, peerId) {
+    const peer = runtime.incomingPeers.get(peerId);
     if (!peer) return;
     if (peer.audio) peer.audio.remove();
     try { peer.connection.close(); } catch (error) { /* Already-closed peers can throw. */ }
-    runtime.peers.delete(peerId);
+    runtime.incomingPeers.delete(peerId);
+  }
+
+  function closeOutgoingPeer(runtime, peerId) {
+    const peer = runtime.outgoingPeers.get(peerId);
+    if (!peer) return;
+    try { peer.connection.close(); } catch (error) { /* Already-closed peers can throw. */ }
+    runtime.outgoingPeers.delete(peerId);
   }
 
   function closeAllPeers(runtime) {
-    for (const peerId of Array.from(runtime.peers.keys())) closePeer(runtime, peerId);
+    for (const peerId of Array.from(runtime.incomingPeers.keys())) closeIncomingPeer(runtime, peerId);
+    for (const peerId of Array.from(runtime.outgoingPeers.keys())) closeOutgoingPeer(runtime, peerId);
   }
 
-  function ensurePeer(runtime, peerId) {
-    if (runtime.peers.has(peerId)) return runtime.peers.get(peerId);
+  function ensureIncomingPeer(runtime, peerId) {
+    if (runtime.incomingPeers.has(peerId)) return runtime.incomingPeers.get(peerId);
     const connection = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-    const peer = { connection, stream: null, audio: null, offerSent: false };
-    runtime.peers.set(peerId, peer);
+    const peer = { connection, stream: null, audio: null };
+    runtime.incomingPeers.set(peerId, peer);
 
-    if (runtime.role === "publisher" && runtime.stream) {
-      for (const track of runtime.stream.getTracks()) connection.addTrack(track, runtime.stream);
-    }
     connection.addEventListener("icecandidate", (event) => {
       if (event.candidate) void sendSignal(runtime, "ice", peerId, event.candidate.toJSON()).catch(console.error);
     });
     connection.addEventListener("track", (event) => {
-      if (runtime.role !== "viewer" || !event.streams || !event.streams[0]) return;
-      peer.stream = event.streams[0];
-      runtime.receivedPeers.set(peerId, Date.now());
+      const stream = event.streams && event.streams[0]
+        ? event.streams[0]
+        : typeof MediaStream === "function"
+          ? new MediaStream([event.track])
+          : null;
+      if (!stream) return;
+      peer.stream = stream;
       createRemoteAudio(runtime, peer);
     });
     connection.addEventListener("connectionstatechange", () => {
       if (connection.connectionState === "failed" || connection.connectionState === "closed") {
-        closePeer(runtime, peerId);
+        closeIncomingPeer(runtime, peerId);
       }
     });
     return peer;
   }
 
+  function ensureOutgoingPeer(runtime, peerId) {
+    if (runtime.outgoingPeers.has(peerId)) return runtime.outgoingPeers.get(peerId);
+    const connection = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    const transceiver = connection.addTransceiver("audio", { direction: "sendonly" });
+    const peer = { connection, sender: transceiver.sender, offerSent: false };
+    runtime.outgoingPeers.set(peerId, peer);
+
+    connection.addEventListener("icecandidate", (event) => {
+      if (event.candidate) {
+        void sendSignal(runtime, "ice", peerId, event.candidate.toJSON(), true).catch(console.error);
+      }
+    });
+    connection.addEventListener("connectionstatechange", () => {
+      if (connection.connectionState === "failed" || connection.connectionState === "closed") {
+        closeOutgoingPeer(runtime, peerId);
+      }
+    });
+    const track = runtime.stream && runtime.stream.getAudioTracks()[0];
+    if (track) void peer.sender.replaceTrack(track).catch(console.error);
+    return peer;
+  }
+
   async function createOffer(runtime, peerId) {
-    const peer = ensurePeer(runtime, peerId);
+    const peer = ensureOutgoingPeer(runtime, peerId);
     if (peer.offerSent || runtime.connectingPeers.has(peerId)) return;
     runtime.connectingPeers.add(peerId);
     try {
       const offer = await peer.connection.createOffer();
       await peer.connection.setLocalDescription(offer);
-      await sendSignal(runtime, "offer", peerId, offer);
+      await sendSignal(runtime, "offer", peerId, offer, true);
       peer.offerSent = true;
     } finally {
       runtime.connectingPeers.delete(peerId);
     }
   }
 
-  async function handleSignal(runtime, message) {
+  async function syncOutgoingPeers(runtime, viewerIds) {
+    const expected = new Set(viewerIds.filter((peerId) => (
+      peerId && peerId !== runtime.listenerId && peerId !== runtime.transmitterId
+    )));
+    for (const peerId of Array.from(runtime.outgoingPeers.keys())) {
+      if (!expected.has(peerId)) closeOutgoingPeer(runtime, peerId);
+    }
+    for (const peerId of expected) {
+      try { await createOffer(runtime, peerId); } catch (error) { console.error(error); }
+    }
+  }
+
+  async function handleListenerSignal(runtime, message) {
     const messageId = message && message.id;
-    if (messageId && runtime.processedSignalIds.has(messageId)) return;
-    if (messageId) runtime.processedSignalIds.add(messageId);
+    if (messageId && runtime.listenerSignalIds.has(messageId)) return;
+    if (messageId) runtime.listenerSignalIds.add(messageId);
     const from = message && message.from;
     const type = message && message.type;
-    if (!from || from === runtime.peerId || runtime.discard) return;
+    if (!from || from === runtime.listenerId || from === runtime.transmitterId || runtime.discard) return;
     const payload = message.payload || {};
 
     if (type === "talk-end") {
-      const receivedAt = runtime.receivedPeers.get(from) || 0;
-      if (runtime.role === "viewer" && Date.now() - receivedAt <= RECEIVED_PEER_TTL_MS) playSquelch(runtime);
-      runtime.receivedPeers.delete(from);
+      const peer = runtime.incomingPeers.get(from);
+      if (peer && peer.stream) playSquelch(runtime);
       return;
     }
-    if (runtime.role === "viewer" && type === "offer") {
-      const peer = ensurePeer(runtime, from);
+    if (type === "offer") {
+      const peer = ensureIncomingPeer(runtime, from);
       await peer.connection.setRemoteDescription(new RTCSessionDescription(payload));
       const answer = await peer.connection.createAnswer();
       await peer.connection.setLocalDescription(answer);
       await sendSignal(runtime, "answer", from, answer);
       return;
     }
-    if (runtime.role === "publisher" && type === "answer") {
-      const peer = runtime.peers.get(from);
-      if (peer && peer.connection.signalingState !== "stable") {
-        await peer.connection.setRemoteDescription(new RTCSessionDescription(payload));
-      }
-      return;
-    }
     if (type === "ice") {
-      const peer = runtime.peers.get(from);
+      const peer = runtime.incomingPeers.get(from);
       if (peer && payload && payload.candidate) {
         await peer.connection.addIceCandidate(new RTCIceCandidate(payload));
       }
     }
   }
 
-  function schedulePoll(runtime, delay = SIGNAL_POLL_MS) {
-    if (runtime.discard) return;
-    if (runtime.pollTimer !== null) clearTimeout(runtime.pollTimer);
-    runtime.pollTimer = setTimeout(() => pollWalkie(runtime), delay);
+  async function handleTransmitterSignal(runtime, message) {
+    const messageId = message && message.id;
+    if (messageId && runtime.transmitterSignalIds.has(messageId)) return;
+    if (messageId) runtime.transmitterSignalIds.add(messageId);
+    const from = message && message.from;
+    const type = message && message.type;
+    if (!from || from === runtime.listenerId || from === runtime.transmitterId || runtime.discard) return;
+    const payload = message.payload || {};
+
+    if (type === "answer") {
+      const peer = runtime.outgoingPeers.get(from);
+      if (peer && peer.connection.signalingState !== "stable") {
+        await peer.connection.setRemoteDescription(new RTCSessionDescription(payload));
+      }
+      return;
+    }
+    if (type === "ice") {
+      const peer = runtime.outgoingPeers.get(from);
+      if (peer && payload && payload.candidate) {
+        await peer.connection.addIceCandidate(new RTCIceCandidate(payload));
+      }
+    }
   }
 
-  async function pollWalkie(runtime) {
-    runtime.pollTimer = null;
-    if (runtime.discard || runtime.polling || !runtime.room) return;
-    runtime.polling = true;
+  function scheduleListenerPoll(runtime, delay = LISTENER_POLL_MS) {
+    if (runtime.discard) return;
+    if (runtime.listenerPollTimer !== null) clearTimeout(runtime.listenerPollTimer);
+    runtime.listenerPollTimer = setTimeout(() => pollListener(runtime), delay);
+  }
+
+  function scheduleTransmitterPoll(runtime, delay = runtime.talking ? ACTIVE_TRANSMITTER_POLL_MS : TRANSMITTER_POLL_MS) {
+    if (runtime.discard) return;
+    if (runtime.transmitterPollTimer !== null) clearTimeout(runtime.transmitterPollTimer);
+    runtime.transmitterPollTimer = setTimeout(() => pollTransmitter(runtime), delay);
+  }
+
+  async function pollListener(runtime) {
+    runtime.listenerPollTimer = null;
+    if (runtime.discard || runtime.listenerPolling || !runtime.room) return;
+    runtime.listenerPolling = true;
     try {
-      const response = await fetch(getCallUrl(runtime), {
+      const response = await fetch(getCallUrl(runtime, false), {
         headers: { "Accept": "application/json" },
         cache: "no-store"
       });
-      if (!response.ok) throw new Error(`Walkie signaling failed: ${response.status}`);
+      if (!response.ok) throw new Error(`Walkie listener signaling failed: ${response.status}`);
       const data = await response.json();
       if (runtime.discard) return;
 
-      const messages = Array.isArray(data.messages) ? data.messages : [];
-      for (const message of messages) {
-        try { await handleSignal(runtime, message); } catch (error) { console.error(error); }
+      for (const message of Array.isArray(data.messages) ? data.messages : []) {
+        try { await handleListenerSignal(runtime, message); } catch (error) { console.error(error); }
       }
-
       const participants = Array.isArray(data.participants) ? data.participants : [];
-      const expectedPeers = new Set(participants
-        .filter((participant) => participant && participant.peer !== runtime.peerId && (
-          runtime.role === "publisher" ? participant.role === "viewer" : participant.role === "publisher"
-        ))
+      const viewers = participants
+        .filter((participant) => participant && participant.role === "viewer")
+        .map((participant) => participant.peer);
+      const publishers = new Set(participants
+        .filter((participant) => participant && participant.role === "publisher" && participant.peer !== runtime.transmitterId)
         .map((participant) => participant.peer));
-      for (const peerId of Array.from(runtime.peers.keys())) {
-        if (!expectedPeers.has(peerId)) closePeer(runtime, peerId);
+      for (const peerId of Array.from(runtime.incomingPeers.keys())) {
+        if (!publishers.has(peerId)) closeIncomingPeer(runtime, peerId);
       }
-      if (runtime.role === "publisher" && runtime.stream) {
-        for (const peerId of expectedPeers) await createOffer(runtime, peerId);
-      }
-      runtime.lastSignalAt = Number(data.now) || Date.now();
+      await syncOutgoingPeers(runtime, viewers);
+      runtime.listenerSignalAt = Number(data.now) || Date.now();
     } catch (error) {
       console.error(error);
     } finally {
-      runtime.polling = false;
-      schedulePoll(runtime);
+      runtime.listenerPolling = false;
+      scheduleListenerPoll(runtime);
+    }
+  }
+
+  async function pollTransmitter(runtime) {
+    runtime.transmitterPollTimer = null;
+    if (runtime.discard || runtime.transmitterPolling || !runtime.room) return;
+    runtime.transmitterPolling = true;
+    try {
+      const response = await fetch(getCallUrl(runtime, true), {
+        headers: { "Accept": "application/json" },
+        cache: "no-store"
+      });
+      if (!response.ok) throw new Error(`Walkie transmitter signaling failed: ${response.status}`);
+      const data = await response.json();
+      if (runtime.discard) return;
+
+      for (const message of Array.isArray(data.messages) ? data.messages : []) {
+        try { await handleTransmitterSignal(runtime, message); } catch (error) { console.error(error); }
+      }
+      const viewers = (Array.isArray(data.participants) ? data.participants : [])
+        .filter((participant) => participant && participant.role === "viewer")
+        .map((participant) => participant.peer);
+      await syncOutgoingPeers(runtime, viewers);
+      runtime.transmitterSignalAt = Number(data.now) || Date.now();
+    } catch (error) {
+      console.error(error);
+    } finally {
+      runtime.transmitterPolling = false;
+      scheduleTransmitterPoll(runtime);
     }
   }
 
@@ -246,9 +348,6 @@
     if (runtime.talking) return;
     lastInteractedRuntime = runtime;
     setTalking(runtime, true);
-    runtime.role = "publisher";
-    runtime.receivedPeers.clear();
-    closeAllPeers(runtime);
     try {
       if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") {
         throw new Error("Microphone unavailable");
@@ -262,13 +361,20 @@
         return;
       }
       runtime.stream = stream;
-      schedulePoll(runtime, 0);
+      const track = stream.getAudioTracks()[0];
+      await Promise.all(Array.from(runtime.outgoingPeers.values(), (peer) => peer.sender.replaceTrack(track)));
+      scheduleTransmitterPoll(runtime, 0);
     } catch (error) {
       console.error(error);
-      runtime.role = "viewer";
+      const stream = runtime.stream;
+      runtime.stream = null;
+      for (const peer of runtime.outgoingPeers.values()) {
+        void peer.sender.replaceTrack(null).catch(console.error);
+      }
+      stopStream(stream);
+      runtime.holds.clear();
       setTalking(runtime, false);
       if (runtime.elements && runtime.elements.button) runtime.elements.button.title = "Microphone unavailable";
-      schedulePoll(runtime, 0);
     }
   }
 
@@ -276,24 +382,23 @@
     if (!runtime) return;
     runtime.holds.delete(hold);
     if (!runtime.talking || runtime.holds.size > 0) return;
-    if (runtime.stream) void sendSignal(runtime, "talk-end").catch(console.error);
-    setTalking(runtime, false);
-    stopStream(runtime.stream);
-    runtime.holds.clear();
+    const stream = runtime.stream;
+    if (stream) void sendSignal(runtime, "talk-end", "*", {}, true).catch(console.error);
     runtime.stream = null;
-    runtime.role = "viewer";
-    closeAllPeers(runtime);
-    runtime.connectingPeers.clear();
-    schedulePoll(runtime, 0);
+    runtime.holds.clear();
+    setTalking(runtime, false);
+    const removals = Array.from(runtime.outgoingPeers.values(), (peer) => peer.sender.replaceTrack(null));
+    void Promise.allSettled(removals).finally(() => stopStream(stream));
+    scheduleTransmitterPoll(runtime, 0);
   }
 
-  function sendLeave(runtime) {
+  function sendLeave(runtime, transmitter) {
     if (!runtime.room || !navigator.sendBeacon) return;
     const body = JSON.stringify({
       space: runtime.room.space,
       room: runtime.room.room,
-      peer: runtime.peerId,
-      role: runtime.role,
+      peer: transmitter ? runtime.transmitterId : runtime.listenerId,
+      role: transmitter ? "publisher" : "viewer",
       type: "leave"
     });
     navigator.sendBeacon(CALLS_URL, new Blob([body], { type: "application/json" }));
@@ -302,9 +407,11 @@
   function closeRuntime(runtime) {
     if (!runtime || runtime.discard) return;
     runtime.discard = true;
-    if (runtime.pollTimer !== null) clearTimeout(runtime.pollTimer);
+    if (runtime.listenerPollTimer !== null) clearTimeout(runtime.listenerPollTimer);
+    if (runtime.transmitterPollTimer !== null) clearTimeout(runtime.transmitterPollTimer);
     if (runtime.detachTimer !== null) clearTimeout(runtime.detachTimer);
-    sendLeave(runtime);
+    sendLeave(runtime, false);
+    sendLeave(runtime, true);
     setTalking(runtime, false);
     stopStream(runtime.stream);
     closeAllPeers(runtime);
@@ -329,7 +436,9 @@
       || (available.includes(lastInteractedRuntime) ? lastInteractedRuntime : null);
   }
 
+  document.addEventListener("pointerdown", resumeRemoteAudio, true);
   document.addEventListener("keydown", (event) => {
+    resumeRemoteAudio();
     if (event.code !== "ShiftRight" || event.repeat || keyboardRuntime) return;
     keyboardRuntime = chooseKeyboardRuntime();
     if (keyboardRuntime) void beginTalk(keyboardRuntime, "keyboard");
@@ -388,18 +497,22 @@
         runtime = {
           key,
           room,
-          peerId: randomId(),
-          role: "viewer",
+          listenerId: randomId(),
+          transmitterId: randomId(),
           talking: false,
           holds: new Set(),
           stream: null,
-          peers: new Map(),
-          receivedPeers: new Map(),
+          incomingPeers: new Map(),
+          outgoingPeers: new Map(),
           connectingPeers: new Set(),
-          processedSignalIds: new Set(),
-          lastSignalAt: 0,
-          pollTimer: null,
-          polling: false,
+          listenerSignalIds: new Set(),
+          transmitterSignalIds: new Set(),
+          listenerSignalAt: 0,
+          transmitterSignalAt: 0,
+          listenerPollTimer: null,
+          transmitterPollTimer: null,
+          listenerPolling: false,
+          transmitterPolling: false,
           detachTimer: null,
           container: null,
           elements: null,
@@ -471,7 +584,7 @@
       elements.button.disabled = !room;
       elements.button.title = room ? "Hold to talk · Right Shift" : "Shared spaces only";
       connectAudioElement(runtime, elements.squelch);
-      for (const peer of runtime.peers.values()) {
+      for (const peer of runtime.incomingPeers.values()) {
         if (peer.stream) createRemoteAudio(runtime, peer);
       }
       setTalking(runtime, runtime.talking);
@@ -493,7 +606,10 @@
       elements.button.addEventListener("pointercancel", release);
       elements.button.addEventListener("lostpointercapture", (event) => endTalk(runtime, `pointer:${event.pointerId}`));
 
-      if (room && runtime.pollTimer === null && !runtime.polling) schedulePoll(runtime, 0);
+      if (room) {
+        if (runtime.listenerPollTimer === null && !runtime.listenerPolling) scheduleListenerPoll(runtime, 0);
+        if (runtime.transmitterPollTimer === null && !runtime.transmitterPolling) scheduleTransmitterPoll(runtime, 0);
+      }
     }
   });
 })();

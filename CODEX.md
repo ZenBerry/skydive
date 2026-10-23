@@ -1,5 +1,7 @@
 # Codex Notes
 
+- 2026-10-23: Version 249: Fixed `/walkie` voice delivery by pre-negotiating persistent simplex WebRTC channels and inserting the microphone track only while Talk is held, removing the polling-and-teardown race while retaining receiver-only squelch.
+
 - 2026-10-23: Version 248: Added lazy-loaded `/walkie` simplex voice widgets with hold-to-talk button and Right Shift control, shared-space WebRTC audio, receiver-only end-transmission squelch, and no runtime dependencies.
 
 - 2026-10-20: Version 247: Removed the first-zoom connection jump by refreshing lazy widget bounds immediately, slightly increased connection clearance, and darkened the active recorder Loop button while keeping its text black.
